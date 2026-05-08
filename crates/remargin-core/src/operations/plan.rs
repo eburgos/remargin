@@ -599,20 +599,17 @@ pub enum PurgeDirFileOutcome {
 }
 
 /// File-relocation projection emitted by the `plan mv` op
-/// (rem-0j2x / T44).
+/// (rem-0j2x / T44, rem-jc82).
 ///
 /// Mirrors the read-only side of [`crate::operations::mv::mv`]: names
 /// the canonical src/dst, whether the destination already exists (and
-/// would therefore require `--force` to overwrite), and whether the
+/// would therefore require `--force` to overwrite), whether the
 /// call would be a same-path no-op or an idempotent re-run after a
-/// previous successful move.
-///
-/// The four boolean fields are each surfaced in the documented JSON
-/// shape (`dst_exists`, `idempotent_already_settled`, `noop_same_path`,
-/// `src_exists`); collapsing them would lose API surface.
+/// previous successful move, and — when the source is a directory
+/// (rem-jc82) — the count of nested files that would move with it.
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "each bool is a documented JSON output field (rem-0j2x)"
+    reason = "each bool is a documented JSON output field (rem-0j2x / rem-jc82)"
 )]
 #[derive(Debug, Clone, Serialize)]
 #[non_exhaustive]
@@ -627,12 +624,22 @@ pub struct MvDiff {
     /// exists at the requested path. The live op would settle as a
     /// `bytes_moved = 0` success.
     pub idempotent_already_settled: bool,
+    /// `true` when the source resolves to a directory (rem-jc82).
+    /// The live op renames the directory + every nested file as a
+    /// unit. Mirrors [`crate::operations::mv::MvOutcome::is_directory`].
+    pub is_directory: bool,
+    /// Number of regular files that would move with the directory
+    /// source (rem-jc82). `0` for the file-mv case AND for the no-op /
+    /// already-settled branches. Mirrors
+    /// [`crate::operations::mv::MvOutcome::nested_files_moved`].
+    pub nested_files_moved: usize,
     /// `true` when src and dst resolve to the same canonical path.
     pub noop_same_path: bool,
     /// Canonical absolute source path. When the source is missing
     /// this is the lexical join of `base_dir` + the requested path.
     pub src_absolute: PathBuf,
-    /// `true` when the source path resolves to an existing file.
+    /// `true` when the source path resolves to an existing file or
+    /// directory.
     pub src_exists: bool,
 }
 
@@ -1016,8 +1023,11 @@ fn dispatch_unprotect(
 /// through the same sandbox boundary the live op uses, surfaces a
 /// `reject_reason` plus `would_commit = false` for hard preflight
 /// failures (path escape, forbidden basename, restrict-guard violation,
-/// source-and-dest both missing, source-or-dest is a directory), and
-/// otherwise returns a populated [`MvDiff`] with `would_commit = true`.
+/// source-and-dest both missing, dst-is-a-directory while src is a
+/// file), and otherwise returns a populated [`MvDiff`] with
+/// `would_commit = true`. With rem-jc82 a directory source is no
+/// longer rejected — the diff carries `is_directory: true` and the
+/// nested file count.
 #[expect(
     clippy::too_many_lines,
     reason = "consolidated mv preflight: every branch is one of the live op's checks (forbidden / sandbox / pre_mutate / dst-exists), kept inline so plan and live mv stay byte-equivalent"
@@ -1031,7 +1041,6 @@ fn dispatch_mv(
     dst: &Path,
     force: bool,
 ) -> Result<PlanReport> {
-    use crate::document::allowlist;
     use crate::permissions::op_guard::pre_mutate_check_for_caller;
     use crate::writer::ensure_not_forbidden_target;
 
@@ -1044,23 +1053,31 @@ fn dispatch_mv(
         ensure_not_forbidden_target(src)?;
         ensure_not_forbidden_target(dst)?;
 
+        let src_lexical = if src.is_absolute() {
+            src.to_path_buf()
+        } else {
+            base_dir.join(src)
+        };
+        let src_is_dir = system.is_dir(&src_lexical).unwrap_or(false);
+
         let dst_lexical = if dst.is_absolute() {
             dst.to_path_buf()
         } else {
             base_dir.join(dst)
         };
-        if system.is_dir(&dst_lexical).unwrap_or(false) {
+        let dst_is_existing_dir = system.is_dir(&dst_lexical).unwrap_or(false);
+
+        // Same gate as the live op: file → existing-directory dst is
+        // ambiguous (caller probably meant `dst/<basename>`). Directory
+        // source → existing-directory dst is the overwrite-with-force
+        // case handled below, so do not reject here.
+        if !src_is_dir && dst_is_existing_dir {
             anyhow::bail!(
                 "destination is a directory: {} (this op moves a single file; pass an explicit destination path)",
                 dst.display()
             );
         }
 
-        let src_lexical = if src.is_absolute() {
-            src.to_path_buf()
-        } else {
-            base_dir.join(src)
-        };
         let src_exists = system.exists(&src_lexical).unwrap_or(false);
 
         let src_resolved = if src_exists {
@@ -1094,13 +1111,6 @@ fn dispatch_mv(
         let noop_same_path = src_exists && src_resolved == dst_resolved;
         let idempotent_already_settled = !src_exists && dst_exists;
 
-        if src_exists && system.is_dir(&src_resolved).unwrap_or(false) {
-            anyhow::bail!(
-                "source is a directory: {} (single-file moves only)",
-                src.display()
-            );
-        }
-
         if !src_exists && !dst_exists {
             anyhow::bail!(
                 "source not found: {} (and destination does not exist either)",
@@ -1121,10 +1131,18 @@ fn dispatch_mv(
             );
         }
 
+        let nested_files_moved = if src_is_dir && src_exists {
+            mv_directory_size(system, &src_resolved)
+        } else {
+            0
+        };
+
         Ok(MvDiff {
             dst_absolute: dst_resolved,
             dst_exists,
             idempotent_already_settled,
+            is_directory: src_is_dir && src_exists,
+            nested_files_moved,
             noop_same_path,
             src_absolute: if src_exists {
                 src_resolved
@@ -1150,6 +1168,15 @@ fn dispatch_mv(
     }
 
     Ok(report)
+}
+
+/// Count nested regular files under `dir` for the plan projection's
+/// `nested_files_moved` field. Best-effort — failures are reported as
+/// `0` so the projection still carries a populated [`MvDiff`].
+fn mv_directory_size(system: &dyn System, dir: &Path) -> usize {
+    system
+        .walk_dir(dir, false, true)
+        .map_or(0, |entries| entries.iter().filter(|e| e.is_file).count())
 }
 
 /// Build a [`PlanReport`] for the recursive `purge` op (rem-nrjy).

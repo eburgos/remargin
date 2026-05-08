@@ -48,6 +48,7 @@ pub const MUTATING_OPS: &[&str] = &[
     "delete",
     "edit",
     "migrate",
+    "mv",
     "purge",
     "react",
     "sandbox-add",

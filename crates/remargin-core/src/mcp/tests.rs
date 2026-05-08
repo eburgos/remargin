@@ -4094,3 +4094,98 @@ fn mcp_plan_mv_emits_mv_diff() {
     assert!(!mv_diff["dst_exists"].as_bool().unwrap());
     assert!(!mv_diff["noop_same_path"].as_bool().unwrap());
 }
+
+// ---------------------------------------------------------------------
+// Directory mv MCP coverage (rem-jc82). Confirms the directory form is
+// auto-detected and produces the documented `is_directory` /
+// `nested_files_moved` outcome shape — same surface CLI emits.
+// ---------------------------------------------------------------------
+
+#[test]
+fn mcp_mv_renames_directory() {
+    let base = Path::new("/realm");
+    let system = MockSystem::new()
+        .with_dir(base)
+        .unwrap()
+        .with_dir(base.join("notes"))
+        .unwrap()
+        .with_file(base.join("notes/a.md"), b"x")
+        .unwrap()
+        .with_file(base.join("notes/b.md"), b"yy")
+        .unwrap();
+    let config = test_config();
+
+    let response = call(
+        &system,
+        base,
+        &config,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 1_i32,
+            "method": "tools/call",
+            "params": {
+                "name": "mv",
+                "arguments": {
+                    "src": "notes",
+                    "dst": "archive"
+                }
+            }
+        }),
+    );
+
+    assert!(
+        !is_tool_error(&response),
+        "directory mv should succeed: {response}"
+    );
+    let result = extract_tool_text(&response);
+    assert!(result["is_directory"].as_bool().unwrap());
+    assert_eq!(result["nested_files_moved"].as_u64().unwrap(), 2_u64);
+    assert!(!system.exists(&base.join("notes")).unwrap());
+    assert!(system.is_dir(&base.join("archive")).unwrap());
+}
+
+#[test]
+fn mcp_plan_mv_directory_emits_is_directory() {
+    let base = Path::new("/realm");
+    let system = MockSystem::new()
+        .with_dir(base)
+        .unwrap()
+        .with_dir(base.join("src"))
+        .unwrap()
+        .with_file(base.join("src/a.md"), b"x")
+        .unwrap()
+        .with_file(base.join("src/b.md"), b"yy")
+        .unwrap();
+    let config = test_config();
+
+    let response = call(
+        &system,
+        base,
+        &config,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 1_i32,
+            "method": "tools/call",
+            "params": {
+                "name": "plan",
+                "arguments": {
+                    "op": "mv",
+                    "src": "src",
+                    "dst": "dst"
+                }
+            }
+        }),
+    );
+
+    let result = extract_tool_text(&response);
+    assert!(result["would_commit"].as_bool().unwrap());
+    let mv_diff = &result["mv_diff"];
+    assert!(mv_diff["is_directory"].as_bool().unwrap());
+    assert_eq!(mv_diff["nested_files_moved"].as_u64().unwrap(), 2_u64);
+    assert!(mv_diff["src_exists"].as_bool().unwrap());
+    assert!(!mv_diff["dst_exists"].as_bool().unwrap());
+
+    // Plan must not move anything.
+    assert!(system.is_dir(&base.join("src")).unwrap());
+    assert!(!system.exists(&base.join("dst")).unwrap());
+}

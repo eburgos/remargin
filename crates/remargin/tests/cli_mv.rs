@@ -253,6 +253,100 @@ mod tests {
         assert_eq!(value["mv_diff"]["dst_exists"], json!(true));
     }
 
+    /// rem-jc82: directory rename preserves comments / frontmatter on
+    /// every nested file. The comments survive byte-for-byte because
+    /// the rename is filesystem-level — no re-serialisation runs.
+    #[test]
+    fn renames_directory_with_nested_comments_preserved() {
+        let realm = TempDir::new().unwrap();
+        fs::create_dir_all(realm.path().join("notes")).unwrap();
+        let source = "---\ntitle: Sample\n---\n\n# Sample\n\nBody text.\n\n```remargin\n---\nid: aaa111\nauthor: alice\ntype: human\nts: 2026-04-29T10:00:00+00:00\nchecksum: sha256:0a1b103c177bc33566af5d168667a855f3ffa3c3fd9748424bfa3b3512e6bfdb\n---\nFirst comment.\n```\n";
+        fs::write(realm.path().join("notes/a.md"), source).unwrap();
+        fs::write(realm.path().join("notes/plain.txt"), b"plain bytes").unwrap();
+
+        let out = run_in(realm.path(), &["mv", "notes", "archive", "--json"]);
+        assert_status(&out, 0);
+
+        let value: Value = serde_json::from_str(str::from_utf8(&out.stdout).unwrap()).unwrap();
+        assert_eq!(value["is_directory"], json!(true));
+        assert_eq!(value["nested_files_moved"], 2_u64);
+
+        // Nested files moved to the new location with bytes intact.
+        let after = fs::read_to_string(realm.path().join("archive/a.md")).unwrap();
+        assert_eq!(after, source);
+        assert_eq!(
+            fs::read_to_string(realm.path().join("archive/plain.txt")).unwrap(),
+            "plain bytes"
+        );
+        assert!(!realm.path().join("notes").exists());
+    }
+
+    /// rem-jc82: same-path directory rename is a no-op.
+    #[test]
+    fn directory_same_path_is_noop_via_cli() {
+        let realm = TempDir::new().unwrap();
+        fs::create_dir_all(realm.path().join("notes")).unwrap();
+        fs::write(realm.path().join("notes/a.md"), b"keep").unwrap();
+
+        let out = run_in(realm.path(), &["mv", "notes", "notes", "--json"]);
+        assert_status(&out, 0);
+
+        let value: Value = serde_json::from_str(str::from_utf8(&out.stdout).unwrap()).unwrap();
+        assert_eq!(value["noop_same_path"], json!(true));
+        assert_eq!(value["is_directory"], json!(true));
+        assert!(realm.path().join("notes/a.md").exists());
+    }
+
+    /// rem-jc82: `--force` overwrites an existing destination dir.
+    #[test]
+    fn directory_force_overwrites_via_cli() {
+        let realm = TempDir::new().unwrap();
+        fs::create_dir_all(realm.path().join("src")).unwrap();
+        fs::create_dir_all(realm.path().join("dst")).unwrap();
+        fs::write(realm.path().join("src/a.md"), b"new").unwrap();
+        fs::write(realm.path().join("dst/old.md"), b"erased").unwrap();
+
+        let out = run_in(realm.path(), &["mv", "src", "dst", "--force", "--json"]);
+        assert_status(&out, 0);
+
+        let value: Value = serde_json::from_str(str::from_utf8(&out.stdout).unwrap()).unwrap();
+        assert_eq!(value["overwritten"], json!(true));
+        assert_eq!(value["is_directory"], json!(true));
+        // Source removed, old destination wiped, new content lands.
+        assert!(!realm.path().join("src").exists());
+        assert!(!realm.path().join("dst/old.md").exists());
+        assert_eq!(
+            fs::read_to_string(realm.path().join("dst/a.md")).unwrap(),
+            "new"
+        );
+    }
+
+    /// rem-jc82: `plan mv <dir> <new>` reports `is_directory` plus the
+    /// nested-file count without writing anything.
+    #[test]
+    fn plan_mv_for_directory_emits_is_directory() {
+        let realm = TempDir::new().unwrap();
+        fs::create_dir_all(realm.path().join("src")).unwrap();
+        fs::write(realm.path().join("src/a.md"), b"x").unwrap();
+        fs::write(realm.path().join("src/b.md"), b"y").unwrap();
+
+        let out = run_in(realm.path(), &["plan", "mv", "src", "dst", "--json"]);
+        assert_status(&out, 0);
+
+        let value: Value = serde_json::from_str(str::from_utf8(&out.stdout).unwrap()).unwrap();
+        assert_eq!(value["op"], "mv");
+        assert_eq!(value["would_commit"], json!(true));
+        let mv_diff = &value["mv_diff"];
+        assert_eq!(mv_diff["is_directory"], json!(true));
+        assert_eq!(mv_diff["nested_files_moved"], 2_u64);
+        assert_eq!(mv_diff["dst_exists"], json!(false));
+        assert_eq!(mv_diff["src_exists"], json!(true));
+
+        // Plan must not move anything.
+        assert!(realm.path().join("src/a.md").exists());
+        assert!(!realm.path().join("dst").exists());
+    }
+
     /// rem-qjqu: `remargin restrict` projects the full native-tool
     /// fence into Claude settings — editor-tool denies, dot-folder
     /// defaults, the `BASH_MUTATORS` list (including dest-side `mv *`),

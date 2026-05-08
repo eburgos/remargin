@@ -419,17 +419,17 @@ fn desc_migrate() -> ToolDesc {
     }
 }
 
-/// Build the `mv` tool descriptor (rem-0j2x / T44).
+/// Build the `mv` tool descriptor (rem-0j2x / T44, rem-jc82).
 fn desc_mv() -> ToolDesc {
     ToolDesc {
         name: "mv",
-        description: "Move or rename a single tracked file. Atomic same-FS rename, copy+remove fallback on cross-filesystem (EXDEV). Both endpoints flow through the same sandbox / forbidden-target / restrict-guard checks every other mutating op uses. Idempotent: same-path no-op; src missing AND dst already in place returns success with bytes_moved=0.",
+        description: "Move or rename a tracked file or directory (rem-0j2x / rem-jc82). Auto-detects a directory source and renames the directory + every nested file as an atomic unit; comments / threads / acks survive because the path of every nested file changes consistently. Atomic same-FS rename, copy+remove fallback on cross-filesystem (EXDEV) for files. Both endpoints flow through the same sandbox / forbidden-target / restrict-guard checks every other mutating op uses. Idempotent: same-path no-op; src missing AND dst already in place returns success with bytes_moved=0.",
         schema: json!({
             "type": "object",
             "properties": {
-                "src": { "type": "string", "description": "Source path." },
+                "src": { "type": "string", "description": "Source path (file or directory)." },
                 "dst": { "type": "string", "description": "Destination path." },
-                "force": { "type": "boolean", "description": "Overwrite an existing destination.", "default": false }
+                "force": { "type": "boolean", "description": "Overwrite an existing destination (for directories: removes the existing destination subtree before the rename).", "default": false }
             },
             "required": ["src", "dst"]
         }),
@@ -2081,6 +2081,8 @@ fn handle_mv(
         "bytes_moved": outcome.bytes_moved,
         "dst_absolute": outcome.dst_absolute.display().to_string(),
         "fallback_copy": outcome.fallback_copy,
+        "is_directory": outcome.is_directory,
+        "nested_files_moved": outcome.nested_files_moved,
         "noop_same_path": outcome.noop_same_path,
         "overwritten": outcome.overwritten,
         "src_absolute": outcome.src_absolute.display().to_string(),

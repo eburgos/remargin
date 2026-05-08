@@ -1,4 +1,4 @@
-//! Move / rename a tracked file (rem-0j2x / T44).
+//! Move / rename a tracked file or directory (rem-0j2x / T44, rem-jc82).
 //!
 //! `remargin mv <src> <dst>` is the remargin-blessed alternative to Bash
 //! `mv` on a restricted realm. It performs an atomic rename when src
@@ -15,6 +15,15 @@
 //! does not relocate them. Cross-directory moves leave attachment
 //! references resolving against the destination directory's assets
 //! folder, mirroring how a hand-edited `mv` would behave.
+//!
+//! **Directory source (rem-jc82).** When `src` resolves to a directory
+//! the op renames the directory atomically via [`os_shim::System::rename`]
+//! (filesystem-level rename of the dir as a unit). Every nested file
+//! moves with the dir; comment threads / acks / signatures keep their
+//! continuity because the path of every nested file changes
+//! consistently. The same `op_guard` / sandbox / forbidden-target gates
+//! fire — a `restrict` entry covering the directory (or the
+//! destination parent) refuses the move.
 
 #[cfg(test)]
 mod tests;
@@ -66,18 +75,32 @@ impl MvArgs {
 }
 
 /// Outcome of a successful [`mv`] call.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each bool is a documented JSON output field (rem-0j2x / rem-jc82)"
+)]
 #[derive(Debug, Clone, Serialize)]
 #[non_exhaustive]
 pub struct MvOutcome {
     /// Bytes moved (file size at the source). `0` for a same-path no-op
     /// or for an idempotent `src missing, dst already at destination`
-    /// re-run.
+    /// re-run. For the directory case (rem-jc82) this is the sum of
+    /// the sizes of every regular file inside the directory at rename
+    /// time.
     pub bytes_moved: u64,
     /// Canonical absolute destination path the bytes now live at.
     pub dst_absolute: PathBuf,
     /// `true` when the rename fell back to `copy + remove` because the
     /// in-process rename returned `EXDEV` (cross-filesystem move).
     pub fallback_copy: bool,
+    /// `true` when the source resolved to a directory (rem-jc82): the
+    /// op renamed the directory + every nested file as a unit.
+    pub is_directory: bool,
+    /// Number of regular files inside the source directory at rename
+    /// time. `0` for the file-mv case AND for the no-op / already-
+    /// settled branches. Reported in JSON so the caller knows how many
+    /// nested files moved with the directory.
+    pub nested_files_moved: usize,
     /// `true` when [`MvArgs::src`] and [`MvArgs::dst`] resolved to the
     /// same canonical path. The op is a no-op in this case.
     pub noop_same_path: bool,
@@ -132,8 +155,10 @@ pub struct MvOutcome {
 /// - Either endpoint is covered by a `restrict` entry the caller is
 ///   not authorised under (per [`pre_mutate_check`]).
 /// - `args.src` is missing AND `args.dst` is also missing.
-/// - `args.src` is a directory (single-file moves only).
-/// - `args.dst` is an existing directory.
+/// - `args.src` is a file AND `args.dst` is an existing directory
+///   (file-into-directory moves require an explicit destination
+///   path; only directory-into-empty-or-non-existent is supported
+///   without it, see rem-jc82).
 /// - `args.dst` already exists and `args.force` is `false`.
 /// - The underlying `rename` (and, on `EXDEV` fallback, `copy` /
 ///   `remove_file`) fails.
@@ -146,16 +171,24 @@ pub fn mv(
     ensure_not_forbidden_target(&args.src)?;
     ensure_not_forbidden_target(&args.dst)?;
 
+    let src_lexical = lexical_join(base_dir, &args.src);
+    let src_is_dir = system.is_dir(&src_lexical).unwrap_or(false);
+    let src_resolved_opt = resolve_src(system, base_dir, &args.src, &src_lexical, config)?;
+
     let dst_lexical = lexical_join(base_dir, &args.dst);
-    if system.is_dir(&dst_lexical).unwrap_or(false) {
+    let dst_is_dir = system.is_dir(&dst_lexical).unwrap_or(false);
+
+    // For the file-mv path, we historically rejected the call when
+    // the destination was an existing directory. That rejection still
+    // applies — but ONLY when the source is a file. A directory-rename
+    // wants to move a dir into the dst path; an existing dst dir there
+    // is the overwrite-or-conflict case handled below.
+    if !src_is_dir && dst_is_dir {
         bail!(
             "destination is a directory: {} (this op moves a single file; pass an explicit destination path)",
             args.dst.display()
         );
     }
-
-    let src_lexical = lexical_join(base_dir, &args.src);
-    let src_resolved_opt = resolve_src(system, base_dir, &args.src, &src_lexical, config)?;
 
     // Resolve dst as a create-target. This canonicalises the parent
     // dir + appends the filename so the sandbox boundary is enforced
@@ -175,10 +208,7 @@ pub fn mv(
     };
 
     if system.is_dir(&src_resolved).unwrap_or(false) {
-        bail!(
-            "source is a directory: {} (single-file moves only)",
-            args.src.display()
-        );
+        return mv_directory(system, args, &src_resolved, dst_resolved, &caller);
     }
 
     if !allowlist::is_visible(&src_resolved, false) {
@@ -211,6 +241,8 @@ pub fn mv(
         bytes_moved,
         dst_absolute: dst_resolved,
         fallback_copy,
+        is_directory: false,
+        nested_files_moved: 0,
         noop_same_path: false,
         overwritten: dst_pre_existed,
         src_absolute: src_resolved,
@@ -276,10 +308,13 @@ fn idempotent_already_settled(
 ) -> Result<MvOutcome> {
     if system.exists(dst_resolved).unwrap_or(false) {
         pre_mutate_check_for_caller(system, "mv", dst_resolved, caller)?;
+        let is_directory = system.is_dir(dst_resolved).unwrap_or(false);
         return Ok(MvOutcome {
             bytes_moved: 0,
             dst_absolute: dst_resolved.to_path_buf(),
             fallback_copy: false,
+            is_directory,
+            nested_files_moved: 0,
             noop_same_path: false,
             overwritten: false,
             src_absolute: src_lexical.to_path_buf(),
@@ -301,10 +336,18 @@ fn same_path_noop(
     caller: &CallerInfo,
 ) -> Result<MvOutcome> {
     pre_mutate_check_for_caller(system, "mv", src_resolved, caller)?;
+    let is_directory = system.is_dir(src_resolved).unwrap_or(false);
+    let bytes_moved = if is_directory {
+        0
+    } else {
+        file_size(system, src_resolved)
+    };
     Ok(MvOutcome {
-        bytes_moved: file_size(system, src_resolved),
+        bytes_moved,
         dst_absolute: dst_resolved,
         fallback_copy: false,
+        is_directory,
+        nested_files_moved: 0,
         noop_same_path: true,
         overwritten: false,
         src_absolute: src_resolved.to_path_buf(),
@@ -350,6 +393,97 @@ fn perform_move(system: &dyn System, src: &Path, dst: &Path) -> Result<bool> {
             dst.display()
         ))),
     }
+}
+
+/// Move / rename a directory atomically (rem-jc82). Mirrors the
+/// file-mv path: same `op_guard` / sandbox / forbidden-target gates,
+/// same `--force` semantics, but operates on a directory tree as a
+/// single unit via [`os_shim::System::rename`].
+///
+/// The `is_visible(_, true)` check rejects dot-prefixed source dirs
+/// (`.git/foo` vs `secret`) so the dot-folder default-deny remains
+/// enforced symmetrically with the file path.
+fn mv_directory(
+    system: &dyn System,
+    args: &MvArgs,
+    src_resolved: &Path,
+    dst_resolved: PathBuf,
+    caller: &CallerInfo,
+) -> Result<MvOutcome> {
+    if !allowlist::is_visible(src_resolved, true) {
+        bail!("source not visible: {}", args.src.display());
+    }
+
+    if *src_resolved == dst_resolved {
+        return same_path_noop(system, src_resolved, dst_resolved, caller);
+    }
+
+    pre_mutate_check_for_caller(system, "mv", src_resolved, caller)?;
+    pre_mutate_check_for_caller(system, "mv", &dst_resolved, caller)?;
+
+    let dst_pre_existed = system.exists(&dst_resolved).unwrap_or(false);
+    if dst_pre_existed && !args.force {
+        bail!(
+            "destination exists: {} (pass --force to overwrite)",
+            args.dst.display()
+        );
+    }
+
+    // Count nested files + total bytes before the rename so the
+    // outcome can report them. After the rename the source path is
+    // gone.
+    let (nested_files_moved, bytes_moved) = directory_size_summary(system, src_resolved);
+
+    if dst_pre_existed && args.force {
+        // Clear the destination first so the rename can land. We
+        // remove the whole subtree (matching `mv -f` semantics on a
+        // directory destination). If removal fails, surface that
+        // error verbatim — the rename has not started.
+        if system.is_dir(&dst_resolved).unwrap_or(false) {
+            system.remove_dir_all(&dst_resolved).with_context(|| {
+                format!("removing existing destination {}", dst_resolved.display())
+            })?;
+        } else {
+            system
+                .remove_file(&dst_resolved)
+                .with_context(|| format!("removing existing file {}", dst_resolved.display()))?;
+        }
+    }
+
+    let fallback_copy = perform_move(system, src_resolved, &dst_resolved)?;
+
+    Ok(MvOutcome {
+        bytes_moved,
+        dst_absolute: dst_resolved,
+        fallback_copy,
+        is_directory: true,
+        nested_files_moved,
+        noop_same_path: false,
+        overwritten: dst_pre_existed,
+        src_absolute: src_resolved.to_path_buf(),
+    })
+}
+
+/// Walk the tree rooted at `dir` and return `(file_count, total_bytes)`.
+/// Best-effort: an unreadable subtree returns `(0, 0)` rather than
+/// failing the rename. The numbers are informational — the rename's
+/// success doesn't hinge on them.
+fn directory_size_summary(system: &dyn System, dir: &Path) -> (usize, u64) {
+    let Ok(entries) = system.walk_dir(dir, false, true) else {
+        return (0, 0);
+    };
+    let mut count: usize = 0;
+    let mut bytes: u64 = 0;
+    for entry in entries {
+        if !entry.is_file {
+            continue;
+        }
+        count = count.saturating_add(1);
+        if let Ok(meta) = system.metadata(&entry.path) {
+            bytes = bytes.saturating_add(meta.len);
+        }
+    }
+    (count, bytes)
 }
 
 /// Detect EXDEV (cross-filesystem rename) on both real Linux/macOS

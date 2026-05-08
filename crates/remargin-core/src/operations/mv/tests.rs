@@ -308,20 +308,23 @@ fn refuses_path_escape_on_source() {
     assert!(msg.contains("path escapes"), "got: {msg}");
 }
 
+/// rem-jc82: directory sources are now supported. Renaming an empty
+/// directory succeeds and reports `is_directory = true`.
 #[test]
-fn refuses_source_directory() {
+fn renames_empty_directory() {
     let system = MockSystem::new()
         .with_dir(base())
         .unwrap()
         .with_dir(base().join("a"))
         .unwrap();
     let args = MvArgs::new(PathBuf::from("a"), PathBuf::from("b"));
-    let err = mv(&system, base(), &open_config(), &args).unwrap_err();
-    let msg = format!("{err}");
-    assert!(
-        msg.contains("source not found") || msg.contains("source is a directory"),
-        "got: {msg}"
-    );
+    let outcome = mv(&system, base(), &open_config(), &args).unwrap();
+
+    assert!(outcome.is_directory);
+    assert_eq!(outcome.nested_files_moved, 0);
+    assert_eq!(outcome.bytes_moved, 0);
+    assert!(!system.exists(&base().join("a")).unwrap());
+    assert!(system.is_dir(&base().join("b")).unwrap());
 }
 
 #[test]
@@ -357,4 +360,181 @@ fn same_path_is_noop() {
         system.read_to_string(&base().join("a.md")).unwrap(),
         "unchanged"
     );
+}
+
+// ---------------------------------------------------------------------
+// Directory rename coverage (rem-jc82). The op auto-detects a directory
+// source and renames the dir + nested files atomically. Same op_guard /
+// sandbox / forbidden-target gates as the file path.
+// ---------------------------------------------------------------------
+
+#[test]
+fn renames_directory_with_nested_md_files() {
+    let system = MockSystem::new()
+        .with_dir(base())
+        .unwrap()
+        .with_dir(base().join("notes"))
+        .unwrap()
+        .with_file(base().join("notes/a.md"), b"first")
+        .unwrap()
+        .with_file(base().join("notes/b.md"), b"second-content")
+        .unwrap();
+
+    let args = MvArgs::new(PathBuf::from("notes"), PathBuf::from("archive"));
+    let outcome = mv(&system, base(), &open_config(), &args).unwrap();
+
+    assert!(outcome.is_directory);
+    assert_eq!(outcome.nested_files_moved, 2);
+    assert_eq!(outcome.bytes_moved, 5 + 14);
+    assert!(!system.exists(&base().join("notes")).unwrap());
+    assert_eq!(
+        system.read_to_string(&base().join("archive/a.md")).unwrap(),
+        "first"
+    );
+    assert_eq!(
+        system.read_to_string(&base().join("archive/b.md")).unwrap(),
+        "second-content"
+    );
+}
+
+#[test]
+fn renames_directory_with_mixed_content_and_subdirectory() {
+    let system = MockSystem::new()
+        .with_dir(base())
+        .unwrap()
+        .with_dir(base().join("src"))
+        .unwrap()
+        .with_dir(base().join("src/sub"))
+        .unwrap()
+        .with_file(base().join("src/a.md"), b"x")
+        .unwrap()
+        .with_file(base().join("src/notes.txt"), b"plain")
+        .unwrap()
+        .with_file(base().join("src/sub/c.md"), b"deep")
+        .unwrap();
+
+    let args = MvArgs::new(PathBuf::from("src"), PathBuf::from("dst"));
+    let outcome = mv(&system, base(), &open_config(), &args).unwrap();
+
+    assert!(outcome.is_directory);
+    assert_eq!(outcome.nested_files_moved, 3);
+    assert!(!system.exists(&base().join("src")).unwrap());
+    assert_eq!(
+        system.read_to_string(&base().join("dst/a.md")).unwrap(),
+        "x"
+    );
+    assert_eq!(
+        system
+            .read_to_string(&base().join("dst/notes.txt"))
+            .unwrap(),
+        "plain"
+    );
+    assert_eq!(
+        system.read_to_string(&base().join("dst/sub/c.md")).unwrap(),
+        "deep"
+    );
+}
+
+#[test]
+fn directory_same_path_is_noop() {
+    let system = MockSystem::new()
+        .with_dir(base())
+        .unwrap()
+        .with_dir(base().join("notes"))
+        .unwrap()
+        .with_file(base().join("notes/a.md"), b"keep")
+        .unwrap();
+
+    let args = MvArgs::new(PathBuf::from("notes"), PathBuf::from("notes"));
+    let outcome = mv(&system, base(), &open_config(), &args).unwrap();
+
+    assert!(outcome.noop_same_path);
+    assert!(outcome.is_directory);
+    assert!(system.exists(&base().join("notes/a.md")).unwrap());
+}
+
+#[test]
+fn directory_refuses_existing_destination_without_force() {
+    let system = MockSystem::new()
+        .with_dir(base())
+        .unwrap()
+        .with_dir(base().join("src"))
+        .unwrap()
+        .with_dir(base().join("dst"))
+        .unwrap();
+
+    let args = MvArgs::new(PathBuf::from("src"), PathBuf::from("dst"));
+    let err = mv(&system, base(), &open_config(), &args).unwrap_err();
+    let msg = format!("{err}");
+    assert!(msg.contains("destination exists"), "got: {msg}");
+    // Source still in place.
+    assert!(system.is_dir(&base().join("src")).unwrap());
+    assert!(system.is_dir(&base().join("dst")).unwrap());
+}
+
+#[test]
+fn directory_force_overwrites_existing_destination() {
+    let system = MockSystem::new()
+        .with_dir(base())
+        .unwrap()
+        .with_dir(base().join("src"))
+        .unwrap()
+        .with_dir(base().join("dst"))
+        .unwrap()
+        .with_file(base().join("src/a.md"), b"new")
+        .unwrap()
+        .with_file(base().join("dst/old.md"), b"will-be-erased")
+        .unwrap();
+
+    let args = MvArgs::new(PathBuf::from("src"), PathBuf::from("dst")).with_force(true);
+    let outcome = mv(&system, base(), &open_config(), &args).unwrap();
+
+    assert!(outcome.is_directory);
+    assert!(outcome.overwritten);
+    assert!(!system.exists(&base().join("src")).unwrap());
+    assert_eq!(
+        system.read_to_string(&base().join("dst/a.md")).unwrap(),
+        "new"
+    );
+    // Old destination wiped before the rename.
+    assert!(!system.exists(&base().join("dst/old.md")).unwrap());
+}
+
+#[test]
+fn directory_refuses_dot_prefixed_source() {
+    let system = MockSystem::new()
+        .with_dir(base())
+        .unwrap()
+        .with_dir(base().join(".hidden"))
+        .unwrap();
+
+    let args = MvArgs::new(PathBuf::from(".hidden"), PathBuf::from("visible"));
+    let err = mv(&system, base(), &open_config(), &args).unwrap_err();
+    let msg = format!("{err}");
+    assert!(msg.contains("not visible"), "got: {msg}");
+}
+
+#[test]
+fn directory_refused_when_deny_ops_covers_source() {
+    let yaml = "permissions:\n  deny_ops:\n    - path: notes\n      ops: [mv]\n";
+    let system = MockSystem::new()
+        .with_dir(base())
+        .unwrap()
+        .with_file(base().join(".remargin.yaml"), yaml.as_bytes())
+        .unwrap()
+        .with_dir(base().join("notes"))
+        .unwrap()
+        .with_file(base().join("notes/a.md"), b"x")
+        .unwrap();
+
+    let args = MvArgs::new(PathBuf::from("notes"), PathBuf::from("archive"));
+    let err = mv(&system, base(), &open_config(), &args).unwrap_err();
+    let chain = format!("{err:#}");
+    assert!(
+        chain.contains("denied by `deny_ops`"),
+        "expected deny_ops refusal, got: {chain}"
+    );
+    // No movement happened.
+    assert!(system.is_dir(&base().join("notes")).unwrap());
+    assert!(!system.exists(&base().join("archive")).unwrap());
 }

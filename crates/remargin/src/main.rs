@@ -4463,38 +4463,58 @@ fn cmd_mv(
     let outcome = mv_op::mv(system, cwd, config, &args)?;
 
     if params.json_mode {
-        out_json(&json!({
-            "bytes_moved": outcome.bytes_moved,
-            "dst_absolute": outcome.dst_absolute.display().to_string(),
-            "fallback_copy": outcome.fallback_copy,
-            "noop_same_path": outcome.noop_same_path,
-            "overwritten": outcome.overwritten,
-            "src_absolute": outcome.src_absolute.display().to_string(),
-        }))
-    } else if outcome.noop_same_path {
-        out(&format!("no-op: {} (same canonical path)", params.src))
-    } else if outcome.bytes_moved == 0 {
-        out(&format!(
-            "already moved: {} -> {} ({} bytes)",
-            params.src, params.dst, outcome.bytes_moved
-        ))
+        out_json(&mv_outcome_json(&outcome))
     } else {
-        out(&format!(
-            "moved: {} -> {} ({} bytes{}{})",
-            params.src,
-            params.dst,
-            outcome.bytes_moved,
-            if outcome.overwritten {
-                ", overwrote destination"
-            } else {
+        out(&mv_outcome_pretty(params.src, params.dst, &outcome))
+    }
+}
+
+fn mv_outcome_json(outcome: &mv_op::MvOutcome) -> serde_json::Value {
+    json!({
+        "bytes_moved": outcome.bytes_moved,
+        "dst_absolute": outcome.dst_absolute.display().to_string(),
+        "fallback_copy": outcome.fallback_copy,
+        "is_directory": outcome.is_directory,
+        "nested_files_moved": outcome.nested_files_moved,
+        "noop_same_path": outcome.noop_same_path,
+        "overwritten": outcome.overwritten,
+        "src_absolute": outcome.src_absolute.display().to_string(),
+    })
+}
+
+fn mv_outcome_pretty(src: &str, dst: &str, outcome: &mv_op::MvOutcome) -> String {
+    let suffix_overwrite = if outcome.overwritten {
+        ", overwrote destination"
+    } else {
+        ""
+    };
+    let suffix_fallback = if outcome.fallback_copy {
+        ", cross-filesystem copy"
+    } else {
+        ""
+    };
+    if outcome.noop_same_path {
+        format!("no-op: {src} (same canonical path)")
+    } else if outcome.is_directory {
+        format!(
+            "renamed directory: {src} -> {dst} ({} nested file{}{suffix_overwrite}{suffix_fallback})",
+            outcome.nested_files_moved,
+            if outcome.nested_files_moved == 1 {
                 ""
+            } else {
+                "s"
             },
-            if outcome.fallback_copy {
-                ", cross-filesystem copy"
-            } else {
-                ""
-            }
-        ))
+        )
+    } else if outcome.bytes_moved == 0 {
+        format!(
+            "already moved: {src} -> {dst} ({} bytes)",
+            outcome.bytes_moved
+        )
+    } else {
+        format!(
+            "moved: {src} -> {dst} ({} bytes{suffix_overwrite}{suffix_fallback})",
+            outcome.bytes_moved,
+        )
     }
 }
 

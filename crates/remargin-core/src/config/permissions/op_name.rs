@@ -59,6 +59,8 @@ pub enum OpName {
     Metadata,
     /// Write: schema migration over a doc.
     Migrate,
+    /// Write: rename / move a file or directory (rem-0j2x / rem-jc82).
+    Mv,
     /// Write: purge tombstoned content.
     Purge,
     /// Read: structured query over comments / blocks.
@@ -94,6 +96,7 @@ impl OpName {
         Self::Ls,
         Self::Metadata,
         Self::Migrate,
+        Self::Mv,
         Self::Purge,
         Self::Query,
         Self::React,
@@ -127,6 +130,7 @@ impl OpName {
         Self::Delete,
         Self::Edit,
         Self::Migrate,
+        Self::Mv,
         Self::Purge,
         Self::React,
         Self::SandboxAdd,
@@ -150,6 +154,7 @@ impl OpName {
             Self::Ls => "ls",
             Self::Metadata => "metadata",
             Self::Migrate => "migrate",
+            Self::Mv => "mv",
             Self::Purge => "purge",
             Self::Query => "query",
             Self::React => "react",
