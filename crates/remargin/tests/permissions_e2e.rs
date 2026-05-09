@@ -153,11 +153,10 @@ mod tests {
         );
     }
 
-    /// E5 (rem-egp9): restrict two paths, unprotect one — only the
-    /// surviving entry remains in `.remargin.yaml`. The `op_guard`
-    /// re-resolves on every call against `.remargin.yaml`, so the
-    /// surviving restrict still gates writes regardless of what's in
-    /// the Claude settings file.
+    /// E5: restrict two paths, unprotect one — only the surviving
+    /// entry remains in `.remargin.yaml`. `op_guard` re-resolves on
+    /// every call so the surviving restrict still gates writes
+    /// regardless of what's in the Claude settings file.
     ///
     /// Note: under the minimised projection, both restricts emit the
     /// identical `Bash(remargin *)` deny. The sidecar carries one
@@ -233,11 +232,8 @@ mod tests {
         );
         assert_ne!(blocked.status.code(), Some(0_i32));
 
-        // Hand-edit the YAML to drop the trusted_roots key entirely
-        // (rem-djfx: an explicitly empty list now LOCKS the realm; the
-        // back-compat "open mode" requires the key be absent). We
-        // don't touch the sidecar or Claude settings — the per-op
-        // guard reads only the YAML.
+        // Drop the trusted_roots key entirely. Empty list = locked;
+        // open mode requires the key be absent.
         fs::write(realm.path().join(".remargin.yaml"), "permissions: {}\n").unwrap();
 
         let allowed = run_in(
@@ -403,9 +399,7 @@ mod tests {
         );
     }
 
-    // ---------------------------------------------------------------
-    // rem-egp9 — per-op sandbox consults `trusted_roots`
-    // ---------------------------------------------------------------
+    // Per-op sandbox consults `trusted_roots`
 
     // The `trusted_roots`-extends-the-MCP-sandbox scenario was
     // eradicated along with the deny-list polarity. The MCP sandbox is

@@ -484,9 +484,7 @@ fn trusted_roots_expand_tilde_against_mock_home() {
     assert_eq!(resolved, vec![PathBuf::from("/home/alice/notes")]);
 }
 
-// ---------------------------------------------------------------------
-// rem-djfx: schema distinguishes absent vs explicitly empty list.
-// ---------------------------------------------------------------------
+// trusted_roots: absent vs explicitly empty list
 
 #[test]
 fn permissions_block_with_no_trusted_roots_key_parses_to_none() {

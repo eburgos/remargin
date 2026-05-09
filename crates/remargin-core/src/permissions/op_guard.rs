@@ -1,16 +1,5 @@
-//! Per-op permission guard.
-//!
-//! `trusted_roots` is the single allow-list for both reads and writes
-//! (rem-djfx). Three on-disk states:
-//! - **Absent** in every `.remargin.yaml` on the walk → open mode →
-//!   neither reads nor writes are gated by `trusted_roots`.
-//! - **Explicit empty list** (`trusted_roots: []`) anywhere in the
-//!   walk → realm locked → every read and write outside any inherited
-//!   parent root is denied.
-//! - **Non-empty list** → exactly those paths are reachable.
-//!
-//! `deny_ops` is evaluated regardless and is the escape hatch for
-//! blocking specific ops on top of (or instead of) `trusted_roots`.
+//! Per-op permission guard. `trusted_roots` is the single allow-list
+//! for reads and writes; `deny_ops` is the per-op escape hatch.
 
 #[cfg(test)]
 mod tests;
@@ -32,22 +21,12 @@ use crate::parser::AuthorType;
 /// The dot-folder remargin owns. Never default-denied.
 const REMARGIN_DOT_FOLDER: &str = ".remargin";
 
-/// Canonical names of every read-side op recognised by the guard.
-///
-/// Reads are gated by `trusted_roots` and the dot-folder default-deny
-/// just like writes (rem-djfx); they are also subject to `deny_ops`.
-/// Keep alphabetical. The contents must match [`OpName::READ`] — a
-/// parity test in the adjacent `tests` module enforces this.
+/// Keep alphabetical. Must match [`OpName::READ`] (parity-tested).
 pub const READ_OPS: &[&str] = &[
     "comments", "get", "lint", "ls", "metadata", "query", "search", "verify",
 ];
 
-/// Canonical names of every mutating op.
-///
-/// Membership in this list drives whether `restrict` applies —
-/// `deny_ops` is evaluated for ANY op the caller names. The contents
-/// must match [`OpName::WRITE`] — a parity test in the adjacent
-/// `tests` module enforces this.
+/// Keep alphabetical. Must match [`OpName::WRITE`] (parity-tested).
 pub const MUTATING_OPS: &[&str] = &[
     "ack",
     "batch",
@@ -70,56 +49,30 @@ pub const OUTSIDE_ALLOWED_DENIAL_TEMPLATE: &str = "op '{op}' on '{target}' is de
 pub const DENY_OPS_DENIAL_TEMPLATE: &str =
     "op '{op}' on '{target}' is denied by 'deny_ops' rule in {source_file}";
 
-/// Read-vs-write classification for an op.
-///
-/// Both kinds are gated by `trusted_roots`, the dot-folder default-
-/// deny, and `deny_ops` (rem-djfx). The classification is preserved so
-/// callers and projection surfaces can reason about op shape, but the
-/// guard treats them symmetrically.
+/// Op kind. The guard treats both symmetrically; classification is
+/// preserved so projection surfaces can reason about shape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum OpKind {
-    /// Read-side op (no on-disk mutation).
     Read,
-    /// Write-side op.
     Write,
 }
 
-/// Caller-side identity context the per-op guard needs to evaluate
-/// identity-scoped `deny_ops` entries (rem-egp9).
-///
-/// Open-mode realms cannot trust the caller's declared identity (it is
-/// trivially spoofed via `--identity` / `type:` flags), so the
-/// identity filter is ignored there. Strict mode validates identity
-/// against the registry + signing key, so the filter is meaningful.
-///
-/// Default carries no identity / `Mode::Open`, which preserves
-/// pre-rem-egp9 behaviour for callers that don't supply caller info.
+/// Caller-side context for identity-scoped `deny_ops`. Identity
+/// matching only fires in strict mode (other modes can't trust the
+/// declared identity).
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
 pub struct CallerInfo {
-    /// Caller's `type:` field (`human` / `agent`). Drives the
-    /// synthesized `~/.ssh/**` default-deny: agents in strict mode
-    /// get the deny baked in; humans / open-mode realms do not.
     pub author_type: Option<AuthorType>,
-    /// Caller identity name (the `identity:` field from
-    /// `.remargin.yaml`). The `to:` filter on `deny_ops` matches this
-    /// first, then falls back to `id` (currently `id` and `name` are
-    /// the same string in the on-disk schema, but the parameter is
-    /// kept distinct so the doc comment on `DenyOpsEntry::to`
-    /// accurately describes the matching order).
+    /// `to:` matches `identity_name` first, then falls back to
+    /// `identity_id`.
     pub identity_id: Option<String>,
-    /// Caller identity name. See [`Self::identity_id`].
     pub identity_name: Option<String>,
-    /// Realm mode. `to:` filtering on `deny_ops` only fires when
-    /// `mode == Mode::Strict`; open / registered modes ignore the
-    /// filter (the realm cannot trust the declared identity).
     pub mode: Mode,
 }
 
 impl CallerInfo {
-    /// `true` when the caller is an agent operating in strict mode.
-    /// Drives the synthesized `~/.ssh/**` virtual deny (rem-egp9).
     #[must_use]
     pub const fn is_strict_agent(&self) -> bool {
         matches!(self.author_type, Some(AuthorType::Agent)) && matches!(self.mode, Mode::Strict)
@@ -154,12 +107,8 @@ impl CallerInfo {
 pub enum OpGuardError {
     /// A `deny_ops` entry covers `target` and lists `op`.
     ///
-    /// `to` carries the identity filter that fired (empty when the
-    /// entry's `to:` was empty / not supplied — the legacy "all
-    /// identities" deny). When non-empty the refusal text names the
-    /// matching identity per the rem-egp9 wording:
-    /// `op '<op>' on '<path>' is denied by 'deny_ops { to: <identity> }'
-    /// rule in <source_file>`.
+    /// Empty `to` = legacy "all identities" deny; non-empty names the
+    /// matching identity in the refusal text.
     #[error(
         "op `{op}` on `{target}` is denied by `deny_ops{to_clause}` rule in {source_file}",
         target = .target.display(),
@@ -205,9 +154,7 @@ pub enum OpGuardError {
     },
 }
 
-/// Render the `{ to: <ids> }` slot of [`OpGuardError::DeniedOp`].
-/// Empty `to` produces an empty string so the legacy wording (no
-/// `to:` slot) round-trips for back-compat with pre-rem-egp9 entries.
+/// Empty `to` = empty string so legacy wording round-trips.
 fn format_to_clause(to: &[String]) -> String {
     if to.is_empty() {
         String::new()
@@ -216,28 +163,14 @@ fn format_to_clause(to: &[String]) -> String {
     }
 }
 
-/// `true` when `op` is the canonical name of a mutating op.
-///
-/// Unknown op names default to `true` so a missing classification
-/// fails closed (treated as a write for projection / classification
-/// surfaces). Callers should ensure new ops are added to [`READ_OPS`]
-/// or [`MUTATING_OPS`].
-///
-/// Note: since rem-djfx the per-op guard treats reads and writes
-/// symmetrically against `trusted_roots`; this helper survives for
-/// projection / dispatch surfaces that still need to know op shape.
+/// Unknown ops default to `true` so missing classification fails
+/// closed (treated as write for projection surfaces).
 #[must_use]
 pub fn is_mutating_op(op: &str) -> bool {
     !matches!(op_kind(op), Some(OpKind::Read))
 }
 
-/// Classify `op` as read or write.
-///
-/// Returns `None` for op names the guard does not know about. Callers
-/// that pass an unknown op (e.g. an op handler that forgets to plumb
-/// the canonical name into either [`READ_OPS`] or [`MUTATING_OPS`])
-/// will fall through the `None` arm; [`is_mutating_op`] treats unknown
-/// ops as write-side for safety.
+/// `None` for unknown ops. [`is_mutating_op`] treats those as write.
 #[must_use]
 pub fn op_kind(op: &str) -> Option<OpKind> {
     if READ_OPS.contains(&op) {
@@ -249,39 +182,22 @@ pub fn op_kind(op: &str) -> Option<OpKind> {
     }
 }
 
-/// Run Layer 1 enforcement for an upcoming op (read or write).
-///
-/// `target` is the absolute path of the file the op will operate on.
-/// `op` is the canonical op name (`comment`, `write`, `get`, etc. —
-/// the same names the `plan` surface uses). The function name is kept
-/// for back-compat: as of rem-djfx the guard gates reads as well, but
-/// renaming the entry point would touch every call site.
+/// Layer 1 enforcement for an upcoming op (read or write). `op` is
+/// the canonical name (`comment`, `write`, `get`, …); name kept for
+/// back-compat — the guard gates reads as well.
 ///
 /// # Errors
 ///
 /// - I/O / parse failures from [`resolve_permissions`].
-/// - [`OpGuardError::OutsideAllowedRoots`] when the target is outside
-///   the inherited `trusted_roots` set (or the realm is locked via
-///   `trusted_roots: []`).
-/// - [`OpGuardError::DeniedOp`] when a `deny_ops` entry covers the
-///   target and lists `op`.
-/// - [`OpGuardError::DotFolderDenied`] when the target is inside a
-///   dot-folder under a trusted subtree and that dot-folder is not
-///   in `allow_dot_folders`.
+/// - [`OpGuardError::OutsideAllowedRoots`], [`OpGuardError::DeniedOp`],
+///   [`OpGuardError::DotFolderDenied`] when the corresponding rule
+///   fires.
 pub fn pre_mutate_check(system: &dyn System, op: &str, target: &Path) -> Result<()> {
     pre_mutate_check_for_caller(system, op, target, &CallerInfo::default())
 }
 
-/// Run Layer 1 enforcement for an upcoming mutating op, with caller
-/// context for identity-scoped `deny_ops` (rem-egp9).
-///
-/// Identical to [`pre_mutate_check`] except the `caller` lets the
-/// guard:
-/// - skip `deny_ops` entries whose `to:` filter does not match the
-///   caller (when in strict mode), and
-/// - synthesize a virtual `~/.ssh/**` deny when the caller is an
-///   agent in strict mode (overridable via an explicit `to:` entry
-///   for the same path with `ops: []`).
+/// Caller-aware variant: skips `deny_ops` `to:` mismatches in strict
+/// mode and synthesizes the agent `~/.ssh/**` default-deny.
 ///
 /// # Errors
 ///
@@ -318,11 +234,8 @@ pub fn check_against_resolved(
     check_against_resolved_for_caller(system, op, target, permissions, &CallerInfo::default())
 }
 
-/// Caller-aware variant of [`check_against_resolved`].
-///
-/// HOME is read via the `system` so MockSystem-driven tests can drive
-/// the synthesized `~/.ssh/**` virtual deny via `with_env` without
-/// touching the real process env.
+/// Caller-aware variant. Reads HOME via `system` so `MockSystem`
+/// tests drive `~/.ssh/**` via `with_env`.
 ///
 /// # Errors
 ///
@@ -340,11 +253,8 @@ pub fn check_against_resolved_for_caller(
         return Err(violation.into());
     }
 
-    // rem-djfx: trusted_roots gates BOTH reads and writes when the
-    // walk produced any opinion (a non-empty list or an explicit lock
-    // via `trusted_roots: []`). Open mode (no opinion anywhere on the
-    // walk) leaves the guard silent and the boundary check at the
-    // call site (CLI cwd / MCP spawn cwd) supplies the implicit root.
+    // No opinion anywhere on the walk leaves the guard silent so the
+    // call site can supply the implicit cwd root.
     if !permissions.trusted_roots_unconstrained()
         && let Some(violation) = find_trusted_roots_violation(op, target, permissions)
     {
@@ -364,20 +274,14 @@ pub fn check_against_resolved_for_caller(
     Ok(())
 }
 
-/// Where to expand `~/.ssh/**` for the synthesized agent default-deny.
-/// Reads HOME via the os-shim system so MockSystem-driven tests can set
-/// it via `with_env` without mutating the real process env.
 fn system_home_or_passthrough(system: &dyn System) -> PathBuf {
     system
         .env_var("HOME")
         .map_or_else(|_err| PathBuf::from("~"), PathBuf::from)
 }
 
-/// Build the effective `deny_ops` list the caller should be checked
-/// against (rem-egp9). Synthesizes a virtual `~/.ssh/**` deny entry
-/// when the caller is an agent in strict mode and the user has not
-/// explicitly opted out via a same-path entry with `ops: []` and a
-/// `to:` filter naming the caller.
+/// Synthesizes a virtual `~/.ssh/**` deny for strict-mode agents
+/// unless overridden by a same-path entry with `ops: []` + matching `to:`.
 fn effective_deny_ops(
     home: &Path,
     permissions: &ResolvedPermissions,
@@ -388,26 +292,19 @@ fn effective_deny_ops(
         return out;
     }
     let ssh_dir = home.join(".ssh");
-    // Skip synthesis when the user has an explicit override: a
-    // deny_ops entry on the same path with empty `ops` and a `to:`
-    // that names the caller. That signals "trust this agent here".
     let overridden = permissions.deny_ops.iter().any(|entry| {
         path_covers(&entry.path, &ssh_dir) && entry.ops.is_empty() && caller.matches_to(&entry.to)
     });
     if overridden {
         return out;
     }
-    // Synthesize a virtual deny covering EVERY op (read + mutating)
-    // on `~/.ssh/**`. The `to:` field is empty because the entry is
-    // already gated on `is_strict_agent`.
     let virtual_entry = ResolvedDenyOps {
         ops: OpName::ALL.to_vec(),
         path: ssh_dir,
-        source_file: PathBuf::from("<rem-egp9 default: agents cannot read ~/.ssh/**>"),
+        source_file: PathBuf::from("<default: agents cannot access ~/.ssh/**>"),
         to: Vec::new(),
     };
-    // Prepend so it fires before any user-declared deny on overlapping
-    // paths — order is "first match wins" in [`find_deny_ops_violation`].
+    // Prepend: first match wins in `find_deny_ops_violation`.
     out.insert(0, virtual_entry);
     out
 }
@@ -448,14 +345,8 @@ fn find_deny_ops_violation(
         })
 }
 
-/// `true` when `target` is inside at least one `trusted_roots` entry.
-///
-/// An empty list returns `true` here — callers decide what that
-/// means: the per-op guard treats it as "no opinion stated when not
-/// locked, deny everything when locked"; `inspect::check` keeps the
-/// historic open-mode reading. Shared by `op_guard` and
-/// `inspect::check` so the two layers cannot drift on the
-/// covers-an-entry predicate.
+/// Empty list returns `true`; callers decide what that means.
+/// Shared between `op_guard` and inspect to keep them in sync.
 #[must_use]
 pub fn target_is_sanctioned(target: &Path, trusted_roots: &[ResolvedTrustedRoot]) -> bool {
     if trusted_roots.is_empty() {

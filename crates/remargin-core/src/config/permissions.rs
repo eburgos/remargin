@@ -32,23 +32,9 @@ pub struct Permissions {
     #[serde(default)]
     pub deny_ops: Vec<DenyOpsEntry>,
 
-    /// Paths where remargin is sanctioned to operate. The literal `"*"`
-    /// matches the entire realm anchored at the declaring
-    /// `.remargin.yaml`. Each entry can be a bare string (just a path)
-    /// or a full record with `also_deny_bash` / `cli_allowed` flags.
-    ///
-    /// Three on-disk states (rem-djfx):
-    /// - **Key absent** (`None`) — no opinion stated; the resolver
-    ///   falls back to the cwd as the implicit allow-listed root.
-    /// - **Empty list** (`Some(vec![])`) — explicit zero grants; the
-    ///   realm is locked and every read / write outside any inherited
-    ///   parent root is denied.
-    /// - **Non-empty list** — exactly those paths are reachable;
-    ///   nothing else.
-    ///
-    /// Drives the per-op `op_guard` allow-list (reads + writes), the
-    /// Claude-side `Edit/Write/Bash` deny projection, and (until
-    /// rem-08w0) the MCP boot-time sandbox boundary.
+    /// `None` = falls back to cwd. `Some(vec![])` = locked realm, deny
+    /// everything outside inherited parent roots. `Some(non-empty)` =
+    /// exactly those paths reachable. `"*"` = entire declaring realm.
     #[serde(default)]
     pub trusted_roots: Option<Vec<TrustedRootEntry>>,
 }
@@ -69,8 +55,8 @@ pub struct TrustedRootEntryFull {
     #[serde(default)]
     pub also_deny_bash: Vec<String>,
 
-    /// When `true`, suppress the projected `Bash(remargin *)` deny so
-    /// the CLI stays usable inside this entry.
+    /// Suppress the projected `Bash(remargin *)` deny so the CLI stays
+    /// usable inside this entry.
     #[serde(default)]
     pub cli_allowed: bool,
 

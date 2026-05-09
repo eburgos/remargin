@@ -76,9 +76,6 @@ fn scenario_03_restrict_subpath_blocks_outside() {
     assert!(outside_allowed_match(&err, "comment", "/r/.remargin.yaml"));
 }
 
-/// rem-djfx: reads are gated by `trusted_roots` just like writes.
-/// Every read op outside the allow-list is refused with the same
-/// `OutsideAllowedRoots` error.
 #[test]
 fn scenario_04_restrict_blocks_read_ops_outside_allow_list() {
     let system = realm_with("permissions:\n  trusted_roots:\n    - path: src/secret\n");
@@ -91,7 +88,6 @@ fn scenario_04_restrict_blocks_read_ops_outside_allow_list() {
     }
 }
 
-/// rem-djfx: reads INSIDE the allow-list pass.
 #[test]
 fn scenario_04b_restrict_allows_read_ops_inside_allow_list() {
     let system = realm_with("permissions:\n  trusted_roots:\n    - path: src/secret\n");
@@ -283,9 +279,6 @@ fn is_mutating_op_recognises_full_set() {
     assert!(!is_mutating_op("query"));
 }
 
-/// rem-djfx: reads see the same dot-folder default-deny as writes.
-/// Path inside an unlisted dot-folder under a trusted subtree is
-/// refused for read ops too.
 #[test]
 fn dot_folder_denial_active_for_read_ops() {
     let resolved = ResolvedPermissions {
@@ -446,9 +439,7 @@ fn denial_error_wording_matches_canonical_template() {
     assert!(DENY_OPS_DENIAL_TEMPLATE.contains("{source_file}"));
 }
 
-// ---------------------------------------------------------------------
-// Identity-scoped deny_ops + agent ~/.ssh/** default (rem-egp9)
-// ---------------------------------------------------------------------
+// Identity-scoped deny_ops + agent ~/.ssh/** default
 
 fn deny_ops_with_to(ops: Vec<OpName>, path: &str, to: &[&str]) -> Vec<ResolvedDenyOps> {
     vec![ResolvedDenyOps {
@@ -641,9 +632,7 @@ fn deny_ops_to_matches_id_when_name_does_not() {
     assert!(chain.contains("alice-id"), "{chain}");
 }
 
-// ---------------------------------------------------------------------
-// rem-djfx: trusted_roots three-state semantics
-// ---------------------------------------------------------------------
+// trusted_roots three-state semantics
 
 /// `permissions:` block with no `trusted_roots:` key behaves like
 /// open mode — reads + writes anywhere are allowed (the implicit

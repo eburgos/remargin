@@ -144,11 +144,8 @@ fn first_matching_rule(resolved: &ResolvedPermissions, canonical: &Path) -> Opti
         });
     }
 
-    // rem-djfx: report restricted when the target is outside the
-    // declared trusted_roots set OR the realm is locked
-    // (`trusted_roots: []` somewhere in the walk). Routes through the
-    // same predicate as the per-op guard so the two layers cannot
-    // drift on the covers-an-entry rule.
+    // Routes through the same predicate as the per-op guard so the
+    // two layers can't drift on the covers-an-entry rule.
     if !resolved.trusted_roots_unconstrained() {
         let inside = !resolved.trusted_roots.is_empty()
             && target_is_sanctioned(canonical, &resolved.trusted_roots);

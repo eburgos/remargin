@@ -53,15 +53,8 @@ pub struct PermissionsLintError {
     pub source_file: PathBuf,
 }
 
-/// A grouped `allow_dot_folders` declaration after path resolution.
-///
-/// One entry per declaring `.remargin.yaml` (rem-qdrw): the resolver
-/// used to flatten every file's list into one `Vec<String>`, which lost
-/// the `source_file` provenance that `restrict` / `deny_ops` already
-/// carried. Keeping a per-file group preserves the same shape used by
-/// the rest of the resolved-permissions structure and lets diagnostic
-/// surfaces (e.g. `permissions show --json`) name the file that
-/// contributed each declaration.
+/// One entry per declaring `.remargin.yaml` so diagnostic surfaces
+/// can name the file that contributed each declaration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ResolvedAllowDotFolders {
@@ -87,11 +80,8 @@ pub struct ResolvedDenyOps {
     /// `.remargin.yaml` that declared the entry.
     pub source_file: PathBuf,
 
-    /// Optional identity filter (rem-egp9). Empty means "all
-    /// identities" — back-compat with pre-rem-egp9 `deny_ops` entries.
-    /// Honored only when the realm is in strict mode; open-mode
-    /// realms ignore the filter and `lint_permissions_in_parents`
-    /// surfaces a warning.
+    /// Identity filter; empty = all identities. Honored only in
+    /// strict mode (open mode ignores it; lint surfaces a warning).
     pub to: Vec<String>,
 }
 
@@ -104,18 +94,12 @@ pub struct ResolvedPermissions {
 
     pub deny_ops: Vec<ResolvedDenyOps>,
 
-    /// Paths where remargin is sanctioned to operate, in walk order
-    /// (deepest first). Drives the per-op guard for both reads and
-    /// writes (rem-djfx), the Claude-side rule emission, and (until
-    /// rem-08w0) the MCP sandbox boundary.
+    /// Walk order, deepest first.
     pub trusted_roots: Vec<ResolvedTrustedRoot>,
 
-    /// `Some(source_file)` when at least one `.remargin.yaml` in the
-    /// walk declared `trusted_roots: []` (rem-djfx). An explicit empty
-    /// list locks the realm: every read and write outside any
-    /// inherited parent root is denied. The first locker (deepest in
-    /// walk order) is recorded so refusal messages can name where the
-    /// lock came from.
+    /// `Some` = some `.remargin.yaml` in the walk declared
+    /// `trusted_roots: []`, locking the realm. Records the deepest
+    /// locker so refusal messages can name it.
     pub trusted_roots_lock: Option<PathBuf>,
 }
 
@@ -128,13 +112,8 @@ impl ResolvedPermissions {
             .collect()
     }
 
-    /// `true` when `trusted_roots` carries no opinion: the field was
-    /// absent in every `.remargin.yaml` on the walk and no file locked
-    /// the realm with `trusted_roots: []`.
-    ///
-    /// Open mode → the per-op guard treats the field as silent and
-    /// callers (CLI / MCP) supply the implicit allow-listed root (cwd)
-    /// at boundary time.
+    /// No opinion stated: every walked file was silent and nothing
+    /// locked the realm. Callers fall back to cwd.
     #[must_use]
     pub const fn trusted_roots_unconstrained(&self) -> bool {
         self.trusted_roots.is_empty() && self.trusted_roots_lock.is_none()
@@ -178,11 +157,7 @@ fn extend_resolved(
     let source_dir = source_file.parent().unwrap_or(source_file);
 
     if let Some(entries) = block.trusted_roots.as_ref() {
-        // `trusted_roots: []` (Some, empty) explicitly locks the realm
-        // (rem-djfx). Record the deepest locker as the canonical
-        // source so refusal messages point at it. Walk order is
-        // deepest-first, so the first observed lock is also the
-        // closest to start_dir.
+        // First observed lock = deepest, since walk is deepest-first.
         if entries.is_empty() && acc.trusted_roots_lock.is_none() {
             acc.trusted_roots_lock = Some(source_file.to_path_buf());
         }
@@ -261,23 +236,11 @@ fn resolve_relative(system: &dyn System, source_dir: &Path, raw: &str) -> PathBu
     canonicalize_or_passthrough(system, absolute)
 }
 
-/// Walk parents of `start_dir` and lint each `.remargin.yaml`'s permissions block.
+/// Walk parents of `start_dir` and lint each `.remargin.yaml`.
 ///
-/// Surfaces any deserialisation errors (including unknown op names in
-/// `permissions.deny_ops.ops`) as a structured list. The walk does NOT
-/// short-circuit on the first failure — every offending file is
-/// reported so the user fixes them in one pass.
-///
-/// rem-egp9: also surfaces a non-fatal "`deny_ops` `to:` is ignored
-/// in non-strict mode" warning per offending entry — open / registered
-/// mode realms cannot trust the caller's declared identity (it is
-/// trivially spoofed via `--identity` flags), so the per-op guard
-/// ignores the `to:` filter and emits a wider deny than the user
-/// likely intended. Strict-mode realms validate identity against the
-/// registry + signing key, so the filter is meaningful there.
-///
-/// I/O failures (e.g. read errors) are propagated up as `Err`; only
-/// parse failures and lint warnings become `PermissionsLintError`s.
+/// Doesn't short-circuit — every offending file is reported in one
+/// pass. Surfaces a non-fatal warning when `deny_ops` declares `to:`
+/// outside strict mode (where identity is spoofable).
 ///
 /// # Errors
 ///
@@ -341,34 +304,13 @@ pub fn lint_permissions_in_parents(
     Ok(findings)
 }
 
-/// Walk up from `start_dir`, parse every `.remargin.yaml` found, and
-/// accumulate the `permissions:` blocks. Returns the accumulated set
-/// with source-file provenance.
-///
-/// Order is "deepest file first" — `restrict[0]` comes from the
-/// `.remargin.yaml` closest to `start_dir`, with progressively
-/// shallower files appended. The full set is preserved so callers
-/// can audit every declaration without re-walking.
-///
-/// Files without a `permissions:` block contribute nothing (back-compat:
-/// the field defaults to [`Permissions::default`]). Files that fail to
-/// parse stop the walk and surface an error whose context names the
-/// offending file.
-///
-/// `trusted_roots` are narrowed across the walk per rem-egp9 — see the
-/// module-level docs. The final `acc.trusted_roots` carries one entry
-/// per surviving `(path, source_file)` tuple from the deepest level
-/// that actually constrained the set; entries that violate
-/// intersection or containment surface as parse-time errors.
+/// Walk up from `start_dir`, parse every `.remargin.yaml`, accumulate
+/// `permissions:` blocks. Order is deepest-first.
 ///
 /// # Errors
 ///
-/// - I/O failure while checking existence of or reading any
-///   `.remargin.yaml` on the walk.
-/// - YAML parse failure on any `.remargin.yaml` on the walk; the error
-///   message includes the file path.
-/// - Unknown fields under `permissions:` are rejected (the on-disk
-///   structs use `#[serde(deny_unknown_fields)]`).
+/// I/O or YAML parse failure on any `.remargin.yaml` in the walk.
+/// Unknown fields under `permissions:` are rejected.
 pub fn resolve_permissions(system: &dyn System, start_dir: &Path) -> Result<ResolvedPermissions> {
     let mut acc = ResolvedPermissions::default();
     let mut current = start_dir.to_path_buf();
@@ -395,17 +337,9 @@ pub fn resolve_permissions(system: &dyn System, start_dir: &Path) -> Result<Reso
     Ok(acc)
 }
 
-/// MCP / `allowlist::resolve_sandboxed` boundary set for `cwd`. Reads
-/// `permissions.trusted_roots` from the parent walk.
-///
-/// Three states (rem-djfx):
-/// - **Unconstrained** (no `.remargin.yaml` declared the field) →
-///   falls back to `[cwd]` so back-compat sessions keep working.
-/// - **Locked** (`trusted_roots: []` somewhere in the walk) → returns
-///   exactly the inherited entries from shallower files (may be
-///   empty), so the MCP / allowlist boundary tightens to those paths
-///   only.
-/// - **Constrained** (non-empty list) → returns those entries.
+/// MCP / `allowlist::resolve_sandboxed` boundary set for `cwd`.
+/// Unconstrained → `[cwd]`. Locked or constrained → exactly the
+/// resolved entries.
 ///
 /// # Errors
 ///
