@@ -189,6 +189,11 @@ interface MockCodeElement {
 interface MockHost {
   className: string;
   dataset: Record<string, string>;
+  // The reading-mode post-processor pre-hides the host via
+  // `host.style.display = "none"` and `render()` un-hides via
+  // `style.display = ""`, so the mock must carry a real (mutable)
+  // style bag.
+  style: Record<string, string>;
   __remarginRoot?: { unmount: () => void; render: (element: unknown) => void };
 }
 
@@ -281,7 +286,7 @@ beforeEach(() => {
   createdHosts.length = 0;
   (globalThis as { document?: unknown }).document = {
     createElement: (_tag: string) => {
-      const host: MockHost = { className: "", dataset: {} };
+      const host: MockHost = { className: "", dataset: {}, style: {} };
       createdHosts.push(host);
       return host;
     },
@@ -585,7 +590,7 @@ describe("pretty-print end-to-end (T39 / rem-fyj8.4)", () => {
         captureCm6WidgetOnClicks();
         return widget.toDOM();
       })();
-      const id = (host as MockHost).dataset.remarginId;
+      const id = (host as unknown as MockHost).dataset.remarginId;
       if (id) ids.push(id);
     });
     assert.deepStrictEqual(ids.sort(), ["c1", "c2"]);

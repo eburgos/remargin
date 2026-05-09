@@ -37,6 +37,10 @@ interface MockCodeElement {
 interface MockHost {
   className: string;
   dataset: Record<string, string>;
+  // The post-processor pre-hides the host via `host.style.display = "none"`
+  // and `render()` un-hides via `style.display = ""`, so the mock must
+  // carry a real (mutable) style bag.
+  style: Record<string, string>;
   // Placeholder so tests that need to dispatch a click can attach a
   // listener after the post-processor mounts the React root.
   __clickHandlers: Array<(event: unknown) => void>;
@@ -54,6 +58,7 @@ function makeHost(): MockHost {
   const host: MockHost = {
     className: "",
     dataset: {},
+    style: {},
     __clickHandlers: [],
     addEventListener(event, handler) {
       if (event === "click") this.__clickHandlers.push(handler);
@@ -565,6 +570,10 @@ describe("ReadingModeCommentChild", () => {
         plugin as unknown as RemarginPlugin
       );
       child.onload();
+      // The first render now happens after loadTree resolves (or its
+      // sourcePath fallback fires for the unmocked vault file). Drain
+      // microtasks so the render fires before we assert.
+      await new Promise((r) => setTimeout(r, 0));
 
       assert.ok(capturedOnClick, "expected the rendered widget to receive an onClick prop");
       capturedOnClick("c1", "notes/test.md");
@@ -609,6 +618,9 @@ describe("ReadingModeCommentChild", () => {
         plugin as unknown as RemarginPlugin
       );
       child.onload();
+      // First render happens after loadTree resolves (or its
+      // sourcePath fallback fires). Drain microtasks before asserting.
+      await new Promise((r) => setTimeout(r, 0));
 
       const wrapper = capturedElement as {
         type: unknown;
@@ -780,10 +792,6 @@ describe("ReadingModeCommentChild", () => {
       assert.ok(parsed?.valid, "fixture must be a valid block");
 
       const host = makeHost();
-      // The container's `style` shape is the surface `loadTree` mutates
-      // when it suppresses the host. The default mock host doesn't have
-      // one — splice it in so the assertion can read it.
-      (host as unknown as { style: Record<string, string> }).style = {};
       const child = new ReadingModeCommentChild(
         host as unknown as HTMLElement,
         parsed,
