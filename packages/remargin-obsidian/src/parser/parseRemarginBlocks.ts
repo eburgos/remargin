@@ -34,12 +34,17 @@ const enum State {
   Content,
 }
 
+// Field names match the canonical on-disk YAML keys produced by the
+// Rust writer (`crates/remargin-core/src/writer.rs::serialize_comment`).
+// Two of them differ from the in-memory `Comment` field names — the
+// caller maps `type` → `author_type` and `reply-to` → `reply_to` after
+// parsing.
 interface YamlFields {
   id?: string;
   author?: string;
-  author_type?: string;
+  type?: string;
   ts?: string;
-  reply_to?: string;
+  "reply-to"?: string;
   thread?: string;
   to?: string[];
   ack?: Array<{ author: string; ts: string }>;
@@ -70,7 +75,10 @@ function parseSimpleYaml(lines: string[]): YamlFields {
       currentList = null;
     }
 
-    const match = trimmed.match(/^(\w+):\s*(.*)/);
+    // `[\w-]+` so YAML keys with hyphens (e.g. `reply-to`) parse. The
+    // Rust writer uses kebab-case for `reply-to`; without the hyphen
+    // here the line is silently dropped and threading breaks.
+    const match = trimmed.match(/^([\w-]+):\s*(.*)/);
     if (!match) continue;
 
     const [, key, rawValue] = match;
@@ -164,10 +172,14 @@ export function parseRemarginBlocks(text: string): ParsedBlock[] {
             comment: {
               id: yaml.id,
               author: yaml.author,
-              author_type: yaml.author_type as AuthorType | undefined,
+              // The on-disk YAML key is `type` (Rust writer line 149);
+              // the in-memory Comment field is `author_type`.
+              author_type: yaml.type as AuthorType | undefined,
               ts: yaml.ts,
               content,
-              reply_to: yaml.reply_to,
+              // The on-disk YAML key is `reply-to` (Rust writer line
+              // 157); the in-memory Comment field is `reply_to`.
+              reply_to: yaml["reply-to"],
               thread: yaml.thread,
               to: yaml.to ?? [],
               ack: yaml.ack ?? [],
