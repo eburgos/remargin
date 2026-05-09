@@ -2,7 +2,7 @@
 //!
 //! [`unprotect`] is the public entry point: anchor discovery (walk
 //! up to the nearest `.claude/` ancestor), sidecar lookup, removal
-//! of the matching `permissions.restrict` entry from
+//! of the matching `permissions.trusted_roots` entry from
 //! `<anchor>/.remargin.yaml`, and finally a call into
 //! [`crate::permissions::claude_sync::revert_rules`] to scrub the
 //! settings-file rules + drop the sidecar entry.
@@ -12,7 +12,7 @@
 //! `restrict()` writes three pieces of state. `unprotect()` reverses
 //! them in the order that minimises divergence:
 //!
-//! 1. `<anchor>/.remargin.yaml` — the source-of-truth restrict
+//! 1. `<anchor>/.remargin.yaml` — the source-of-truth `trusted_roots`
 //!    declaration. Removed first so the per-op guard stops enforcing
 //!    on the next call.
 //! 2. `<anchor>/.claude/.remargin-restrictions.json` (the sidecar)
@@ -31,11 +31,11 @@
 //! reach the cleanest possible final state, not to police prior
 //! edits.
 //!
-//! ## bypass
+//! ## Sanctioned `.remargin.yaml` write
 //!
-//! Same scoping as `restrict`: this module is the only place
-//! besides [`crate::permissions::restrict`] that writes
-//! `.remargin.yaml` through the dedicated
+//! Same scoping as `restrict`: this module is the only place besides
+//! [`crate::permissions::restrict`] that writes `.remargin.yaml`
+//! through the dedicated
 //! [`crate::permissions::restrict::write_remargin_yaml`] helper.
 
 #[cfg(test)]
@@ -60,9 +60,9 @@ const RESTRICT_WILDCARD: &str = "*";
 #[non_exhaustive]
 pub struct UnprotectArgs {
     /// Subpath relative to the anchor, OR the literal `"*"`. Must
-    /// match the on-disk `path` field of the restrict entry being
-    /// reversed (the lookup key for both the YAML editor and the
-    /// sidecar).
+    /// match the on-disk `path` field of the `trusted_roots` entry
+    /// being reversed (the lookup key for both the YAML editor and
+    /// the sidecar).
     pub path: String,
     /// When `true`, [`unprotect`] returns an error instead of a
     /// warning when `path` is not currently restricted (no YAML
@@ -112,7 +112,7 @@ pub struct UnprotectOutcome {
     /// Diagnostics — manual-edit detections, missing files, etc.
     /// Empty on the clean-revert happy path.
     pub warnings: Vec<String>,
-    /// `true` when a matching `permissions.restrict[*].path` entry
+    /// `true` when a matching `permissions.trusted_roots[*].path` entry
     /// existed in `.remargin.yaml` and was removed.
     pub yaml_entry_removed: bool,
 }
@@ -194,7 +194,7 @@ pub fn unprotect(
     Ok(outcome)
 }
 
-/// Remove the `permissions.restrict[*]` entry whose `path` field
+/// Remove the `permissions.trusted_roots[*]` entry whose `path` field
 /// matches `path_on_disk`. Returns `true` when an entry was found
 /// and removed.
 ///
@@ -202,7 +202,7 @@ pub fn unprotect(
 /// any empty `permissions:` sub-arrays and removes the wrapping
 /// mapping if it ends up empty. The YAML is rewritten when EITHER the
 /// removal OR the compaction produced a change, so hand-edited
-/// `restrict: []` / `deny_ops: []` placeholders left around from
+/// `trusted_roots: []` / `deny_ops: []` placeholders left around from
 /// earlier sessions are scrubbed on the next unprotect call.
 fn remove_yaml_entry(system: &dyn System, anchor: &Path, path_on_disk: &str) -> Result<bool> {
     let yaml_path = anchor.join(".remargin.yaml");
@@ -232,10 +232,10 @@ fn remove_yaml_entry(system: &dyn System, anchor: &Path, path_on_disk: &str) -> 
     Ok(removed)
 }
 
-/// Remove the `permissions.restrict[*]` entry whose `path` field
+/// Remove the `permissions.trusted_roots[*]` entry whose `path` field
 /// matches `path_on_disk`. Returns `true` when an entry was actually
-/// removed. Missing `permissions:` or `restrict:` keys are treated as
-/// "nothing to remove".
+/// removed. Missing `permissions:` or `trusted_roots:` keys are treated
+/// as "nothing to remove".
 fn remove_restrict_path(root: &mut serde_yaml::Mapping, path_on_disk: &str) -> bool {
     let permissions_key = Value::String(String::from("permissions"));
     let Some(permissions) = root

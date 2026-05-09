@@ -115,8 +115,8 @@ pub struct ResolvedConfig {
     /// (and any tooling that wants to report provenance) can name the
     /// file without re-walking.
     pub source_path: Option<PathBuf>,
-    /// Allow-listed roots derived from `permissions.restrict` in the
-    /// parent walk; `[cwd]` when none declared.
+    /// Allow-listed roots derived from `permissions.trusted_roots` in
+    /// the parent walk; `[cwd]` when none declared.
     pub trusted_roots: Vec<PathBuf>,
     /// Only settable via CLI when compiled with `--features unrestricted`.
     pub unrestricted: bool,

@@ -32,7 +32,8 @@ pub struct CheckOutput {
     pub matching_rule: Option<MatchingRule>,
     /// Canonical absolute path that was evaluated.
     pub path: PathBuf,
-    /// `true` when any `restrict` or `deny_ops` rule covers the path.
+    /// `true` when the path is outside the `trusted_roots` allow-list
+    /// or covered by a `deny_ops` rule.
     pub restricted: bool,
 }
 
@@ -85,9 +86,9 @@ pub struct ShowOutput {
 /// `permissions check`: would `op_guard` refuse a mutating op on `path`?
 ///
 /// Returns `restricted=true` when the path is outside the allow-list
-/// declared by `restrict`, or covered by a `deny_ops` entry. Routes
-/// through the same predicates the per-op guard uses so the two layers
-/// cannot drift.
+/// declared by `trusted_roots`, or covered by a `deny_ops` entry.
+/// Routes through the same predicates the per-op guard uses so the
+/// two layers cannot drift.
 ///
 /// # Errors
 ///
@@ -173,7 +174,7 @@ fn first_matching_rule(resolved: &ResolvedPermissions, canonical: &Path) -> Opti
 fn group_allow_dot_folders(resolved: &ResolvedPermissions) -> Vec<AllowDotFoldersView> {
     // the resolver now preserves one entry per declaring
     // `.remargin.yaml` so each view's `source_file` mirrors the
-    // provenance already carried by `restrict` and `deny_ops`.
+    // provenance already carried by `trusted_roots` and `deny_ops`.
     resolved
         .allow_dot_folders
         .iter()

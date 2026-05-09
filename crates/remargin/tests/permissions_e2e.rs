@@ -10,7 +10,7 @@
 //! - E9: per-op no-cache (manual `.remargin.yaml` edit picked up on
 //!   the very next op without a restart).
 //! - E13: back-compat with realms that have no `permissions:` block.
-//! - E14: dot-folder default-deny under restrict.
+//! - E14: dot-folder default-deny under `trusted_roots`.
 //! - E15: `allow_dot_folders` override.
 //! - E16: `also_deny_bash` propagates into Claude settings.
 //! - E17: `--cli-allowed` omits the `Bash(remargin *)` deny rule.
@@ -276,7 +276,7 @@ mod tests {
         assert_status(&out, 0);
     }
 
-    /// E14: dot-folder default-deny under restrict. Once
+    /// E14: dot-folder default-deny under `trusted_roots`. Once
     /// `src/secret` is restricted, an op against
     /// `src/secret/.git/foo.md` is refused even though `.git` itself
     /// is not in the YAML.

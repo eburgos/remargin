@@ -73,9 +73,9 @@ fn clean_reverse_restores_state() {
     let sc = sidecar::load(&system, &anchor).unwrap();
     assert!(sc.entries.is_empty());
 
-    // Project-scope settings file no longer carries the restrict
-    // rule. the projection is the coarse
-    // `Bash(remargin *)` deny when `cli_allowed = false`.
+    // Project-scope settings file no longer carries the projected
+    // rule (the coarse `Bash(remargin *)` deny when
+    // `cli_allowed = false`).
     let settings_body = system.read_to_string(&files[0]).unwrap();
     assert!(!settings_body.contains("Bash(remargin *)"));
 }
@@ -150,7 +150,7 @@ fn yaml_missing_sidecar_present_reverts_settings_only() {
     let files = settings_files(&anchor);
     restrict::restrict(&system, &anchor, &restrict_args("src/secret"), &files).unwrap();
 
-    // Strip the YAML entry by hand: rewrite without permissions.restrict.
+    // Strip the YAML entry by hand: rewrite without permissions.trusted_roots.
     restrict::write_remargin_yaml(&system, &anchor, "permissions:\n  trusted_roots: []\n").unwrap();
 
     let outcome = unprotect(

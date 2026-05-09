@@ -295,7 +295,7 @@ mod tests {
 
     /// helper that runs `restrict src/secret` with the
     /// given `--also-deny-bash` argv and returns the resulting
-    /// `permissions.restrict[0].also_deny_bash` list parsed from
+    /// `permissions.trusted_roots[0].also_deny_bash` list parsed from
     /// `.remargin.yaml`.
     fn also_deny_bash_for(extra_args: &[&str]) -> Vec<String> {
         let realm = realm_with_claude();

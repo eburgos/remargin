@@ -6,8 +6,8 @@
 //! `permissions:` blocks via T22's [`crate::config::permissions::resolve::resolve_permissions`],
 //! and refuses the op when:
 //!
-//! - The target sits under a `restrict` entry (any restriction applies
-//!   to mutating ops).
+//! - The target sits outside the `trusted_roots` allow-list (any
+//!   restriction applies to mutating ops).
 //! - A `deny_ops` entry covers the target AND its `ops` list contains
 //!   the current op name.
 //! - The target is inside a dot-folder under a restricted subtree, and
@@ -15,8 +15,9 @@
 //!   folder is always allowed).
 //!
 //! Read-side ops (`get`, `metadata`, `comments`, `query`, `search`,
-//! `ls`, `verify`, `lint`) are unaffected by `restrict`. To block reads,
-//! callers declare an explicit `deny_ops` entry naming the read op.
+//! `ls`, `verify`, `lint`) are unaffected by `trusted_roots`. To block
+//! reads, callers declare an explicit `deny_ops` entry naming the read
+//! op.
 //!
 //! ## No caching
 //!

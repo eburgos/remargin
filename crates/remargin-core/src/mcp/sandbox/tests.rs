@@ -33,9 +33,9 @@ fn from_walk_uses_spawn_cwd_with_no_config() {
 }
 
 #[test]
-fn from_walk_uses_spawn_cwd_when_only_restrict_declared() {
-    // `restrict` is the per-op allow-list; it does not extend the
-    // boot sandbox. Only `trusted_roots` does that.
+fn from_walk_uses_spawn_cwd_when_only_trusted_roots_declared() {
+    // `trusted_roots` is the per-op allow-list; it does not extend
+    // the boot sandbox.
     let system = spawn_system_with(Some("permissions:\n  trusted_roots:\n    - path: '*'\n"));
     let sandbox = McpSandbox::from_walk(&system, Path::new("/r")).unwrap();
     assert_eq!(sandbox.roots, vec![PathBuf::from("/r")]);

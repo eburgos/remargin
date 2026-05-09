@@ -191,10 +191,11 @@ fn scenario_11_remargin_folder_special_cased_by_dot_folder_check() {
     .unwrap();
 }
 
-/// Multi-realm: deepest restrict declaration is what cites the source
-/// file when a path is outside its scope but inside the parent's.
-/// Since `restrict` accumulates as an allow-list, the deepest entry
-/// declared at `/r/sub` covers `/r/sub/foo.md`, so the op succeeds.
+/// Multi-realm: deepest `trusted_roots` declaration is what cites the
+/// source file when a path is outside its scope but inside the
+/// parent's. Since `trusted_roots` accumulates as an allow-list, the
+/// deepest entry declared at `/r/sub` covers `/r/sub/foo.md`, so the
+/// op succeeds.
 #[test]
 fn scenario_12_multi_realm_walks_combine() {
     let parent = "permissions:\n  trusted_roots:\n    - path: '*'\n";
@@ -406,8 +407,8 @@ fn denial_error_wording_matches_canonical_template() {
         target: PathBuf::from("/r/secret/foo.md"),
     };
     let outside_msg = format!("{outside}");
-    let outside_expected_backtick = "op `comment` on `/r/secret/foo.md` is denied: outside the allow-list declared by `restrict` in /r/.remargin.yaml";
-    let outside_expected_quoted = "op 'comment' on '/r/secret/foo.md' is denied: outside the allow-list declared by 'restrict' in /r/.remargin.yaml";
+    let outside_expected_backtick = "op `comment` on `/r/secret/foo.md` is denied: outside the allow-list declared by `trusted_roots` in /r/.remargin.yaml";
+    let outside_expected_quoted = "op 'comment' on '/r/secret/foo.md' is denied: outside the allow-list declared by 'trusted_roots' in /r/.remargin.yaml";
     assert!(
         outside_msg == outside_expected_backtick || outside_msg == outside_expected_quoted,
         "OutsideAllowedRoots wording drifted; got: {outside_msg}",

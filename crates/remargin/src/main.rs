@@ -653,7 +653,7 @@ enum Commands {
     },
     /// Restrict an agent-edit subpath.
     ///
-    /// Adds a `permissions.restrict` entry to the nearest
+    /// Adds a `permissions.trusted_roots` entry to the nearest
     /// `.claude/`-bearing ancestor's `.remargin.yaml` and projects
     /// the equivalent rules into both Claude settings files
     /// (`<anchor>/.claude/settings.local.json` and
@@ -777,7 +777,7 @@ enum Commands {
     },
     /// Reverse a previous `restrict`.
     ///
-    /// Removes the matching `permissions.restrict` entry from the
+    /// Removes the matching `permissions.trusted_roots` entry from the
     /// nearest `.claude/`-bearing ancestor's `.remargin.yaml` AND
     /// scrubs the sidecar-tracked rules from both Claude settings
     /// files. Idempotent. Surfaces manual-edit divergences as

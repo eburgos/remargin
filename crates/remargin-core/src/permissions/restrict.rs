@@ -12,21 +12,21 @@
 //! [`crate::config::permissions::Permissions`] struct (which would
 //! drop unknown keys the user may have added under top-level YAML),
 //! the editor parses the file as a `serde_yaml::Value`, mutates only
-//! the `permissions.restrict` array, and writes the result back. That
+//! the `permissions.trusted_roots` array, and writes the result back. That
 //! preserves the rest of the user's `.remargin.yaml` shape verbatim
 //! at the cost of dropping inline comments — acceptable per the spec
 //! because `.remargin.yaml` is a config file, not a comment-managed
 //! markdown document.
 //!
-//! ## bypass
+//! ## Sanctioned `.remargin.yaml` write
 //!
-//! (the agent-side guard against writing `.remargin.yaml`
-//! through the `write` / `edit` ops) intentionally does NOT cover this
-//! module. `restrict` (and the future `unprotect`) is the explicit,
-//! sanctioned write path: the user invokes it deliberately through a
-//! dedicated command. The single helper [`write_remargin_yaml`] is
-//! the ONLY way the bypass is exercised; keeping it scoped here makes
-//! the audit boundary obvious.
+//! The agent-side guard against writing `.remargin.yaml` through the
+//! `write` / `edit` ops intentionally does NOT cover this module.
+//! `restrict` (and `unprotect`) is the explicit, sanctioned write
+//! path: the user invokes it deliberately through a dedicated
+//! command. The single helper [`write_remargin_yaml`] is the ONLY way
+//! the bypass is exercised; keeping it scoped here makes the audit
+//! boundary obvious.
 
 #[cfg(test)]
 mod tests;
@@ -41,7 +41,7 @@ use serde_yaml::{Mapping, Value};
 use crate::config::permissions::resolve::{ResolvedTrustedRoot, TrustedRootPath};
 use crate::permissions::claude_sync::{RuleSet, apply_rules, rules_for};
 
-/// Wildcard literal accepted in `restrict.path`. Mirrors the schema
+/// Wildcard literal accepted in `trusted_roots[].path`. Mirrors the schema
 /// constant in [`crate::config::permissions`].
 const RESTRICT_WILDCARD: &str = "*";
 
@@ -81,7 +81,7 @@ impl RestrictArgs {
 }
 
 /// What [`simulate_upsert_remargin_yaml`] would do to the YAML file's
-/// `permissions.restrict` entry list.
+/// `permissions.trusted_roots` entry list.
 ///
 /// The "simulate" half of the upsert path: pure analysis, no writes.
 /// The "commit" half is [`commit_upsert_remargin_yaml`], which simply
@@ -104,7 +104,7 @@ pub struct RemarginYamlSim {
     pub would_be_noop: bool,
 }
 
-/// Snapshot of one `permissions.restrict` entry, parsed back from the
+/// Snapshot of one `permissions.trusted_roots` entry, parsed back from the
 /// on-disk YAML.
 ///
 /// Used by [`simulate_upsert_remargin_yaml`] (and the `plan restrict`
@@ -350,7 +350,7 @@ fn read_allow_dot_folders(system: &dyn System, anchor: &Path) -> Result<Vec<Stri
 ///
 /// I/O / parse failures from reading the file or interpreting the
 /// existing YAML shape (root mapping, `permissions` mapping,
-/// `permissions.restrict` sequence).
+/// `permissions.trusted_roots` sequence).
 pub fn simulate_upsert_remargin_yaml(
     system: &dyn System,
     anchor: &Path,
@@ -383,7 +383,7 @@ pub fn simulate_upsert_remargin_yaml(
         .or_insert(Value::Sequence(Vec::new()));
     let restrict_seq = restrict_value
         .as_sequence_mut()
-        .context("`permissions.restrict` must be a YAML sequence")?;
+        .context("`permissions.trusted_roots` must be a YAML sequence")?;
 
     let already = restrict_seq.iter().position(|entry| {
         entry
@@ -455,7 +455,7 @@ pub fn commit_upsert_remargin_yaml(
     write_remargin_yaml(system, anchor, &sim.projected_body)
 }
 
-/// Decode one YAML mapping entry from `permissions.restrict` into
+/// Decode one YAML mapping entry from `permissions.trusted_roots` into
 /// the structured projection used by simulation outputs and conflict
 /// detectors.
 fn read_restrict_entry(entry: &Value, fallback_path: &str) -> RestrictEntryProjection {
@@ -484,8 +484,8 @@ fn read_restrict_entry(entry: &Value, fallback_path: &str) -> RestrictEntryProje
     }
 }
 
-/// Read `<anchor>/.remargin.yaml`, append-or-merge the restrict
-/// entry, and persist via [`write_remargin_yaml`].
+/// Read `<anchor>/.remargin.yaml`, append-or-merge the
+/// `trusted_roots` entry, and persist via [`write_remargin_yaml`].
 ///
 /// Implementation: thin wrapper that runs
 /// [`simulate_upsert_remargin_yaml`] for the merge logic and then

@@ -21,17 +21,17 @@
 //! The sandbox is captured once and never reloaded. Editing
 //! `trusted_roots` mid-session does not change the active sandbox —
 //! the user must restart the MCP. (Per-op re-evaluation of the
-//! `restrict` / `deny_ops` blocks still happens through the existing
-//! `op_guard` parent walk.)
+//! `trusted_roots` / `deny_ops` blocks still happens through the
+//! existing `op_guard` parent walk.)
 //!
-//! # Interaction with `restrict`
+//! # Interaction with parent-realm `trusted_roots`
 //!
-//! At the op-guard layer, `trusted_roots` also carve outer `restrict`
-//! entries out for any target inside them — see
-//! [`crate::permissions::op_guard`] for the full rule. The two layers
-//! are not orthogonal: `trusted_roots` simultaneously gates the MCP
-//! file-access boundary (this module) and acts as a write-allowlist
-//! exception against parent-realm restricts.
+//! At the op-guard layer, a child realm's `trusted_roots` carves out
+//! parent-realm `trusted_roots` entries for any target inside them —
+//! see [`crate::permissions::op_guard`] for the full rule. The two
+//! layers are not orthogonal: `trusted_roots` simultaneously gates the
+//! MCP file-access boundary (this module) and acts as a write-allowlist
+//! exception against parent-realm allow-lists.
 //!
 //! # No transitive trust
 //!

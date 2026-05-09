@@ -12,7 +12,7 @@
 //! Unlike the document-projection helpers in
 //! [`crate::operations::projections`] (pure with respect to disk),
 //! config projections must read on-disk state to compare against the
-//! requested mutation: the YAML's `permissions.restrict` list, the
+//! requested mutation: the YAML's `permissions.trusted_roots` list, the
 //! sidecar entry, and each settings file the sidecar's
 //! `added_to_files` array points at. They still never write — that is
 //! the invariant the integration test guards.
@@ -155,11 +155,11 @@ pub fn project_unprotect(
     Ok(UnprotectProjection::Diff(Box::new(diff)))
 }
 
-/// Read the matching `permissions.restrict[*]` entry from the YAML
+/// Read the matching `permissions.trusted_roots[*]` entry from the YAML
 /// file at `yaml_path`, where `path_on_disk` is the same key
 /// `unprotect`'s mutating path uses. Returns `None` when the file is
 /// missing, the file has no matching entry, or the YAML shape is not
-/// the expected `permissions.restrict[]` mapping (defensive parity
+/// the expected `permissions.trusted_roots[]` mapping (defensive parity
 /// with the live op which treats unknown shapes as "nothing to
 /// remove").
 ///

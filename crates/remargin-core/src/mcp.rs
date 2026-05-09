@@ -423,7 +423,7 @@ fn desc_migrate() -> ToolDesc {
 fn desc_mv() -> ToolDesc {
     ToolDesc {
         name: "mv",
-        description: "Move or rename a tracked file or directory. Auto-detects a directory source and renames the directory + every nested file as an atomic unit; comments / threads / acks survive because the path of every nested file changes consistently. Atomic same-FS rename, copy+remove fallback on cross-filesystem (EXDEV) for files. Both endpoints flow through the same sandbox / forbidden-target / restrict-guard checks every other mutating op uses. Idempotent: same-path no-op; src missing AND dst already in place returns success with bytes_moved=0.",
+        description: "Move or rename a tracked file or directory. Auto-detects a directory source and renames the directory + every nested file as an atomic unit; comments / threads / acks survive because the path of every nested file changes consistently. Atomic same-FS rename, copy+remove fallback on cross-filesystem (EXDEV) for files. Both endpoints flow through the same sandbox / forbidden-target / `trusted_roots` checks every other mutating op uses. Idempotent: same-path no-op; src missing AND dst already in place returns success with bytes_moved=0.",
         schema: json!({
             "type": "object",
             "properties": {
@@ -699,10 +699,10 @@ fn desc_permissions_show() -> ToolDesc {
 fn desc_permissions_check() -> ToolDesc {
     ToolDesc {
         name: "permissions_check",
-        description: "Gitignore-style: returns `restricted=true` when the path is covered \
-             by any `restrict` or `deny_ops` rule from the parent-walked `.remargin.yaml`. \
-             With `why=true`, the matching rule's kind, source file, and rule text are \
-             included. Read-only; no identity flags.",
+        description: "Gitignore-style: returns `restricted=true` when the path is outside \
+             the `trusted_roots` allow-list or covered by a `deny_ops` rule from the \
+             parent-walked `.remargin.yaml`. With `why=true`, the matching rule's kind, \
+             source file, and rule text are included. Read-only; no identity flags.",
         schema: json!({
             "type": "object",
             "properties": {
@@ -2000,9 +2000,9 @@ fn handle_permissions_show(system: &dyn System, base_dir: &Path) -> Result<Value
 
 /// Handle the `permissions_check` tool.
 ///
-/// Returns `restricted=true` when any `restrict` or `deny_ops` rule
-/// covers the supplied path. With `why=true`, the closest matching
-/// rule is included.
+/// Returns `restricted=true` when the path is outside the
+/// `trusted_roots` allow-list or covered by a `deny_ops` rule. With
+/// `why=true`, the closest matching rule is included.
 fn handle_permissions_check(
     system: &dyn System,
     base_dir: &Path,
@@ -2597,10 +2597,10 @@ pub fn run(
     let reader = stdin.lock();
     let mut writer = stdout.lock();
 
-    // / T24 (Decision 13): the sandbox is captured once at
-    // server boot and never reloaded. Edits to `trusted_roots` only
-    // take effect on the next remargin mcp invocation. Per-op
-    // permissions (restrict, deny_ops) still re-resolve through the
+    // The sandbox is captured once at server boot and never
+    // reloaded. Edits to `trusted_roots` only take effect on the
+    // next remargin mcp invocation. Per-op permissions
+    // (`trusted_roots`, `deny_ops`) still re-resolve through the
     // op_guard parent walk; this static cap is intentional.
     let sandbox = McpSandbox::from_walk(system, base_dir)?;
 

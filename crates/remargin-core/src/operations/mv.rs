@@ -4,8 +4,8 @@
 //! `mv` on a restricted realm. It performs an atomic rename when src
 //! and dst live on the same filesystem and falls back to copy + remove
 //! on EXDEV. Both endpoints flow through the same sandbox / forbidden
-//! / pre-mutate guards every other mutating op uses, so a `restrict`
-//! entry covering either endpoint refuses the op.
+//! / pre-mutate guards every other mutating op uses, so a path
+//! outside `trusted_roots` on either endpoint refuses the op.
 //!
 //! Bookkeeping that lives **inside** the markdown file (frontmatter,
 //! sandbox entries, comment threads, signatures, identity references)
@@ -22,8 +22,8 @@
 //! moves with the dir; comment threads / acks / signatures keep their
 //! continuity because the path of every nested file changes
 //! consistently. The same `op_guard` / sandbox / forbidden-target gates
-//! fire — a `restrict` entry covering the directory (or the
-//! destination parent) refuses the move.
+//! fire — a directory (or destination parent) outside `trusted_roots`
+//! refuses the move.
 
 #[cfg(test)]
 mod tests;
@@ -129,8 +129,7 @@ pub struct MvOutcome {
 /// - [`allowlist::resolve_sandboxed`] (src) and
 ///   [`allowlist::resolve_sandboxed_create`] (dst) — refuses paths
 ///   that escape the sandbox.
-/// - [`pre_mutate_check`] — refuses paths covered by a `restrict`
-///   entry.
+/// - [`pre_mutate_check`] — refuses paths outside `trusted_roots`.
 ///
 /// # Idempotence
 ///
@@ -152,8 +151,8 @@ pub struct MvOutcome {
 ///
 /// - Either endpoint is a forbidden target (e.g. `.remargin.yaml`).
 /// - Either endpoint escapes the sandbox.
-/// - Either endpoint is covered by a `restrict` entry the caller is
-///   not authorised under (per [`pre_mutate_check`]).
+/// - Either endpoint is outside `trusted_roots` for the caller (per
+///   [`pre_mutate_check`]).
 /// - `args.src` is missing AND `args.dst` is also missing.
 /// - `args.src` is a file AND `args.dst` is an existing directory
 ///   (file-into-directory moves require an explicit destination
@@ -219,10 +218,10 @@ pub fn mv(
         return same_path_noop(system, &src_resolved, dst_resolved, &caller);
     }
 
-    // Per-op guard on BOTH endpoints. A restrict entry on either side
-    // refuses the move — symmetrically with how `mv`'s default deny
-    // expansion now blocks both source-side and destination-side
-    // shell `mv`.
+    // Per-op guard on BOTH endpoints. A path outside `trusted_roots`
+    // on either side refuses the move — symmetrically with how
+    // `mv`'s default deny expansion blocks both source-side and
+    // destination-side shell `mv`.
     pre_mutate_check_for_caller(system, "mv", &src_resolved, &caller)?;
     pre_mutate_check_for_caller(system, "mv", &dst_resolved, &caller)?;
 

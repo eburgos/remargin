@@ -323,7 +323,6 @@ permissions:
   trusted_roots:
     - ~/src/tixena/eburgos_notes
     - ~/src/tixena/remargin
-  restrict:
     - path: src/01_personal/secure
       also_deny_bash: [curl, wget]
     - path: '*'
@@ -334,8 +333,9 @@ permissions:
 ```
 
 - **Layer 1 (remargin-core, CLI + MCP, per-op).** Every mutating op
-  parent-walks `.remargin.yaml` and refuses ops covered by `restrict`
-  or matching `deny_ops`. The walk runs fresh on every call — no
+  parent-walks `.remargin.yaml` and refuses ops outside the
+  `trusted_roots` allow-list or matching `deny_ops`. The walk runs
+  fresh on every call — no
   cache, no reload command, no mtime watcher. Editing
   `.remargin.yaml` between two ops takes effect on the second op
   without a restart.
@@ -352,28 +352,28 @@ sandbox cannot be expanded mid-session.
 
 ### Op classification: read vs write
 
-`restrict` and the dot-folder default-deny only gate **write-side**
-ops. Read-side ops bypass `restrict` entirely so a restricted path
-can still be inspected without unprotect/restrict ceremony. To block
-reads on a path, declare an explicit `deny_ops` entry naming the read
-op (`deny_ops` is evaluated for both kinds).
+`trusted_roots` and the dot-folder default-deny only gate
+**write-side** ops. Read-side ops bypass `trusted_roots` entirely so a
+restricted path can still be inspected without unprotect/restrict
+ceremony. To block reads on a path, declare an explicit `deny_ops`
+entry naming the read op (`deny_ops` is evaluated for both kinds).
 
 | Kind | Ops |
 |------|-----|
-| Read (bypass `restrict`) | `comments`, `get`, `lint`, `ls`, `metadata`, `query`, `search`, `verify` |
-| Write (gated by `restrict`) | `ack`, `batch`, `comment`, `delete`, `edit`, `migrate`, `purge`, `react`, `sandbox-add`, `sandbox-remove`, `sign`, `write` |
+| Read (bypass `trusted_roots`) | `comments`, `get`, `lint`, `ls`, `metadata`, `query`, `search`, `verify` |
+| Write (gated by `trusted_roots`) | `ack`, `batch`, `comment`, `delete`, `edit`, `migrate`, `purge`, `react`, `sandbox-add`, `sandbox-remove`, `sign`, `write` |
 
 The lists are pinned by `READ_OPS` and `MUTATING_OPS` in
 `remargin_core::permissions::op_guard`. Adding a new op MUST classify
 it at PR time by adding the canonical name to one of those constants;
-unknown ops fail closed (treated as write-side under `restrict`).
+unknown ops fail closed (treated as write-side under `trusted_roots`).
 
 The user-visible denial messages are pinned by
 `denial_error_wording_matches_canonical_template` in
 `crates/remargin-core/src/permissions/op_guard/tests.rs`. The
 canonical templates are:
 
-- `op '<op>' on '<target>' is denied by 'restrict' rule in <yaml>`
+- `op '<op>' on '<target>' is denied: outside the allow-list declared by 'trusted_roots' in <yaml>`
 - `op '<op>' on '<target>' is denied by 'deny_ops' rule in <yaml>`
 
 ### Commands

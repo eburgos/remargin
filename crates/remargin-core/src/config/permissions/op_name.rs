@@ -18,7 +18,7 @@
 //! 2. Add it to [`OpName::ALL`] (the source for every op-name list,
 //!    including the user-facing "valid ops" diagnostic).
 //! 3. Add it to [`OpName::READ`] OR [`OpName::WRITE`] (read-vs-write
-//!    classification — drives whether `restrict` gates the op).
+//!    classification — drives whether `trusted_roots` gates the op).
 //!
 //! No other code changes are required for `deny_ops` to accept the new
 //! op name. Forgetting step 2 or 3 surfaces in the partition-coverage
@@ -108,8 +108,8 @@ impl OpName {
         Self::Write,
     ];
 
-    /// Read-side ops. Bypass `restrict` and the dot-folder default-deny;
-    /// still subject to explicit `deny_ops` entries.
+    /// Read-side ops. Bypass `trusted_roots` and the dot-folder
+    /// default-deny; still subject to explicit `deny_ops` entries.
     pub const READ: &'static [Self] = &[
         Self::Comments,
         Self::Get,
@@ -121,8 +121,8 @@ impl OpName {
         Self::Verify,
     ];
 
-    /// Write-side ops. Gated by `restrict`, the dot-folder default-deny,
-    /// and `deny_ops`.
+    /// Write-side ops. Gated by `trusted_roots`, the dot-folder
+    /// default-deny, and `deny_ops`.
     pub const WRITE: &'static [Self] = &[
         Self::Ack,
         Self::Batch,

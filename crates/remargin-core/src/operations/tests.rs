@@ -3348,7 +3348,7 @@ fn batch_atomic_refusal_leaves_doc_untouched() {
     let after = system.read_to_string(Path::new("/docs/test.md")).unwrap();
     assert_eq!(
         before, after,
-        "batch must not partially write under restrict"
+        "batch must not partially write outside trusted_roots"
     );
 }
 

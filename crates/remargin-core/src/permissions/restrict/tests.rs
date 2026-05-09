@@ -126,7 +126,7 @@ fn creates_remargin_yaml_when_absent() {
 }
 
 /// Scenario 7: existing `.remargin.yaml` with an identity block gains
-/// the `permissions.restrict` array without losing the identity.
+/// the `permissions.trusted_roots` array without losing the identity.
 #[test]
 fn appends_to_existing_remargin_yaml() {
     let prior = "identity: alice\ntype: human\n";

@@ -259,7 +259,7 @@ pub struct ConfigPlanDiff {
 #[derive(Debug, Clone, Serialize)]
 #[non_exhaustive]
 pub struct RemarginYamlDiff {
-    /// What the projection would do to the `permissions.restrict`
+    /// What the projection would do to the `permissions.trusted_roots`
     /// entry list: append, overwrite the existing entry for this
     /// path, or report a noop because the existing entry already
     /// matches.
@@ -273,7 +273,7 @@ pub struct RemarginYamlDiff {
     /// "matches existing" case unambiguous.
     pub previous_entry: Option<RestrictEntryProjection>,
     /// Entry that would be written into
-    /// `permissions.restrict`. `None` only on the noop path when there
+    /// `permissions.trusted_roots`. `None` only on the noop path when there
     /// is somehow no projected entry to record.
     pub projected_entry: Option<RestrictEntryProjection>,
     /// `true` when the YAML file does not exist on disk.
@@ -361,7 +361,7 @@ pub enum ConfigConflict {
         /// Caller's `cwd` (canonicalized).
         cwd: PathBuf,
     },
-    /// `permissions.restrict` already has an entry for the same path
+    /// `permissions.trusted_roots` already has an entry for the same path
     /// but with different `also_deny_bash` / `cli_allowed`. Surfaced
     /// because the live op silently overwrites.
     YamlEntryWouldChange {
@@ -392,7 +392,7 @@ pub enum EntryAction {
 ///
 /// Symmetric mirror of [`ConfigPlanDiff`] for the reverse direction.
 /// `unprotect` is the explicit, sanctioned reversal of a previous
-/// `restrict`: it removes the matching `permissions.restrict` entry
+/// `restrict`: it removes the matching `permissions.trusted_roots` entry
 /// from `<anchor>/.remargin.yaml`, scrubs the sidecar-tracked rules
 /// from each Claude settings file the original `apply_rules` recorded,
 /// and finally drops the sidecar entry. This struct names every file,
@@ -428,7 +428,7 @@ pub struct UnprotectConfigDiff {
 #[non_exhaustive]
 pub struct UnprotectYamlDiff {
     /// What the projection would do to the matching
-    /// `permissions.restrict` entry: remove it, or report no-op
+    /// `permissions.trusted_roots` entry: remove it, or report no-op
     /// because no entry currently matches the path.
     pub entry_action: UnprotectEntryAction,
     /// Resolved on-disk path of the YAML file.
@@ -514,7 +514,7 @@ pub enum UnprotectConflict {
         /// sidecar.
         path: PathBuf,
     },
-    /// The YAML file has no `permissions.restrict` entry matching
+    /// The YAML file has no `permissions.trusted_roots` entry matching
     /// the requested path. The sidecar removal would still proceed
     /// but `.remargin.yaml` won't be touched.
     YamlEntryMissing {
@@ -1015,12 +1015,11 @@ fn dispatch_unprotect(
 /// Pure: no disk writes, no identity load. Resolves both endpoints
 /// through the same sandbox boundary the live op uses, surfaces a
 /// `reject_reason` plus `would_commit = false` for hard preflight
-/// failures (path escape, forbidden basename, restrict-guard violation,
-/// source-and-dest both missing, dst-is-a-directory while src is a
-/// file), and otherwise returns a populated [`MvDiff`] with
-/// `would_commit = true`. With a directory source is no
-/// longer rejected — the diff carries `is_directory: true` and the
-/// nested file count.
+/// failures (path escape, forbidden basename, `trusted_roots`
+/// violation, source-and-dest both missing, dst-is-a-directory while
+/// src is a file), and otherwise returns a populated [`MvDiff`] with
+/// `would_commit = true`. A directory source is supported — the diff
+/// carries `is_directory: true` and the nested file count.
 #[expect(
     clippy::too_many_lines,
     reason = "consolidated mv preflight: every branch is one of the live op's checks (forbidden / sandbox / pre_mutate / dst-exists), kept inline so plan and live mv stay byte-equivalent"

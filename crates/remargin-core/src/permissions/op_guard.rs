@@ -44,7 +44,7 @@ pub const MUTATING_OPS: &[&str] = &[
 ];
 
 /// Wording pinned by `denial_error_wording_matches_canonical_template`.
-pub const OUTSIDE_ALLOWED_DENIAL_TEMPLATE: &str = "op '{op}' on '{target}' is denied: outside the allow-list declared by 'restrict' in {source_file}";
+pub const OUTSIDE_ALLOWED_DENIAL_TEMPLATE: &str = "op '{op}' on '{target}' is denied: outside the allow-list declared by 'trusted_roots' in {source_file}";
 
 pub const DENY_OPS_DENIAL_TEMPLATE: &str =
     "op '{op}' on '{target}' is denied by 'deny_ops' rule in {source_file}";
@@ -136,18 +136,18 @@ pub enum OpGuardError {
         /// The op name.
         op: String,
         /// The source `.remargin.yaml` that declared the surrounding
-        /// `restrict` rule.
+        /// `trusted_roots` rule.
         source_file: PathBuf,
         /// The target path.
         target: PathBuf,
     },
 
-    /// `target` is outside every allow-listed root from `restrict`.
-    #[error("op `{op}` on `{target}` is denied: outside the allow-list declared by `restrict` in {source_file}", target = .target.display(), source_file = .source_file.display())]
+    /// `target` is outside every allow-listed root in `trusted_roots`.
+    #[error("op `{op}` on `{target}` is denied: outside the allow-list declared by `trusted_roots` in {source_file}", target = .target.display(), source_file = .source_file.display())]
     OutsideAllowedRoots {
         op: String,
         /// First `.remargin.yaml` in walk order that declared a
-        /// `restrict` entry (used to point the user at where the
+        /// `trusted_roots` entry (used to point the user at where the
         /// allow-list lives).
         source_file: PathBuf,
         target: PathBuf,

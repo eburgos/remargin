@@ -398,7 +398,7 @@ pub struct SettingsFileSim {
     pub will_be_created: bool,
 }
 
-/// Compute the rule set for one resolved restrict entry.
+/// Compute the rule set for one resolved `trusted_roots` entry.
 ///
 /// Pure: no filesystem access. The caller must pass the realm anchor
 /// (the directory that holds `.claude/`) so wildcard entries can
