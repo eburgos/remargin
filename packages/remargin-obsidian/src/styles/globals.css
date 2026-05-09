@@ -89,6 +89,25 @@
  * editor surfaces shipped in T37 (reading mode) and T38 (Live Preview).
  * ---------------------------------------------------------------------- */
 
+/* Per-thread visual container. The outermost `.remargin-widget-thread`
+ * wraps the root comment AND all nested replies in a subtle tinted
+ * background, so the whole conversation reads as one visual unit rather
+ * than a stack of unrelated rows. Nested `.remargin-widget-thread`
+ * instances reset the background to transparent (descendant combinator)
+ * so the tint only applies once at the outermost level. */
+.remargin-widget-thread {
+  background-color: rgba(128, 128, 128, 0.06);
+  border-radius: 8px;
+  padding: 2px 8px;
+  margin: 6px 0;
+}
+.remargin-widget-thread .remargin-widget-thread {
+  background-color: transparent;
+  border-radius: 0;
+  padding: 0;
+  margin: 0;
+}
+
 /* Card-like container for the editor-side comment widget. Matches the
  * sidebar card styling so the visual language is shared across surfaces. */
 .remargin-widget-comment {
