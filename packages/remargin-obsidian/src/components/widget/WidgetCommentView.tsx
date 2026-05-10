@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { CommentHeader } from "@/components/sidebar/CommentHeader";
 import { MarkdownContent } from "@/components/sidebar/MarkdownContent";
 import type { Comment } from "@/generated/types";
@@ -25,13 +24,6 @@ export interface WidgetCommentViewProps {
    * so callers do not have to recompute it.
    */
   summary?: PendingSummary;
-  /**
-   * Optional right-aligned slot rendered at the END of the header row.
-   * Used by ROOT calls of `WidgetCommentThread` to inject per-thread
-   * bulk expand/collapse icons. Recursive calls pass nothing so nested
-   * replies never render the toolbar.
-   */
-  headerActions?: ReactNode;
 }
 
 /**
@@ -56,7 +48,6 @@ export function WidgetCommentView({
   onToggle,
   onClick,
   summary,
-  headerActions,
 }: WidgetCommentViewProps) {
   // Plain inline handler (no `useCallback`) keeps the component
   // hook-free, which lets unit tests call the function directly without
@@ -75,7 +66,6 @@ export function WidgetCommentView({
       <div className="remargin-widget-comment__header">
         <CollapseToggle collapsed={collapsed} onToggle={onToggle} />
         <CommentHeader comment={comment} />
-        {headerActions}
       </div>
       {showSummary && summary !== undefined && (
         <span className="remargin-widget-comment__summary">{formatSummary(summary)}</span>

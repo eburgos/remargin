@@ -154,19 +154,31 @@
   color: var(--text-normal);
 }
 
-/* Per-thread bulk expand/collapse icon pair, rendered only inside the
- * ROOT widget's header row. `margin-left: auto` pushes the cluster to
- * the far right edge of the flex header so it never crowds the
- * comment metadata. Buttons keep their hit-area visually contained
- * (small padding) but match the chevron toggle's muted styling so the
- * controls read as a coherent set. */
-.remargin-widget-thread-actions {
+/* Root-thread toolbar: a dedicated row above the root comment card
+ * showing the thread's identity badge, root id, reply / pending counts,
+ * and the bulk expand/collapse icons. Distinct background from the
+ * comment card below so the toolbar reads as a separate visual band.
+ * Sibling selector below flattens the joining edge so toolbar + card
+ * read as one continuous unit. Rendered only on roots — nested replies
+ * never get one. */
+.remargin-widget-root-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  margin: 6px 0 0 0;
+  background-color: var(--background-modifier-form-field);
+  border: 1px solid var(--background-modifier-border);
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+}
+.remargin-widget-root-toolbar__actions {
   display: inline-flex;
   align-items: center;
   gap: 2px;
   margin-left: auto;
 }
-.remargin-widget-thread-actions__btn {
+.remargin-widget-root-toolbar__btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -179,13 +191,22 @@
   color: var(--text-muted);
   cursor: pointer;
 }
-.remargin-widget-thread-actions__btn:hover {
+.remargin-widget-root-toolbar__btn:hover {
   background-color: var(--background-modifier-hover);
   color: var(--text-normal);
 }
-.remargin-widget-thread-actions__btn:focus-visible {
+.remargin-widget-root-toolbar__btn:focus-visible {
   outline: 2px solid var(--interactive-accent);
   outline-offset: 1px;
+}
+
+/* When the root toolbar sits directly above a comment card, flatten
+ * the joining edge so the two rows read as one continuous unit
+ * (toolbar bottom corners square; card top corners square; no gap). */
+.remargin-widget-root-toolbar + .remargin-widget-comment {
+  margin-top: 0;
+  border-top: none;
+  border-radius: 0 0 6px 6px;
 }
 
 /* Sidebar focus highlight: brief outline pulse applied for one second

@@ -71,7 +71,7 @@ function renderThread(props: {
 }
 
 describe("WidgetCommentThread isRoot wiring", () => {
-  it("isRoot=true → WidgetThreadActions appears in the rendered tree", () => {
+  it("isRoot=true → WidgetRootToolbar appears in the rendered tree", () => {
     const html = renderThread({
       root: leaf("root"),
       collapseState: new CollapseState(),
@@ -89,7 +89,7 @@ describe("WidgetCommentThread isRoot wiring", () => {
     );
   });
 
-  it("isRoot omitted (default false) → WidgetThreadActions does NOT render", () => {
+  it("isRoot omitted (default false) → WidgetRootToolbar does NOT render", () => {
     const html = renderThread({
       root: leaf("root"),
       collapseState: new CollapseState(),

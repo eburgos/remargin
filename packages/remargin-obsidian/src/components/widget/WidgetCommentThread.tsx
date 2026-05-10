@@ -1,10 +1,10 @@
-import { createElement, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { shouldAutoExpand, summarizeThread } from "@/lib/pendingState";
 import type { ThreadNode } from "@/lib/threadTree";
 import { walkThread } from "@/lib/threadTree";
 import type { CollapseState } from "@/state/collapseState";
 import { WidgetCommentView } from "./WidgetCommentView";
-import { WidgetThreadActions } from "./WidgetThreadActions";
+import { WidgetRootToolbar } from "./WidgetRootToolbar";
 
 export interface WidgetCommentThreadProps {
   root: ThreadNode;
@@ -74,34 +74,37 @@ export function WidgetCommentThread({
   const collapsed = collapseState.isCollapsed(id);
   const summary = useMemo(() => summarizeThread(root, me), [root, me]);
 
-  // The action toolbar lives only on the root row of a thread; nested
-  // recursive calls default `isRoot` to false so descendants never get
-  // one. `createElement` (vs JSX) keeps the prop assignment trivial
-  // when `isRoot` is false — undefined `headerActions` simply skips the
-  // slot inside `WidgetCommentView`.
+  // The root toolbar (identity badge, id, reply/pending counts, bulk
+  // expand/collapse icons) lives in its OWN row above the comment card,
+  // visible only on the root of a thread. Nested replies skip the
+  // toolbar so it never crowds deep threads.
   //
   // "Collapse all" is a HARD RESET: it overwrites every descendant's
   // existing collapsed/expanded state, by design. Once the user opts in
   // via this control, `CollapseState.has(id)` returns true for every id
   // touched, so the auto-expand priming branch in the effect above
   // won't re-flip them on the next mount — explicit user choice wins.
-  const headerActions = isRoot
-    ? createElement(WidgetThreadActions, {
-        onExpandAll: () => setSubtreeCollapsed(root, collapseState, false),
-        onCollapseAll: () => setSubtreeCollapsed(root, collapseState, true),
-      })
-    : undefined;
-
+  //
+  // Summary-on-card is suppressed for roots because the toolbar already
+  // surfaces the same counts; nested replies (no toolbar) keep the
+  // card-side summary so a collapsed reply still hints at hidden depth.
   return (
     <div className="remargin-widget-thread">
+      {isRoot && (
+        <WidgetRootToolbar
+          comment={root.comment}
+          summary={summary}
+          onExpandAll={() => setSubtreeCollapsed(root, collapseState, false)}
+          onCollapseAll={() => setSubtreeCollapsed(root, collapseState, true)}
+        />
+      )}
       <WidgetCommentView
         comment={root.comment}
         sourcePath={sourcePath}
         collapsed={collapsed}
         onToggle={() => collapseState.toggle(id)}
         onClick={onClick}
-        summary={summary}
-        headerActions={headerActions}
+        summary={isRoot ? undefined : summary}
       />
       {!collapsed && root.replies.length > 0 && (
         <div className="remargin-widget-thread__replies" style={{ paddingLeft: 16 }}>
