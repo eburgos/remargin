@@ -75,7 +75,7 @@ fn no_frontmatter_adds_frontmatter() {
 
     ensure_frontmatter(&mut doc, &config).unwrap();
 
-    let markdown = doc.to_markdown();
+    let markdown = doc.to_markdown().unwrap();
     assert!(markdown.starts_with("---\n"));
     assert!(markdown.contains("title: My Doc"));
     assert!(markdown.contains("author: eduardo"));
@@ -91,7 +91,7 @@ fn existing_frontmatter_preserved() {
 
     ensure_frontmatter(&mut doc, &config).unwrap();
 
-    let markdown = doc.to_markdown();
+    let markdown = doc.to_markdown().unwrap();
     // User fields preserved (not overwritten).
     assert!(markdown.contains("Custom Title"));
     assert!(markdown.contains("alice"));
@@ -381,7 +381,7 @@ fn sandbox_null_value_self_heals_on_write() {
     assert!(added);
     write_sandbox_entries(&mut doc, &entries).unwrap();
 
-    let markdown = doc.to_markdown();
+    let markdown = doc.to_markdown().unwrap();
     assert!(markdown.contains("sandbox:"));
     assert!(markdown.contains("- eduardo@2026-04-16T10:33:21"));
 

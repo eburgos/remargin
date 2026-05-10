@@ -615,7 +615,7 @@ Body.
 
     // Round-trip: re-emit the doc and re-parse. No `edited_at:` line
     // should appear and the second parse should still have None.
-    let re_emitted = parsed.to_markdown();
+    let re_emitted = parsed.to_markdown().unwrap();
     assert!(
         !re_emitted.contains("edited_at:"),
         "re-emitted doc must not fabricate edited_at: {re_emitted}"
@@ -1030,7 +1030,7 @@ fn delete_collapses_adjacent_body_segments() {
 
     super::collapse_body_segments(&mut doc.segments);
 
-    let markdown = doc.to_markdown();
+    let markdown = doc.to_markdown().unwrap();
     assert!(
         !markdown.contains("\n\n\n"),
         "collapsed body segments still have triple-newline:\n{markdown}"
@@ -2402,8 +2402,8 @@ fn project_migrate_no_op_when_no_legacy_comments() {
     .unwrap();
 
     assert_eq!(
-        before.to_markdown(),
-        after.to_markdown(),
+        before.to_markdown().unwrap(),
+        after.to_markdown().unwrap(),
         "migrate with no legacy comments must be a noop"
     );
 }
@@ -2459,7 +2459,7 @@ fn project_sandbox_add_projects_frontmatter_entry() {
         projections::project_sandbox_add(&system, Path::new("/docs/test.md"), &config).unwrap();
 
     assert!(
-        after.to_markdown().contains("sandbox:"),
+        after.to_markdown().unwrap().contains("sandbox:"),
         "sandbox-add projection must rewrite the frontmatter"
     );
     let after_bytes = system.read_to_string(Path::new("/docs/test.md")).unwrap();
@@ -2498,12 +2498,12 @@ fn project_sandbox_add_refreshes_existing_entry() {
     let (before, after) =
         projections::project_sandbox_add(&system, Path::new("/docs/test.md"), &config).unwrap();
     assert_ne!(
-        before.to_markdown(),
-        after.to_markdown(),
+        before.to_markdown().unwrap(),
+        after.to_markdown().unwrap(),
         "second sandbox-add must project a refresh when an entry already exists"
     );
     // Roster stays at exactly one eduardo entry.
-    assert_eq!(after.to_markdown().matches("eduardo@").count(), 1);
+    assert_eq!(after.to_markdown().unwrap().matches("eduardo@").count(), 1);
 }
 
 #[test]
@@ -2522,9 +2522,9 @@ fn project_sandbox_remove_clears_entry_without_writing_disk() {
 
     let (before, after) =
         projections::project_sandbox_remove(&system, Path::new("/docs/test.md"), &config).unwrap();
-    assert!(before.to_markdown().contains("sandbox:"));
+    assert!(before.to_markdown().unwrap().contains("sandbox:"));
     assert!(
-        !after.to_markdown().contains("sandbox:"),
+        !after.to_markdown().unwrap().contains("sandbox:"),
         "sandbox-remove must strip the frontmatter key when it was the only entry"
     );
 
@@ -2755,7 +2755,7 @@ fn project_sign_already_signed_stays_preserved() {
         &sign::SignSelection::AllMine,
     )
     .unwrap();
-    let pre_signed_md = pre_signed.to_markdown();
+    let pre_signed_md = pre_signed.to_markdown().unwrap();
 
     let system2 = sign_system(&pre_signed_md);
     let (_, after) = projections::project_sign(

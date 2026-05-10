@@ -134,16 +134,24 @@ pub fn ensure_not_forbidden_target(path: &Path) -> Result<()> {
 ///
 /// Routes through [`OnDiskComment`] so the on-disk YAML keys come from
 /// one source of truth. Field order on disk follows `OnDiskComment`'s
-/// declaration order. Optional fields are omitted when empty or `None`.
-#[must_use]
-pub fn serialize_comment(comment: &Comment) -> String {
+/// canonical wire emission order. Optional fields are omitted when
+/// empty or `None`.
+///
+/// # Errors
+///
+/// Returns the `serde_yaml::Error` if [`OnDiskComment`]'s `Serialize`
+/// impl cannot be flattened into a YAML mapping. The serialize impl is
+/// hand-written and emits only primitive types, so failure is
+/// unreachable in practice — but the `Result` lets callers propagate
+/// instead of panicking on a programming error.
+pub fn serialize_comment(comment: &Comment) -> Result<String, serde_yaml::Error> {
     let fence_depth = required_fence_depth(&comment.content);
     let fence: String = repeat_n('`', fence_depth).collect();
     let mut out = String::new();
 
     let _ = writeln!(out, "{fence}remargin");
     out.push_str("---\n");
-    write_yaml_header(&mut out, comment);
+    write_yaml_header(&mut out, comment)?;
     out.push_str("---\n");
 
     if !comment.content.is_empty() {
@@ -154,7 +162,7 @@ pub fn serialize_comment(comment: &Comment) -> String {
     }
 
     let _ = writeln!(out, "{fence}");
-    out
+    Ok(out)
 }
 
 /// Emit the YAML header (between the two `---` markers) for `comment`.
@@ -169,16 +177,11 @@ pub fn serialize_comment(comment: &Comment) -> String {
 // Every shape mismatch here would mean `OnDiskComment` was changed in
 // a way the emitter does not yet understand — the
 // `every_on_disk_field_emits_a_line` test catches that at build time.
-#[expect(
-    clippy::expect_used,
-    reason = "OnDiskComment is a fixed Serialize impl; serde_yaml::to_value cannot fail for it"
-)]
-fn write_yaml_header(out: &mut String, comment: &Comment) {
+fn write_yaml_header(out: &mut String, comment: &Comment) -> Result<(), serde_yaml::Error> {
     let on_disk = OnDiskComment::from(comment);
-    let value = serde_yaml::to_value(&on_disk)
-        .expect("OnDiskComment is a derived Serialize and cannot fail");
+    let value = serde_yaml::to_value(&on_disk)?;
     let Some(mapping) = value.as_mapping() else {
-        return;
+        return Ok(());
     };
 
     for (key, val) in mapping {
@@ -186,6 +189,7 @@ fn write_yaml_header(out: &mut String, comment: &Comment) {
             emit_yaml_field(out, key_str, val);
         }
     }
+    Ok(())
 }
 
 fn emit_yaml_field(out: &mut String, key: &str, value: &serde_yaml::Value) {
@@ -314,7 +318,7 @@ pub fn insert_comment(
             anyhow::bail!("AfterHeading should have been resolved before reaching this match");
         }
         InsertPosition::AfterLine(target_line) => {
-            let markdown = doc.to_markdown();
+            let markdown = doc.to_markdown()?;
             let lines: Vec<&str> = markdown.split('\n').collect();
 
             // Clamp to document length so after-line beyond the end
@@ -333,7 +337,7 @@ pub fn insert_comment(
             // Rebuild: text before + new comment + text after.
             let before = &markdown[..byte_offset];
             let after = &markdown[byte_offset..];
-            let serialized = serialize_comment_from_segment(&segment);
+            let serialized = serialize_comment_from_segment(&segment)?;
 
             // Invariant: whatever precedes the opening fence must be empty or
             // end with a newline — otherwise ``` glues onto the last body
@@ -361,10 +365,10 @@ pub fn insert_comment(
 }
 
 /// Helper to serialize a `Segment::Comment` using the writer's serializer.
-fn serialize_comment_from_segment(segment: &Segment) -> String {
+fn serialize_comment_from_segment(segment: &Segment) -> Result<String, serde_yaml::Error> {
     match segment {
         Segment::Comment(cm) => serialize_comment(cm),
-        Segment::Body(_) | Segment::LegacyComment(_) => String::new(),
+        Segment::Body(_) | Segment::LegacyComment(_) => Ok(String::new()),
     }
 }
 
@@ -437,7 +441,7 @@ pub fn write_document(
 
     let before_ids: HashSet<String> = doc.comment_ids().into_iter().map(String::from).collect();
 
-    let markdown = doc.to_markdown();
+    let markdown = doc.to_markdown()?;
 
     // Re-parse to verify integrity.
     let reparsed = parser::parse(&markdown).context("re-parsing serialized document failed")?;

@@ -31,7 +31,7 @@
 //! [`InsertPosition::AfterLine`](crate::writer::InsertPosition::AfterLine)
 //! pipeline, so the comment's stored `line` field is unchanged.
 
-use anyhow::{Result, bail};
+use anyhow::{Context as _, Result, bail};
 
 use crate::parser::ParsedDocument;
 
@@ -71,7 +71,9 @@ struct FenceState {
 /// found in the document.
 pub fn resolve_heading_path(doc: &ParsedDocument, path: &str) -> Result<usize> {
     let segments = parse_path(path)?;
-    let markdown = doc.to_markdown();
+    let markdown = doc
+        .to_markdown()
+        .context("serializing document to markdown for heading resolution")?;
     let headings = scan_headings(&markdown);
     match_path(&headings, &segments).ok_or_else(|| anyhow::anyhow!("no heading matched {path:?}"))
 }

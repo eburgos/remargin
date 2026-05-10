@@ -44,7 +44,7 @@ fn make_comment(id: &str, content: &str) -> Comment {
 #[test]
 fn simple_serialize() {
     let comment = make_comment("abc", "Hello world.");
-    let output = serialize_comment(&comment);
+    let output = serialize_comment(&comment).unwrap();
 
     assert!(output.starts_with("```remargin\n---\n"));
     assert!(output.contains("id: abc\n"));
@@ -86,7 +86,7 @@ fn full_serialize() {
         ts: DateTime::parse_from_rfc3339("2026-04-06T14:32:00-04:00").unwrap(),
     };
 
-    let output = serialize_comment(&comment);
+    let output = serialize_comment(&comment).unwrap();
 
     // Verify canonical field order by checking relative positions.
     let id_pos = output.find("id: full").unwrap();
@@ -118,21 +118,21 @@ fn full_serialize() {
 #[test]
 fn fence_depth_three_no_backticks() {
     let comment = make_comment("fd3", "No backticks here.");
-    let output = serialize_comment(&comment);
+    let output = serialize_comment(&comment).unwrap();
     assert!(output.starts_with("```remargin\n"));
 }
 
 #[test]
 fn fence_depth_four_code_blocks() {
     let comment = make_comment("fd4", "```python\nprint('hello')\n```");
-    let output = serialize_comment(&comment);
+    let output = serialize_comment(&comment).unwrap();
     assert!(output.starts_with("````remargin\n"));
 }
 
 #[test]
 fn fence_depth_six_deep_nesting() {
     let comment = make_comment("fd6", "`````remargin\nquoted block\n`````");
-    let output = serialize_comment(&comment);
+    let output = serialize_comment(&comment).unwrap();
     assert!(output.starts_with("``````remargin\n"));
 }
 
@@ -171,7 +171,7 @@ fn insert_after_line() {
     let new_comment = make_comment("ln2", "After line 2.");
     insert_comment(&mut doc, new_comment, &InsertPosition::AfterLine(2)).unwrap();
 
-    let markdown = doc.to_markdown();
+    let markdown = doc.to_markdown().unwrap();
     let comments = parser::parse(&markdown).unwrap().comments().len();
     assert_eq!(comments, 1_usize);
 
@@ -190,7 +190,7 @@ fn append_comment() {
     let new_comment = make_comment("end1", "Appended.");
     insert_comment(&mut doc, new_comment, &InsertPosition::Append).unwrap();
 
-    let markdown = doc.to_markdown();
+    let markdown = doc.to_markdown().unwrap();
     assert!(markdown.contains("id: end1"));
 
     // The comment should be at the end.
@@ -202,7 +202,7 @@ fn append_comment() {
 #[test]
 fn round_trip_serialize() {
     let comment = make_comment("rt1", "Round-trip test body.");
-    let serialized = serialize_comment(&comment);
+    let serialized = serialize_comment(&comment).unwrap();
     let doc = parser::parse(&serialized).unwrap();
     let reparsed = doc.comments()[0];
 
@@ -210,7 +210,7 @@ fn round_trip_serialize() {
     assert_eq!(reparsed.content, "Round-trip test body.");
 
     // Re-serialize and verify structural equivalence.
-    let reserialized = serialize_comment(reparsed);
+    let reserialized = serialize_comment(reparsed).unwrap();
     let doc2 = parser::parse(&reserialized).unwrap();
     assert_eq!(doc2.comments()[0].id, "rt1");
     assert_eq!(doc2.comments()[0].content, "Round-trip test body.");
@@ -256,7 +256,7 @@ fn preservation_fail_unexpected() {
 #[test]
 fn write_with_mock_system() {
     let comment = make_comment("wrt1", "Written comment.");
-    let doc_str = serialize_comment(&comment);
+    let doc_str = serialize_comment(&comment).unwrap();
     let doc = parser::parse(&doc_str).unwrap();
 
     let system = MockSystem::new().with_dir(Path::new("/docs")).unwrap();
@@ -278,7 +278,7 @@ fn insert_after_line_no_double_newline() {
     let comment = make_comment("aln1", "After line insert.");
     insert_comment(&mut doc, comment, &InsertPosition::AfterLine(2)).unwrap();
 
-    let markdown = doc.to_markdown();
+    let markdown = doc.to_markdown().unwrap();
     assert!(
         !markdown.contains("\n\n\n"),
         "AfterLine insert produced triple-newline:\n{markdown}"
@@ -309,7 +309,7 @@ Some text after.
     )
     .unwrap();
 
-    let markdown = doc.to_markdown();
+    let markdown = doc.to_markdown().unwrap();
     assert!(
         !markdown.contains("\n\n\n"),
         "AfterComment insert produced triple-newline:\n{markdown}"
@@ -323,7 +323,7 @@ fn insert_append_no_double_newline() {
     let comment = make_comment("apn1", "Appended.");
     insert_comment(&mut doc, comment, &InsertPosition::Append).unwrap();
 
-    let markdown = doc.to_markdown();
+    let markdown = doc.to_markdown().unwrap();
     assert!(
         !markdown.contains("\n\n\n"),
         "Append insert produced triple-newline:\n{markdown}"
@@ -356,7 +356,7 @@ fn insert_after_last_line() {
     )
     .unwrap();
 
-    let markdown = doc.to_markdown();
+    let markdown = doc.to_markdown().unwrap();
     assert!(markdown.contains("id: last"));
 
     // Comment should appear after all body text.
@@ -387,7 +387,7 @@ fn insert_after_line_preserves_fence_when_no_trailing_newline() {
     )
     .unwrap();
 
-    let markdown = doc.to_markdown();
+    let markdown = doc.to_markdown().unwrap();
 
     // The rendered output must lint cleanly. Before the fix, this failed
     // with "unclosed fenced code block" because the opening ```remargin was
@@ -415,7 +415,7 @@ fn insert_after_line_beyond_length_clamps() {
     let new_comment = make_comment("far", "Way past the end.");
     insert_comment(&mut doc, new_comment, &InsertPosition::AfterLine(10000)).unwrap();
 
-    let markdown = doc.to_markdown();
+    let markdown = doc.to_markdown().unwrap();
     assert!(markdown.contains("id: far"));
 
     // Comment should appear after all body text (effectively appended).
@@ -453,7 +453,7 @@ Some text after.
     )
     .unwrap();
 
-    let markdown = doc.to_markdown();
+    let markdown = doc.to_markdown().unwrap();
 
     // The outer fence must use 4+ backticks since content has triple backticks.
     assert!(
@@ -485,7 +485,7 @@ fn append_with_code_block_content() {
     let new_comment = make_comment("app1", content_with_backticks);
     insert_comment(&mut doc, new_comment, &InsertPosition::Append).unwrap();
 
-    let markdown = doc.to_markdown();
+    let markdown = doc.to_markdown().unwrap();
 
     // The outer fence must use 4+ backticks.
     assert!(
@@ -527,7 +527,7 @@ Root comment.
     )
     .unwrap();
 
-    let markdown = doc.to_markdown();
+    let markdown = doc.to_markdown().unwrap();
     let reparsed = parser::parse(&markdown).unwrap();
 
     assert_eq!(reparsed.comments().len(), 2);
@@ -552,7 +552,7 @@ fn round_trip_append_code_block_all_comments_preserved() {
     let comment = make_comment("deep1", code_content);
     insert_comment(&mut doc, comment, &InsertPosition::Append).unwrap();
 
-    let markdown = doc.to_markdown();
+    let markdown = doc.to_markdown().unwrap();
 
     // Needs 6+ backtick fence for 5-backtick content.
     assert!(
@@ -648,7 +648,7 @@ fn serialize_comment_collapses_duplicate_acks() {
         ack_at("eduardo-burgos", "2026-04-27T05:01:50+00:00"),
         ack_at("eduardo-burgos", "2026-04-27T05:02:15+00:00"),
     ];
-    let output = serialize_comment(&comment);
+    let output = serialize_comment(&comment).unwrap();
     let occurrences = output.matches("- eduardo-burgos@").count();
     assert_eq!(occurrences, 1, "serialized output must collapse duplicates");
     assert!(
@@ -670,7 +670,7 @@ fn doc_with_duplicate_acks() -> parser::ParsedDocument {
         ack_at("eduardo-burgos", "2026-04-27T05:01:50+00:00"),
         ack_at("eduardo-burgos", "2026-04-27T05:02:15+00:00"),
     ];
-    let serialized = serialize_comment(&comment);
+    let serialized = serialize_comment(&comment).unwrap();
     // After serialization the ack is already deduped; manually splice
     // the duplicate back in by re-parsing then mutating in-memory.
     let mut doc = parser::parse(&serialized).unwrap();
@@ -792,7 +792,7 @@ fn writer_emits_every_on_disk_comment_field() {
         .map(|(k, _)| k.as_str().unwrap().to_owned())
         .collect();
 
-    let output = serialize_comment(&comment);
+    let output = serialize_comment(&comment).unwrap();
     for key in &expected_keys {
         let appears = output.contains(&format!("\n{key}:"));
         assert!(

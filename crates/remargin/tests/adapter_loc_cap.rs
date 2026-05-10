@@ -169,12 +169,8 @@ mod tests {
         m
     }
 
-    #[expect(
-        clippy::expect_used,
-        reason = "integration-test parser: failing to parse the adapter files means the test is broken, which we want surfaced loudly"
-    )]
-    fn collect_fn_line_counts(src: &str) -> Vec<(String, usize)> {
-        let file = syn::parse_file(src).expect("adapter source parses as a Rust file");
+    fn collect_fn_line_counts(src: &str) -> Result<Vec<(String, usize)>, syn::Error> {
+        let file = syn::parse_file(src)?;
 
         let mut out = Vec::new();
         for item in &file.items {
@@ -192,7 +188,7 @@ mod tests {
                 out.push((name, loc));
             }
         }
-        out
+        Ok(out)
     }
 
     #[test]
@@ -211,7 +207,13 @@ mod tests {
                 read.as_ref().err()
             );
             let src = read.unwrap();
-            let counts = collect_fn_line_counts(&src);
+            let counts = match collect_fn_line_counts(&src) {
+                Ok(c) => c,
+                Err(err) => {
+                    violations.push(format!("{surface}: parsing {}: {err}", full.display()));
+                    continue;
+                }
+            };
 
             for (name, loc) in counts {
                 if let Some((recorded_cap, reason)) = allow.get(name.as_str()) {

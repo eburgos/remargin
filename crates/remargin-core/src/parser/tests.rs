@@ -207,7 +207,7 @@ fn test_round_trip_simple() {
         block_with_content("rt1", "Body of the comment."),
     );
     let parsed = parse(&doc).unwrap();
-    let reconstructed = parsed.to_markdown();
+    let reconstructed = parsed.to_markdown().unwrap();
     // Re-parse the reconstructed document and verify it matches.
     let reparsed = parse(&reconstructed).unwrap();
     assert_eq!(reparsed.comments().len(), 1);
@@ -458,7 +458,7 @@ fn test_line_number_round_trip() {
     assert_eq!(original_line, 3);
 
     // Round-trip through serialize and re-parse.
-    let reconstructed = parsed.to_markdown();
+    let reconstructed = parsed.to_markdown().unwrap();
     let reparsed = parse(&reconstructed).unwrap();
     assert_eq!(
         reparsed.comments()[0].line,
@@ -623,7 +623,7 @@ body
         parsed.comments()[0].remargin_kind.is_none(),
         "empty-list on disk must normalize to None so serialize omits the line"
     );
-    let rendered = parsed.to_markdown();
+    let rendered = parsed.to_markdown().unwrap();
     assert!(
         !rendered.contains("remargin_kind:"),
         "serialize must not emit a remargin_kind: line when kinds are absent; got:\n{rendered}"
@@ -638,7 +638,7 @@ body
 fn test_remargin_kind_absent_round_trip_omits_line() {
     let doc = minimal_block("abc");
     let parsed = parse(&doc).unwrap();
-    let rendered = parsed.to_markdown();
+    let rendered = parsed.to_markdown().unwrap();
     assert!(
         !rendered.contains("remargin_kind"),
         "absent → None → absent round-trip must not introduce a remargin_kind line; got:\n{rendered}"
@@ -669,7 +669,7 @@ body text
         comments[0].remargin_kind.as_deref(),
         Some(&[String::from("question"), String::from("action item")][..])
     );
-    let rendered = parsed.to_markdown();
+    let rendered = parsed.to_markdown().unwrap();
     assert!(
         rendered.contains("remargin_kind: [question, action item]"),
         "round-tripped markdown should preserve the kind list:\n{rendered}"
@@ -733,7 +733,7 @@ hello
 
     // Serialize back. New shape (`- author:` / ` ts:`) must appear; the
     // legacy `[eduardo, claude]` flow form must NOT.
-    let written = parsed.to_markdown();
+    let written = parsed.to_markdown().unwrap();
     assert!(
         written.contains("- author: eduardo"),
         "serialized form missing new-shape author entry:\n{written}"

@@ -227,17 +227,24 @@ impl ParsedDocument {
     }
 
     /// Round-trip: parse -> modify -> serialize back to a markdown string.
-    #[must_use]
-    pub fn to_markdown(&self) -> String {
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`serialize_comment`]'s `serde_yaml::Error` if any
+    /// comment fails to serialize. Unreachable in practice (the
+    /// underlying Serialize impl on [`crate::on_disk_comment::OnDiskComment`]
+    /// emits only primitive types), but the `Result` lets the chain
+    /// surface a programming-error signal instead of panicking.
+    pub fn to_markdown(&self) -> Result<String, serde_yaml::Error> {
         let mut out = String::new();
         for seg in &self.segments {
             match seg {
                 Segment::Body(text) => out.push_str(text),
-                Segment::Comment(cm) => out.push_str(&serialize_comment(cm)),
+                Segment::Comment(cm) => out.push_str(&serialize_comment(cm)?),
                 Segment::LegacyComment(lc) => serialize_legacy_comment(lc, &mut out),
             }
         }
-        out
+        Ok(out)
     }
 }
 

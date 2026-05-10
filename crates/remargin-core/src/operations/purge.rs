@@ -196,7 +196,7 @@ pub fn purge(system: &dyn System, path: &Path, config: &ResolvedConfig) -> Resul
     // vacuously `ok`. Keeping the gate present still guards against
     // future refactors that might mutate comments as part of purge.
     commit_with_verify(&doc, config, path, |verified_doc| {
-        let markdown = verified_doc.to_markdown();
+        let markdown = verified_doc.to_markdown()?;
         system
             .write(path, markdown.as_bytes())
             .with_context(|| format!("writing {}", path.display()))

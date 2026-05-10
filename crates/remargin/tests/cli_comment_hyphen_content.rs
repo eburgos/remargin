@@ -41,10 +41,6 @@ mod tests {
     }
 
     #[test]
-    #[expect(
-        clippy::expect_used,
-        reason = "test: a missing JSON id should fail loudly with context"
-    )]
     fn comment_accepts_content_starting_with_hyphen() {
         let (_guard, root) = setup_vault();
         let body = "- About comment.created\n  - is_reply and reply_to are redundant";
@@ -55,7 +51,11 @@ mod tests {
             str::from_utf8(&output.stderr).unwrap_or("<non-utf8>")
         );
         let value: Value = serde_json::from_slice(&output.stdout).unwrap();
-        let id = value["id"].as_str().expect("comment id missing from JSON");
+        assert!(
+            value["id"].is_string(),
+            "comment id missing from JSON: {value}"
+        );
+        let id = value["id"].as_str().unwrap();
         let disk = fs::read_to_string(root.join("docs/a.md")).unwrap();
         assert!(
             disk.contains(&format!("id: {id}")),

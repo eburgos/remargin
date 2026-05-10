@@ -601,13 +601,13 @@ pub fn write(
     // semantically satisfied: the file is already in the verified state
     // this payload would produce. `create` never no-ops (the path is
     // guaranteed not to exist, ruled out above).
-    let final_content = final_doc.to_markdown();
+    let final_content = final_doc.to_markdown()?;
     if !opts.create && is_byte_identical(system, &resolved, final_content.as_bytes()) {
         return Ok(WriteOutcome { noop: true });
     }
 
     commit_with_verify(&final_doc, config, &resolved, |verified_doc| {
-        let serialized = verified_doc.to_markdown();
+        let serialized = verified_doc.to_markdown()?;
         system
             .write(&resolved, serialized.as_bytes())
             .with_context(|| format!("writing {}", resolved.display()))
@@ -711,7 +711,7 @@ pub fn project_write(
     let mut after = new_doc;
     frontmatter::ensure_frontmatter(&mut after, config)?;
 
-    let after_bytes = after.to_markdown();
+    let after_bytes = after.to_markdown()?;
     let noop = !opts.create && is_byte_identical(system, &resolved, after_bytes.as_bytes());
 
     Ok(WriteProjection::Markdown {

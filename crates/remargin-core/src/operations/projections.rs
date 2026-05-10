@@ -329,7 +329,7 @@ pub fn project_batch(
 
     let (before, mut after) = parse_file_twice(system, path)?;
 
-    let markdown_before = after.to_markdown();
+    let markdown_before = after.to_markdown()?;
     linter::lint_or_fail(&markdown_before)
         .context("document has structural issues before plan batch")?;
 
@@ -397,7 +397,7 @@ pub fn project_batch(
         };
 
         let position = resolve_batch_position(op, &line_shifts);
-        let lines_before = after.to_markdown().matches('\n').count();
+        let lines_before = after.to_markdown()?.matches('\n').count();
 
         writer::insert_comment(&mut after, comment, &position)
             .with_context(|| format!("batch sub-op {idx}: inserting comment"))?;
@@ -405,7 +405,7 @@ pub fn project_batch(
         if op.auto_ack
             && let Some(parent_id) = op.reply_to.as_deref()
         {
-            let lines_before_ack = after.to_markdown().matches('\n').count();
+            let lines_before_ack = after.to_markdown()?.matches('\n').count();
             let parent = find_comment_mut(&mut after, parent_id).with_context(|| {
                 format!("batch sub-op {idx}: auto-ack parent {parent_id:?} not found")
             })?;
@@ -413,7 +413,7 @@ pub fn project_batch(
                 author: String::from(identity),
                 ts: now,
             });
-            let lines_after_ack = after.to_markdown().matches('\n').count();
+            let lines_after_ack = after.to_markdown()?.matches('\n').count();
             let ack_lines_added = lines_after_ack.saturating_sub(lines_before_ack);
             if ack_lines_added > 0
                 && let Some(parent_cm) = after.find_comment(parent_id)
@@ -423,7 +423,7 @@ pub fn project_batch(
         }
 
         if let Some(original_target) = op.after_line {
-            let lines_after = after.to_markdown().matches('\n').count();
+            let lines_after = after.to_markdown()?.matches('\n').count();
             let lines_added = lines_after.saturating_sub(lines_before);
             line_shifts.push((original_target, lines_added));
         }
@@ -472,7 +472,7 @@ pub fn project_comment(
 
     let (before, mut after) = parse_file_twice(system, path)?;
 
-    let markdown_before = after.to_markdown();
+    let markdown_before = after.to_markdown()?;
     linter::lint_or_fail(&markdown_before).context("document has structural issues before plan")?;
 
     let existing_ids = after.comment_ids();
@@ -1023,11 +1023,11 @@ fn resolve_batch_position(op: &ProjectBatchOp, line_shifts: &[(usize, usize)]) -
 /// in `parser.rs`); to produce a `(before, after)` pair we parse the
 /// on-disk bytes, then re-parse the same bytes via `to_markdown()` for
 /// the mutable `after` copy. The round-trip through `to_markdown()` is
-/// stable on any document that parsed cleanly, so `before.to_markdown()
-/// == after.to_markdown()` before any mutation is applied.
+/// stable on any document that parsed cleanly, so `before.to_markdown()??
+/// == after.to_markdown()?` before any mutation is applied.
 fn parse_file_twice(system: &dyn System, path: &Path) -> Result<(ParsedDocument, ParsedDocument)> {
     let before = parser::parse_file(system, path)?;
-    let markdown = before.to_markdown();
+    let markdown = before.to_markdown()?;
     let after = parser::parse(&markdown).context("re-parsing document for projection")?;
     Ok((before, after))
 }

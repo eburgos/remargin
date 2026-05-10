@@ -166,10 +166,10 @@ pub struct PlanReport {
     /// 1-indexed inclusive `[start, end]` line ranges that would be
     /// modified. Empty when `noop` is `true`.
     pub changed_line_ranges: Vec<[usize; 2]>,
-    /// Whole-file sha256 of the projected markdown (`after.to_markdown()`)
+    /// Whole-file sha256 of the projected markdown (`after.to_markdown()?`)
     /// in the `sha256:<hex>` format used by [`crate::crypto::compute_checksum`].
     pub checksum_after: String,
-    /// Whole-file sha256 of the source markdown (`before.to_markdown()`)
+    /// Whole-file sha256 of the source markdown (`before.to_markdown()?`)
     /// in the `sha256:<hex>` format used by [`crate::crypto::compute_checksum`].
     pub checksum_before: String,
     /// Partition of comment ids across the projection. See
@@ -827,16 +827,20 @@ impl PlanRequest<'_> {
 /// a differing checksum counts as `modified`. Whole-file content diff is
 /// reported as 1-indexed inclusive `[start, end]` ranges; contiguous
 /// differing lines are coalesced into a single range.
-#[must_use]
+///
+/// # Errors
+///
+/// Propagates [`ParsedDocument::to_markdown`]'s `serde_yaml::Error`
+/// when serializing the before/after documents.
 pub fn project_report(
     op_label: &str,
     before: &ParsedDocument,
     after: &ParsedDocument,
     cfg: &ResolvedConfig,
     identity: PlanIdentity,
-) -> PlanReport {
-    let before_md = before.to_markdown();
-    let after_md = after.to_markdown();
+) -> Result<PlanReport> {
+    let before_md = before.to_markdown()?;
+    let after_md = after.to_markdown()?;
 
     let checksum_before = whole_file_checksum(&before_md);
     let checksum_after = whole_file_checksum(&after_md);
@@ -854,7 +858,7 @@ pub fn project_report(
 
     let (would_commit, reject_reason) = decide_commit(&raw_verify, cfg);
 
-    PlanReport {
+    Ok(PlanReport {
         changed_line_ranges,
         checksum_after,
         checksum_before,
@@ -869,7 +873,7 @@ pub fn project_report(
         unprotect_diff: None,
         verify_after,
         would_commit,
-    }
+    })
 }
 
 /// Canonical plan dispatcher shared by CLI + MCP.
@@ -898,28 +902,28 @@ pub fn dispatch(
         PlanRequest::Ack { path, ids, remove } => {
             let id_refs: Vec<&str> = ids.iter().map(String::as_str).collect();
             let (before, after) = projections::project_ack(system, path, cfg, &id_refs, *remove)?;
-            Ok(project_report(label, &before, &after, cfg, identity))
+            project_report(label, &before, &after, cfg, identity)
         }
         PlanRequest::Batch { path, ops } => {
             let (before, after) = projections::project_batch(system, path, cfg, ops)?;
-            Ok(project_report(label, &before, &after, cfg, identity))
+            project_report(label, &before, &after, cfg, identity)
         }
         PlanRequest::Comment { path, params } => {
             let (before, after) = projections::project_comment(system, path, cfg, params)?;
-            Ok(project_report(label, &before, &after, cfg, identity))
+            project_report(label, &before, &after, cfg, identity)
         }
         PlanRequest::Delete { path, ids } => {
             let id_refs: Vec<&str> = ids.iter().map(String::as_str).collect();
             let (before, after) = projections::project_delete(system, path, cfg, &id_refs)?;
-            Ok(project_report(label, &before, &after, cfg, identity))
+            project_report(label, &before, &after, cfg, identity)
         }
         PlanRequest::Edit { path, id, content } => {
             let (before, after) = projections::project_edit(system, path, cfg, id, content)?;
-            Ok(project_report(label, &before, &after, cfg, identity))
+            project_report(label, &before, &after, cfg, identity)
         }
         PlanRequest::Migrate { path, identities } => {
             let (before, after) = projections::project_migrate(system, path, cfg, identities)?;
-            Ok(project_report(label, &before, &after, cfg, identity))
+            project_report(label, &before, &after, cfg, identity)
         }
         PlanRequest::Mv { src, dst, force } => {
             dispatch_mv(system, base_dir, cfg, identity, src, dst, *force)
@@ -929,7 +933,7 @@ pub fn dispatch(
                 dispatch_purge_dir(system, cfg, identity, path)
             } else {
                 let (before, after) = projections::project_purge(system, path, cfg)?;
-                Ok(project_report(label, &before, &after, cfg, identity))
+                project_report(label, &before, &after, cfg, identity)
             }
         }
         PlanRequest::React {
@@ -940,7 +944,7 @@ pub fn dispatch(
         } => {
             let (before, after) =
                 projections::project_react(system, path, cfg, id, emoji, *remove)?;
-            Ok(project_report(label, &before, &after, cfg, identity))
+            project_report(label, &before, &after, cfg, identity)
         }
         PlanRequest::Restrict {
             cwd,
@@ -949,15 +953,15 @@ pub fn dispatch(
         } => dispatch_restrict(system, cfg, identity, cwd, args, settings_files),
         PlanRequest::SandboxAdd { path } => {
             let (before, after) = projections::project_sandbox_add(system, path, cfg)?;
-            Ok(project_report(label, &before, &after, cfg, identity))
+            project_report(label, &before, &after, cfg, identity)
         }
         PlanRequest::SandboxRemove { path } => {
             let (before, after) = projections::project_sandbox_remove(system, path, cfg)?;
-            Ok(project_report(label, &before, &after, cfg, identity))
+            project_report(label, &before, &after, cfg, identity)
         }
         PlanRequest::Sign { path, selection } => {
             let (before, after) = projections::project_sign(system, path, cfg, selection)?;
-            Ok(project_report(label, &before, &after, cfg, identity))
+            project_report(label, &before, &after, cfg, identity)
         }
         PlanRequest::Unprotect { cwd, args } => {
             dispatch_unprotect(system, cfg, identity, cwd, args)
@@ -988,7 +992,7 @@ fn dispatch_restrict(
 ) -> Result<PlanReport> {
     let projection = projections::restrict::project_restrict(system, cwd, args, settings_files)?;
     let empty = parser::parse("").context("parsing empty before-document for plan restrict")?;
-    let mut report = project_report("restrict", &empty, &empty, cfg, identity);
+    let mut report = project_report("restrict", &empty, &empty, cfg, identity)?;
     match projection {
         projections::restrict::RestrictProjection::Diff(diff) => {
             report.noop = is_diff_noop(&diff);
@@ -1016,7 +1020,7 @@ fn dispatch_unprotect(
 ) -> Result<PlanReport> {
     let projection = projections::unprotect::project_unprotect(system, cwd, args)?;
     let empty = parser::parse("").context("parsing empty before-document for plan unprotect")?;
-    let mut report = project_report("unprotect", &empty, &empty, cfg, identity);
+    let mut report = project_report("unprotect", &empty, &empty, cfg, identity)?;
     match projection {
         projections::unprotect::UnprotectProjection::Diff(diff) => {
             report.noop = is_unprotect_diff_noop(&diff);
@@ -1051,7 +1055,7 @@ fn dispatch_mv(
     force: bool,
 ) -> Result<PlanReport> {
     let empty = parser::parse("").context("parsing empty before-document for plan mv")?;
-    let mut report = project_report("mv", &empty, &empty, cfg, identity);
+    let mut report = project_report("mv", &empty, &empty, cfg, identity)?;
 
     // Wrap every preflight that the live op would perform; a failing
     // check flips `would_commit` and surfaces the message verbatim.
@@ -1264,7 +1268,7 @@ fn dispatch_purge_dir(
     dir: &Path,
 ) -> Result<PlanReport> {
     let empty = parser::parse("").context("parsing empty before-document for plan purge")?;
-    let mut report = project_report("purge", &empty, &empty, cfg, identity);
+    let mut report = project_report("purge", &empty, &empty, cfg, identity)?;
 
     if !system.exists(dir).unwrap_or(false) {
         report.reject_reason = Some(format!("directory does not exist: {}", dir.display()));
@@ -1450,14 +1454,14 @@ fn dispatch_write_projection(
             after,
             noop,
         } => {
-            let mut report = project_report("write", before, after, cfg, identity);
+            let mut report = project_report("write", before, after, cfg, identity)?;
             report.noop = report.noop || *noop;
             Ok(report)
         }
         WriteProjection::Unsupported { reason } => {
             let empty =
                 parser::parse("").context("parsing empty before-document for plan write")?;
-            let mut report = project_report("write", &empty, &empty, cfg, identity);
+            let mut report = project_report("write", &empty, &empty, cfg, identity)?;
             report.reject_reason = Some(reason.clone());
             report.would_commit = false;
             Ok(report)
@@ -1639,7 +1643,8 @@ mod tests {
         let before = parser::parse(DOC_ONE_COMMENT).unwrap();
         let after = parser::parse(DOC_ONE_COMMENT).unwrap();
 
-        let report = project_report("write", &before, &after, &open_config(), test_identity());
+        let report =
+            project_report("write", &before, &after, &open_config(), test_identity()).unwrap();
 
         assert!(report.noop, "identical inputs must be a noop: {report:?}");
         assert!(report.changed_line_ranges.is_empty());
@@ -1693,7 +1698,8 @@ mod tests {
         let before = parser::parse(DOC_ONE_COMMENT).unwrap();
         let after = parser::parse(DOC_TWO_COMMENTS).unwrap();
 
-        let report = project_report("write", &before, &after, &open_config(), test_identity());
+        let report =
+            project_report("write", &before, &after, &open_config(), test_identity()).unwrap();
 
         assert_eq!(report.verify_after.rows.len(), 2);
         let ids: Vec<&str> = report
@@ -1714,7 +1720,8 @@ mod tests {
         let before = parser::parse(DOC_ONE_COMMENT).unwrap();
         let after = parser::parse(DOC_AAA_BAD_CHECKSUM).unwrap();
 
-        let report = project_report("write", &before, &after, &open_config(), test_identity());
+        let report =
+            project_report("write", &before, &after, &open_config(), test_identity()).unwrap();
 
         assert!(!report.would_commit);
         assert!(
@@ -1732,7 +1739,8 @@ mod tests {
         let before = parser::parse("# Title\n\nbody a\nbody b\nbody c\n").unwrap();
         let after = parser::parse("# Title\n\nbody A\nbody B\nbody c\n").unwrap();
 
-        let report = project_report("write", &before, &after, &open_config(), test_identity());
+        let report =
+            project_report("write", &before, &after, &open_config(), test_identity()).unwrap();
 
         assert!(!report.noop);
         // Lines 3 and 4 (1-indexed) differ; expect a single coalesced range.

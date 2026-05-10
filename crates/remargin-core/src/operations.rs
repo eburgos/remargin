@@ -112,7 +112,7 @@ pub fn create_comment(
     let author_type = cfg.author_type.clone().unwrap_or(AuthorType::Human);
 
     let mut doc = parser::parse_file(system, path)?;
-    let markdown_before = doc.to_markdown();
+    let markdown_before = doc.to_markdown()?;
     linter::lint_or_fail(&markdown_before)
         .context("document has structural issues before write")?;
 
@@ -168,7 +168,7 @@ pub fn create_comment(
     let expected_added: HashSet<String> = HashSet::from([new_id.clone()]);
     let expected_removed: HashSet<String> = HashSet::new();
 
-    let markdown_after = doc.to_markdown();
+    let markdown_after = doc.to_markdown()?;
     linter::lint_or_fail(&markdown_after).context("document has structural issues after write")?;
 
     commit_with_verify(&doc, cfg, path, |verified_doc| {

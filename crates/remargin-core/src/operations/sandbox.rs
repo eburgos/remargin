@@ -267,7 +267,7 @@ fn add_one(
     if added {
         frontmatter::write_sandbox_entries(&mut doc, &entries)?;
         commit_with_verify(&doc, config, file, |verified_doc| {
-            let markdown = verified_doc.to_markdown();
+            let markdown = verified_doc.to_markdown()?;
             system
                 .write(file, markdown.as_bytes())
                 .with_context(|| format!("writing {}", file.display()))
@@ -294,7 +294,7 @@ fn remove_one(
     if removed {
         frontmatter::write_sandbox_entries(&mut doc, &entries)?;
         commit_with_verify(&doc, config, file, |verified_doc| {
-            let markdown = verified_doc.to_markdown();
+            let markdown = verified_doc.to_markdown()?;
             system
                 .write(file, markdown.as_bytes())
                 .with_context(|| format!("writing {}", file.display()))

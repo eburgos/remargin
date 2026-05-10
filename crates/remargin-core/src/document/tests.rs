@@ -2592,7 +2592,7 @@ fn project_write_detects_noop_when_content_matches() {
     // Now project_write with those exact bytes — this is the true noop
     // case a caller would observe (planning a re-save of the current
     // document). `ensure_frontmatter` is idempotent on an already-
-    // normalized document, so `after.to_markdown()` should match disk.
+    // normalized document, so `after.to_markdown().unwrap()` should match disk.
     let projection = document::project_write(
         &system,
         Path::new("/project"),

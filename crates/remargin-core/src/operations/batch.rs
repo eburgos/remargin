@@ -194,7 +194,7 @@ pub fn batch_comment(
 
     let mut doc = parser::parse_file(system, path)?;
 
-    let markdown_before = doc.to_markdown();
+    let markdown_before = doc.to_markdown()?;
     linter::lint_or_fail(&markdown_before)
         .context("document has structural issues before write")?;
 
@@ -275,7 +275,7 @@ pub fn batch_comment(
         // lines added by previous insertions in this batch.
         let position = resolve_position_adjusted(op, &line_shifts);
 
-        let lines_before = doc.to_markdown().matches('\n').count();
+        let lines_before = doc.to_markdown()?.matches('\n').count();
 
         writer::insert_comment(&mut doc, comment, &position)
             .with_context(|| format!("batch operation {idx}: inserting comment"))?;
@@ -284,7 +284,7 @@ pub fn batch_comment(
         if op.auto_ack
             && let Some(parent_id) = &op.reply_to
         {
-            let lines_before_ack = doc.to_markdown().matches('\n').count();
+            let lines_before_ack = doc.to_markdown()?.matches('\n').count();
 
             let parent = find_comment_mut(&mut doc, parent_id).with_context(|| {
                 format!("batch operation {idx}: auto-ack parent {parent_id:?} not found")
@@ -295,7 +295,7 @@ pub fn batch_comment(
             });
 
             // Track ack-induced line shift for subsequent AfterLine targets.
-            let lines_after_ack = doc.to_markdown().matches('\n').count();
+            let lines_after_ack = doc.to_markdown()?.matches('\n').count();
             let ack_lines_added = lines_after_ack.saturating_sub(lines_before_ack);
             if ack_lines_added > 0
                 && let Some(parent_cm) = doc.find_comment(parent_id)
@@ -309,7 +309,7 @@ pub fn batch_comment(
 
         // Record the line shift if this was an AfterLine insertion.
         if let Some(original_target) = op.after_line {
-            let lines_after = doc.to_markdown().matches('\n').count();
+            let lines_after = doc.to_markdown()?.matches('\n').count();
             let lines_added = lines_after.saturating_sub(lines_before);
             line_shifts.push((original_target, lines_added));
         }
@@ -319,7 +319,7 @@ pub fn batch_comment(
 
     frontmatter::ensure_frontmatter(&mut doc, cfg)?;
 
-    let markdown_after = doc.to_markdown();
+    let markdown_after = doc.to_markdown()?;
     linter::lint_or_fail(&markdown_after)
         .context("document has structural issues after batch write")?;
 
