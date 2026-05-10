@@ -21,11 +21,6 @@
 //! To refresh after a legitimate migration: if a function drops below
 //! the cap, remove its allowlist entry. If a new function intentionally
 //! exceeds the cap, add it here with a one-line reason.
-#![expect(
-    clippy::print_stdout,
-    reason = "diagnostic output on failure helps debug cap regressions"
-)]
-
 #[cfg(test)]
 mod tests {
 
@@ -238,13 +233,11 @@ mod tests {
             }
         }
 
-        for v in &violations {
-            println!("LOC CAP VIOLATION: {v}");
-        }
         assert!(
             violations.is_empty(),
-            "{} adapter handler(s) exceeded LOC cap",
-            violations.len()
+            "{} adapter handler(s) exceeded LOC cap:\n  - {}",
+            violations.len(),
+            violations.join("\n  - ")
         );
     }
 } // mod tests

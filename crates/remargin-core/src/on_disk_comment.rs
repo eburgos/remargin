@@ -1,21 +1,13 @@
 //! Wire schema for a remargin comment block.
 
-// Field declaration order mirrors the writer's canonical on-disk emit
-// order — not the lint's alphabetical default — because serde emits
-// struct fields in declaration order and the YAML bytes hitting disk
-// are observed.
-#![expect(
-    clippy::arbitrary_source_item_ordering,
-    reason = "fields ordered for serde emission, not the lint's alphabetical default"
-)]
-
 extern crate alloc;
 
 use alloc::collections::BTreeMap;
 
 use anyhow::{Result, anyhow, bail};
 use chrono::DateTime;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::ser::SerializeStruct as _;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tixschema::model_schema;
 
 use crate::parser::{Acknowledgment, AuthorType, Comment};
@@ -40,27 +32,29 @@ pub struct ReactionEntryOnDisk {
 /// Every key the writer emits and the parser reads is pinned by a
 /// `#[serde(rename = "...")]` here. Adding a field forces a compile
 /// error on both `From` impls below, preventing writer/parser drift.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// **Wire-order vs source-order:** the on-disk YAML emit order is
+/// fixed by the manual [`Serialize`] impl below — NOT by struct field
+/// declaration order. Source fields stay alphabetical (clippy's
+/// `arbitrary_source_item_ordering` requirement); the canonical YAML
+/// byte sequence stays as it has always been (`id`, `author`, `type`,
+/// `ts`, `edited_at`, `to`, `reply-to`, `thread`, `attachments`,
+/// `remargin_kind`, `reactions`, `ack`, `checksum`, `signature`).
+#[derive(Debug, Clone, Deserialize)]
 #[non_exhaustive]
 #[model_schema]
 pub struct OnDiskComment {
-    pub id: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ack: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<String>,
     pub author: String,
     #[serde(rename = "type")]
     pub author_type: String,
-    pub ts: String,
+    pub checksum: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub edited_at: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub to: Vec<String>,
-    #[serde(default, rename = "reply-to", skip_serializing_if = "Option::is_none")]
-    pub reply_to: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub thread: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub attachments: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub remargin_kind: Vec<String>,
+    pub id: String,
     #[serde(
         default,
         deserialize_with = "deserialize_reactions_with_legacy",
@@ -68,43 +62,104 @@ pub struct OnDiskComment {
     )]
     pub reactions: BTreeMap<String, Vec<ReactionEntryOnDisk>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub ack: Vec<String>,
-    pub checksum: String,
+    pub remargin_kind: Vec<String>,
+    #[serde(default, rename = "reply-to", skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub to: Vec<String>,
+    pub ts: String,
 }
 
-fn deserialize_reactions_with_legacy<'de, D>(
-    deserializer: D,
-) -> Result<BTreeMap<String, Vec<ReactionEntryOnDisk>>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let reactions: Reactions = deserialize_with_legacy(deserializer)?;
-    Ok(reactions
-        .into_iter()
-        .map(|(emoji, entries)| {
-            let on_disk: Vec<ReactionEntryOnDisk> = entries
-                .into_iter()
-                .map(|entry: ReactionEntry| ReactionEntryOnDisk {
-                    author: entry.author,
-                    ts: entry.ts.to_rfc3339(),
-                })
-                .collect();
-            (emoji, on_disk)
-        })
-        .collect())
+/// Manual [`Serialize`] impl pinning the canonical on-disk YAML emit
+/// order. Source-field order is alphabetical (per
+/// `arbitrary_source_item_ordering`); this impl emits in the original
+/// wire order so existing markdown documents stay byte-identical when
+/// rewritten.
+impl Serialize for OnDiskComment {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        // Field count includes the always-emitted ones (5) plus any
+        // conditional fields whose `skip_serializing_if` predicate
+        // returns false for this instance.
+        let mut count = 5_usize; // id, author, type, ts, checksum
+        if self.edited_at.is_some() {
+            count += 1;
+        }
+        if !self.to.is_empty() {
+            count += 1;
+        }
+        if self.reply_to.is_some() {
+            count += 1;
+        }
+        if self.thread.is_some() {
+            count += 1;
+        }
+        if !self.attachments.is_empty() {
+            count += 1;
+        }
+        if !self.remargin_kind.is_empty() {
+            count += 1;
+        }
+        if !self.reactions.is_empty() {
+            count += 1;
+        }
+        if !self.ack.is_empty() {
+            count += 1;
+        }
+        if self.signature.is_some() {
+            count += 1;
+        }
+
+        let mut state = serializer.serialize_struct("OnDiskComment", count)?;
+        state.serialize_field("id", &self.id)?;
+        state.serialize_field("author", &self.author)?;
+        state.serialize_field("type", &self.author_type)?;
+        state.serialize_field("ts", &self.ts)?;
+        if let Some(edited_at) = self.edited_at.as_ref() {
+            state.serialize_field("edited_at", edited_at)?;
+        }
+        if !self.to.is_empty() {
+            state.serialize_field("to", &self.to)?;
+        }
+        if let Some(reply_to) = self.reply_to.as_ref() {
+            state.serialize_field("reply-to", reply_to)?;
+        }
+        if let Some(thread) = self.thread.as_ref() {
+            state.serialize_field("thread", thread)?;
+        }
+        if !self.attachments.is_empty() {
+            state.serialize_field("attachments", &self.attachments)?;
+        }
+        if !self.remargin_kind.is_empty() {
+            state.serialize_field("remargin_kind", &self.remargin_kind)?;
+        }
+        if !self.reactions.is_empty() {
+            state.serialize_field("reactions", &self.reactions)?;
+        }
+        if !self.ack.is_empty() {
+            state.serialize_field("ack", &self.ack)?;
+        }
+        state.serialize_field("checksum", &self.checksum)?;
+        if let Some(signature) = self.signature.as_ref() {
+            state.serialize_field("signature", signature)?;
+        }
+        state.end()
+    }
 }
 
 impl From<&Comment> for OnDiskComment {
-    // Explicit `_` patterns for `content` and `line` are intentional:
+    // Bound-but-unused `_content` / `_line` patterns are intentional:
     // the destructure is the compile-time check that every Comment
     // field has been consciously routed (or skipped). `..` would let a
-    // future field slip through silently.
-    #[expect(
-        clippy::unneeded_field_pattern,
-        reason = "exhaustiveness check guards against silently dropped fields"
-    )]
+    // future field slip through silently. Underscore-prefixed names
+    // satisfy `clippy::unneeded_field_pattern` (they are bindings, not
+    // wildcards) while still suppressing unused-variable warnings.
     fn from(comment: &Comment) -> Self {
         let Comment {
             ack,
@@ -112,10 +167,10 @@ impl From<&Comment> for OnDiskComment {
             author,
             author_type,
             checksum,
-            content: _,
+            content: _content,
             edited_at,
             id,
-            line: _,
+            line: _line,
             reactions,
             remargin_kind,
             reply_to,
@@ -266,6 +321,28 @@ pub fn comment_from_on_disk(
         to,
         ts,
     })
+}
+
+fn deserialize_reactions_with_legacy<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<String, Vec<ReactionEntryOnDisk>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let reactions: Reactions = deserialize_with_legacy(deserializer)?;
+    Ok(reactions
+        .into_iter()
+        .map(|(emoji, entries)| {
+            let on_disk: Vec<ReactionEntryOnDisk> = entries
+                .into_iter()
+                .map(|entry: ReactionEntry| ReactionEntryOnDisk {
+                    author: entry.author,
+                    ts: entry.ts.to_rfc3339(),
+                })
+                .collect();
+            (emoji, on_disk)
+        })
+        .collect())
 }
 
 fn parse_ack_string(entry: &str) -> Result<Acknowledgment> {
