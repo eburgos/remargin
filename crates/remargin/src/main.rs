@@ -1160,6 +1160,25 @@ enum IdentityAction {
 /// Obsidian plugin).
 #[derive(clap::Subcommand)]
 enum PromptAction {
+    /// Strip the `system_prompt:` block from `<folder>/.remargin.yaml`.
+    /// Idempotent: a missing block (or missing file) succeeds. The
+    /// `.remargin.yaml` file is preserved even if it ends up empty.
+    Delete {
+        /// Folder containing the `.remargin.yaml`. Defaults to CWD.
+        #[arg(default_value = ".")]
+        folder: String,
+        #[command(flatten)]
+        output_args: OutputArgs,
+    },
+    /// Recursively list every `.remargin.yaml` under the given folder
+    /// that declares a `system_prompt:` block.
+    List {
+        /// Root folder. Defaults to CWD.
+        #[arg(default_value = ".")]
+        folder: String,
+        #[command(flatten)]
+        output_args: OutputArgs,
+    },
     /// Resolve the nearest folder-scoped system prompt for a file or
     /// directory. Falls through to the locked Default body when the
     /// walk exhausts.
@@ -1168,6 +1187,24 @@ enum PromptAction {
         /// treated as the starting directory; files have their parent
         /// walked.
         file: String,
+        #[command(flatten)]
+        output_args: OutputArgs,
+    },
+    /// Create or replace the `system_prompt:` block in
+    /// `<folder>/.remargin.yaml`. Body comes from `--prompt` when set,
+    /// else stdin (when stdin is not a TTY).
+    Set {
+        /// Folder containing (or to contain) the `.remargin.yaml`.
+        /// Defaults to the current working directory when omitted.
+        #[arg(default_value = ".")]
+        folder: String,
+        /// Human-readable display label. Required.
+        #[arg(long)]
+        name: String,
+        /// Prompt body. Required. Pass `-` (or omit) and pipe via
+        /// stdin for multi-line content.
+        #[arg(long)]
+        prompt: Option<String>,
         #[command(flatten)]
         output_args: OutputArgs,
     },
@@ -1334,6 +1371,15 @@ struct QueryPendingFilters<'cmd> {
     /// comments whose `to:` list contains `user` and which are still
     /// pending.
     for_user: Option<&'cmd str>,
+}
+
+struct PromptSetParams<'params> {
+    config: &'params ResolvedConfig,
+    cwd: &'params Path,
+    folder: &'params str,
+    json_mode: bool,
+    name: &'params str,
+    prompt_flag: Option<&'params str>,
 }
 
 struct QueryParams<'cmd> {
@@ -1809,7 +1855,6 @@ const fn subcommand_is_config_free(cmd: &Commands) -> bool {
         | Commands::Activity { .. }
         | Commands::Identity { .. }
         | Commands::Permissions { .. }
-        | Commands::Prompt { .. }
         | Commands::ResolveMode { .. }
         | Commands::Restrict { .. }
         | Commands::Keygen { .. }
@@ -1830,6 +1875,7 @@ const fn subcommand_is_config_free(cmd: &Commands) -> bool {
         | Commands::Metadata { .. }
         | Commands::Mv { .. }
         | Commands::Plan { .. }
+        | Commands::Prompt { .. }
         | Commands::Purge { .. }
         | Commands::Query { .. }
         | Commands::React { .. }
@@ -2074,7 +2120,6 @@ fn try_dispatch_config_free(
     match &cli.command {
         Commands::Version => handle_version(sinks).map(Some),
         Commands::Identity { .. } => handle_identity(&cli.command, sinks, system, cwd).map(Some),
-        Commands::Prompt { .. } => handle_prompt(&cli.command, sinks, system, cwd).map(Some),
         Commands::ResolveMode { .. } => {
             handle_resolve_mode(&cli.command, sinks, system, cwd).map(Some)
         }
@@ -2129,6 +2174,7 @@ fn handle_prompt(
     sinks: &mut IoSinks<'_>,
     system: &dyn System,
     cwd: &Path,
+    config: &ResolvedConfig,
 ) -> Result<()> {
     let Commands::Prompt {
         action,
@@ -2138,16 +2184,37 @@ fn handle_prompt(
     else {
         bail!("internal: handle_prompt called with wrong subcommand");
     };
+    let cmd_json = output_args.json;
     match action {
         PromptAction::Resolve {
             file,
-            output_args: action_output,
-        } => {
-            // Honour --json on either side so callers can place it
-            // wherever clap accepts it without surprise.
-            let json_mode = output_args.json || action_output.json;
-            cmd_prompt_resolve(sinks, system, cwd, file, json_mode)
-        }
+            output_args: a,
+        } => cmd_prompt_resolve(sinks, system, cwd, file, cmd_json || a.json),
+        PromptAction::Set {
+            folder,
+            name,
+            prompt,
+            output_args: a,
+        } => cmd_prompt_set(
+            sinks,
+            system,
+            &PromptSetParams {
+                config,
+                cwd,
+                folder,
+                json_mode: cmd_json || a.json,
+                name,
+                prompt_flag: prompt.as_deref(),
+            },
+        ),
+        PromptAction::Delete {
+            folder,
+            output_args: a,
+        } => cmd_prompt_delete(sinks, system, cwd, config, folder, cmd_json || a.json),
+        PromptAction::List {
+            folder,
+            output_args: a,
+        } => cmd_prompt_list(sinks, system, cwd, folder, cmd_json || a.json),
     }
 }
 
@@ -2310,6 +2377,7 @@ fn dispatch_with_config(
         Commands::Metadata { .. } => handle_metadata(&cli.command, sinks, system, cwd, config),
         Commands::Mv { .. } => handle_mv(&cli.command, sinks, system, cwd, config),
         Commands::Plan { .. } => handle_plan(&cli.command, sinks, system, cwd, config),
+        Commands::Prompt { .. } => handle_prompt(&cli.command, sinks, system, cwd, config),
         Commands::Purge { .. } => handle_purge(&cli.command, sinks, system, cwd, config),
         Commands::Query { .. } => handle_query(&cli.command, sinks, system, cwd, config),
         Commands::React { .. } => handle_react(&cli.command, sinks, system, cwd, config),
@@ -2326,7 +2394,6 @@ fn dispatch_with_config(
         | Commands::Mcp { .. }
         | Commands::Keygen { .. }
         | Commands::Permissions { .. }
-        | Commands::Prompt { .. }
         | Commands::ResolveMode { .. }
         | Commands::Restrict { .. }
         | Commands::Skill { .. }
@@ -3916,6 +3983,136 @@ fn write_prompt_resolve_text(
         }
     }
     Ok(())
+}
+
+fn cmd_prompt_set(
+    sinks: &mut IoSinks<'_>,
+    system: &dyn System,
+    params: &PromptSetParams<'_>,
+) -> Result<()> {
+    let absolute = absolute_folder(system, params.cwd, params.folder)?;
+    let body = match params.prompt_flag {
+        Some(p) => String::from(p),
+        None => read_prompt_from_stdin()?,
+    };
+    if body.is_empty() {
+        bail!("prompt body is required (pass --prompt or pipe via stdin)");
+    }
+    if params.name.is_empty() {
+        bail!("--name is required");
+    }
+    let outcome =
+        operations::prompt::set(system, &absolute, Some(params.name), &body, params.config)
+            .with_context(|| format!("setting prompt at {}", absolute.display()))?;
+    if params.json_mode {
+        let value = serde_json::to_value(&outcome).context("serializing prompt_set output")?;
+        return print_output(sinks, true, &value);
+    }
+    writeln!(
+        sinks.stderr,
+        "Prompt set at {} (created={}, noop={})",
+        outcome.source.display(),
+        outcome.created,
+        outcome.noop,
+    )
+    .context("writing to stderr")?;
+    Ok(())
+}
+
+fn cmd_prompt_delete(
+    sinks: &mut IoSinks<'_>,
+    system: &dyn System,
+    cwd: &Path,
+    config: &ResolvedConfig,
+    folder: &str,
+    json_mode: bool,
+) -> Result<()> {
+    let absolute = absolute_folder(system, cwd, folder)?;
+    let outcome = operations::prompt::delete(system, &absolute, config)
+        .with_context(|| format!("deleting prompt at {}", absolute.display()))?;
+    if json_mode {
+        let value = serde_json::to_value(&outcome).context("serializing prompt_delete output")?;
+        return print_output(sinks, true, &value);
+    }
+    if outcome.absent {
+        writeln!(
+            sinks.stderr,
+            "No prompt to delete at {}",
+            outcome.source.display(),
+        )
+        .context("writing to stderr")?;
+    } else {
+        writeln!(
+            sinks.stderr,
+            "Prompt deleted at {} (left_empty={})",
+            outcome.source.display(),
+            outcome.left_empty,
+        )
+        .context("writing to stderr")?;
+    }
+    Ok(())
+}
+
+fn cmd_prompt_list(
+    sinks: &mut IoSinks<'_>,
+    system: &dyn System,
+    cwd: &Path,
+    folder: &str,
+    json_mode: bool,
+) -> Result<()> {
+    let absolute = absolute_folder(system, cwd, folder)?;
+    let entries = operations::prompt::list(system, &absolute)
+        .with_context(|| format!("listing prompts under {}", absolute.display()))?;
+    if json_mode {
+        let value = serde_json::to_value(&entries).context("serializing prompt_list output")?;
+        return print_output(sinks, true, &json!({ "entries": value }));
+    }
+    if entries.is_empty() {
+        writeln!(
+            sinks.stderr,
+            "No declared prompts under {}",
+            absolute.display(),
+        )
+        .context("writing to stderr")?;
+        return Ok(());
+    }
+    for entry in &entries {
+        let label = entry.name.as_deref().unwrap_or("(unnamed)");
+        let chars = entry.prompt.chars().count();
+        writeln!(
+            sinks.stdout,
+            "{}\t{}\t{} chars",
+            entry.source.display(),
+            label,
+            chars,
+        )
+        .context("writing to stdout")?;
+    }
+    Ok(())
+}
+
+fn absolute_folder(system: &dyn System, cwd: &Path, folder: &str) -> Result<PathBuf> {
+    let expanded = expand_cli_path(system, folder)?;
+    let absolute = if expanded.is_absolute() {
+        expanded
+    } else {
+        cwd.join(expanded)
+    };
+    Ok(absolute)
+}
+
+fn read_prompt_from_stdin() -> Result<String> {
+    use std::io::IsTerminal as _;
+    let stdin = io::stdin();
+    if stdin.is_terminal() {
+        return Ok(String::new());
+    }
+    let mut buf = String::new();
+    stdin
+        .lock()
+        .read_to_string(&mut buf)
+        .context("reading prompt body from stdin")?;
+    Ok(String::from(buf.trim_end_matches('\n')))
 }
 
 fn cmd_resolve_mode(

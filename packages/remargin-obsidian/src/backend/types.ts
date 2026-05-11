@@ -145,3 +145,19 @@ export interface ResolvedSystemPrompt {
    */
   source: string | null;
 }
+
+/**
+ * One entry from `remargin prompt list <folder> --json`. Each
+ * `.remargin.yaml` under the walked root that declares a
+ * `system_prompt:` block surfaces as a row.
+ */
+export interface PromptListEntry {
+  /** Absolute path of the folder containing the `.remargin.yaml`. */
+  folder: string;
+  /** `system_prompt.name` when present in the YAML, else `null`. */
+  name: string | null;
+  /** Verbatim prompt body. */
+  prompt: string;
+  /** Absolute path of the `.remargin.yaml` that declared the prompt. */
+  source: string;
+}

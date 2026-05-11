@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { Notice, type TFile } from "obsidian";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
@@ -18,7 +18,6 @@ import { ViewToggle } from "@/components/sidebar/ViewToggle";
 import { pruneKindFilter } from "@/lib/kindFilter";
 import { openFileAtLine } from "@/lib/openFile";
 import { runSubmitAll } from "@/lib/submitAllPipeline";
-import { removeSystemPrompt, spliceSystemPrompt } from "@/lib/yamlSystemPrompt";
 import type RemarginPlugin from "@/main";
 import type { ViewMode } from "@/types";
 
@@ -236,12 +235,8 @@ export function RemarginSidebar({ plugin }: RemarginSidebarProps) {
 
   const handleSavePrompt = useCallback(
     async ({ source, name, prompt }: InlinePromptEditorSaveArgs) => {
-      const existing = existsSync(source) ? readFileSync(source, "utf-8") : "";
-      const spliced = spliceSystemPrompt(existing, { name, prompt });
-      if (!spliced.noop) {
-        const opts = existsSync(source) ? { raw: true } : { create: true, raw: true };
-        await plugin.backend.write(source, spliced.content, opts);
-      }
+      const folder = dirname(source);
+      await plugin.backend.promptSet(folder, name, prompt);
       bumpRefresh();
     },
     [plugin, bumpRefresh]
@@ -249,15 +244,8 @@ export function RemarginSidebar({ plugin }: RemarginSidebarProps) {
 
   const handleDeletePrompt = useCallback(
     async (source: string) => {
-      if (!existsSync(source)) {
-        bumpRefresh();
-        return;
-      }
-      const existing = readFileSync(source, "utf-8");
-      const stripped = removeSystemPrompt(existing);
-      if (!stripped.noop) {
-        await plugin.backend.write(source, stripped.content, { raw: true });
-      }
+      const folder = dirname(source);
+      await plugin.backend.promptDelete(folder);
       bumpRefresh();
     },
     [plugin, bumpRefresh]

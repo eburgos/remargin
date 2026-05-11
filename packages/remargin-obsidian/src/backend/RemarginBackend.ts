@@ -26,6 +26,7 @@ import type {
   GetOpts,
   IdentityInfo,
   Participant,
+  PromptListEntry,
   QueryOpts,
   ResolvedMode,
   ResolvedSystemPrompt,
@@ -420,6 +421,36 @@ export class RemarginBackend {
   }
 
   /**
+   * Create or replace the `system_prompt:` block in
+   * `<folder>/.remargin.yaml` via `remargin prompt set`. The body is
+   * piped on stdin so multi-line content round-trips byte-for-byte
+   * without flag-escaping. Other YAML fields are preserved verbatim
+   * by the CLI's post-write diff.
+   */
+  async promptSet(folder: string, name: string, prompt: string): Promise<void> {
+    await this.exec(["prompt", "set", folder, "--name", name], { stdin: prompt });
+  }
+
+  /**
+   * Strip the `system_prompt:` block from `<folder>/.remargin.yaml`
+   * via `remargin prompt delete`. Idempotent; the file is preserved
+   * even if it ends up empty.
+   */
+  async promptDelete(folder: string): Promise<void> {
+    await this.exec(["prompt", "delete", folder]);
+  }
+
+  /**
+   * Recursively enumerate every `.remargin.yaml` under `folder` that
+   * declares a `system_prompt:` block. Read-only, identity-free.
+   */
+  async promptList(folder: string): Promise<PromptListEntry[]> {
+    const raw = await this.exec(["prompt", "list", folder]);
+    const parsed = JSON.parse(raw) as { entries: PromptListEntry[] };
+    return parsed.entries;
+  }
+
+  /**
    * Ask the CLI which identity is active under the plugin's current
    * settings. Post rem-3dw0 the `identity` subcommand honors the full
    * `IdentityArgs` group, so forwarding `buildIdentityArgs(settings)`
@@ -465,13 +496,14 @@ export class RemarginBackend {
 
   private async exec(
     args: string[],
-    opts?: { timeout?: number; useJson?: boolean; skipIdentity?: boolean }
+    opts?: { timeout?: number; useJson?: boolean; skipIdentity?: boolean; stdin?: string }
   ): Promise<string> {
     const binary = this.resolveBinary();
     const cwd = expandPath(this.settings.workingDirectory) || this.vaultPath;
     const timeout = opts?.timeout ?? 30000;
     const useJson = opts?.useJson ?? true;
     const skipIdentity = opts?.skipIdentity ?? false;
+    const stdinInput = opts?.stdin;
     const subcommand = args[0];
     const identityAccepted =
       subcommand !== undefined && IDENTITY_ACCEPTING_SUBCOMMANDS.has(subcommand);
@@ -485,6 +517,10 @@ export class RemarginBackend {
 
     return new Promise<string>((resolve, reject) => {
       const child = spawn(binary, fullArgs, { cwd });
+      if (stdinInput !== undefined) {
+        child.stdin.write(stdinInput);
+        child.stdin.end();
+      }
 
       const stdoutChunks: Buffer[] = [];
       const stderrChunks: Buffer[] = [];

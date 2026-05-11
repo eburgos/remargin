@@ -30,6 +30,7 @@ use crate::operations::batch::BatchCommentOp;
 use crate::operations::mv as mv_op;
 use crate::operations::plan as plan_ops;
 use crate::operations::projections;
+use crate::operations::prompt as prompt_ops;
 use crate::operations::purge;
 use crate::operations::query::{self, QueryFilter};
 use crate::operations::sandbox as sandbox_ops;
@@ -544,6 +545,59 @@ fn desc_prompt_resolve() -> ToolDesc {
     }
 }
 
+/// Build the `prompt_set` tool descriptor.
+fn desc_prompt_set() -> ToolDesc {
+    ToolDesc {
+        name: "prompt_set",
+        description: "Create or replace the `system_prompt:` block in `<folder>/.remargin.yaml`. \
+             Other fields in the file are preserved byte-for-byte. The post-write diff refuses \
+             any change outside the system_prompt mapping. Folder defaults to the MCP root when \
+             omitted.",
+        schema: with_identity_flag_schema(json!({
+            "type": "object",
+            "properties": {
+                "folder": { "type": "string", "description": "Folder containing the `.remargin.yaml`. Defaults to the MCP root." },
+                "name":   { "type": "string", "description": "Human-readable display label. Required." },
+                "prompt": { "type": "string", "description": "Prompt body text. Required." }
+            },
+            "required": ["name", "prompt"]
+        })),
+    }
+}
+
+/// Build the `prompt_delete` tool descriptor.
+fn desc_prompt_delete() -> ToolDesc {
+    ToolDesc {
+        name: "prompt_delete",
+        description: "Strip the `system_prompt:` block from `<folder>/.remargin.yaml`. Idempotent: \
+             a missing block (or missing file) succeeds. The .remargin.yaml is preserved even if \
+             it ends up empty. Folder defaults to the MCP root.",
+        schema: with_identity_flag_schema(json!({
+            "type": "object",
+            "properties": {
+                "folder": { "type": "string", "description": "Folder containing the `.remargin.yaml`. Defaults to the MCP root." }
+            },
+            "required": []
+        })),
+    }
+}
+
+/// Build the `prompt_list` tool descriptor.
+fn desc_prompt_list() -> ToolDesc {
+    ToolDesc {
+        name: "prompt_list",
+        description: "Recursively list every `.remargin.yaml` under `folder` that declares a \
+             `system_prompt:` block. Read-only. Folder defaults to the MCP root.",
+        schema: json!({
+            "type": "object",
+            "properties": {
+                "folder": { "type": "string", "description": "Root folder. Defaults to the MCP root." }
+            },
+            "required": []
+        }),
+    }
+}
+
 /// Build the `identity_create` tool descriptor.
 ///
 /// Mirrors the CLI `remargin identity create` surface: prints a
@@ -856,7 +910,10 @@ fn tool_descriptors() -> Vec<ToolDesc> {
         desc_permissions_check(),
         desc_permissions_show(),
         desc_plan(),
+        desc_prompt_delete(),
+        desc_prompt_list(),
         desc_prompt_resolve(),
+        desc_prompt_set(),
         desc_purge(),
         desc_query(),
         desc_react(),
@@ -1302,7 +1359,10 @@ fn dispatch_tool(
         "permissions_check" => handle_permissions_check(system, base_dir, p),
         "permissions_show" => handle_permissions_show(system, base_dir),
         "plan" => handle_plan(system, base_dir, config, p),
+        "prompt_delete" => handle_prompt_delete(system, base_dir, config, p),
+        "prompt_list" => handle_prompt_list(system, base_dir, p),
         "prompt_resolve" => handle_prompt_resolve(system, base_dir, p),
+        "prompt_set" => handle_prompt_set(system, base_dir, config, p),
         "purge" => handle_purge(system, base_dir, config, p),
         "query" => handle_query(system, base_dir, config, p),
         "react" => handle_react(system, base_dir, config, p),
@@ -1899,6 +1959,56 @@ fn handle_prompt_resolve(
     };
     let resolved = resolve_system_prompt(system, &absolute)?;
     serde_json::to_value(&resolved).context("serializing prompt_resolve output")
+}
+
+fn resolve_folder_param(base_dir: &Path, params: &Map<String, Value>) -> PathBuf {
+    let raw = optional_str(params, "folder").unwrap_or(".");
+    let candidate = Path::new(raw);
+    if candidate.is_absolute() {
+        candidate.to_path_buf()
+    } else {
+        base_dir.join(candidate)
+    }
+}
+
+fn handle_prompt_set(
+    system: &dyn System,
+    base_dir: &Path,
+    config: &ResolvedConfig,
+    params: &Map<String, Value>,
+) -> Result<Value> {
+    let folder = resolve_folder_param(base_dir, params);
+    let name = required_str(params, "name")?;
+    let prompt = required_str(params, "prompt")?;
+    let declared = resolve_identity_from_params(system, base_dir, config, params)?;
+    let cfg = effective_config(config, declared.as_ref());
+    let outcome = prompt_ops::set(system, &folder, Some(name), prompt, cfg)?;
+    serde_json::to_value(&outcome).context("serializing prompt_set output")
+}
+
+fn handle_prompt_delete(
+    system: &dyn System,
+    base_dir: &Path,
+    config: &ResolvedConfig,
+    params: &Map<String, Value>,
+) -> Result<Value> {
+    let folder = resolve_folder_param(base_dir, params);
+    let declared = resolve_identity_from_params(system, base_dir, config, params)?;
+    let cfg = effective_config(config, declared.as_ref());
+    let outcome = prompt_ops::delete(system, &folder, cfg)?;
+    serde_json::to_value(&outcome).context("serializing prompt_delete output")
+}
+
+fn handle_prompt_list(
+    system: &dyn System,
+    base_dir: &Path,
+    params: &Map<String, Value>,
+) -> Result<Value> {
+    let folder = resolve_folder_param(base_dir, params);
+    let entries = prompt_ops::list(system, &folder)?;
+    let entries_value =
+        serde_json::to_value(&entries).context("serializing prompt_list entries")?;
+    Ok(json!({ "entries": entries_value }))
 }
 
 fn handle_purge(

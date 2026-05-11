@@ -4,6 +4,7 @@ pub mod batch;
 pub mod mv;
 pub mod plan;
 pub mod projections;
+pub mod prompt;
 pub mod purge;
 pub mod query;
 pub mod sandbox;
