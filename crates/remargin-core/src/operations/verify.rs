@@ -108,6 +108,26 @@ pub struct VerifyReport {
     pub results: Vec<RowStatus>,
 }
 
+impl VerifyReport {
+    /// Canonical JSON shape consumed by both `cmd_verify` (CLI) and
+    /// `handle_verify` (MCP).
+    #[must_use]
+    pub fn to_json(&self) -> Value {
+        let results: Vec<Value> = self
+            .results
+            .iter()
+            .map(|row| {
+                json!({
+                    "id": row.id,
+                    "checksum_ok": row.checksum_ok,
+                    "signature": row.signature.as_str(),
+                })
+            })
+            .collect();
+        json!({ "results": results, "ok": self.ok })
+    }
+}
+
 /// Typed verify-gate refusal.
 ///
 /// Carries the failing rows, the active mode and the document path so

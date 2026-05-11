@@ -72,6 +72,19 @@ pub struct RmResult {
     pub path: PathBuf,
 }
 
+impl RmResult {
+    /// Canonical JSON shape. `deleted` carries the caller-supplied path
+    /// (not the canonical absolute path) so the response can be
+    /// round-tripped back into the same surface.
+    #[must_use]
+    pub fn to_json(&self, requested_path: &str) -> Value {
+        json!({
+            "deleted": requested_path,
+            "existed": self.existed,
+        })
+    }
+}
+
 /// Result of a `write` call.
 ///
 /// `noop == true` means the prospective content was byte-identical to the
@@ -129,6 +142,40 @@ pub struct DocumentMetadata {
     /// Unique recipients on unacked comments. Empty for binary files.
     pub pending_for: Vec<String>,
     pub size_bytes: u64,
+}
+
+impl DocumentMetadata {
+    /// Canonical JSON shape consumed by both `cmd_metadata` (CLI) and
+    /// `handle_metadata` (MCP). `include_frontmatter=true` surfaces the
+    /// parsed YAML frontmatter; CLI omits it (CLI users round-trip via
+    /// `get`/`write`), MCP includes it (agents want one round trip).
+    #[must_use]
+    pub fn to_json(&self, include_frontmatter: bool) -> Value {
+        let mut map = serde_json::Map::new();
+        map.insert("binary".into(), json!(self.binary));
+        map.insert("mime".into(), json!(self.mime));
+        map.insert("path".into(), json!(self.path));
+        map.insert("size_bytes".into(), json!(self.size_bytes));
+        if let Some(count) = self.comment_count {
+            map.insert("comment_count".into(), json!(count));
+        }
+        if let Some(count) = self.line_count {
+            map.insert("line_count".into(), json!(count));
+        }
+        if let Some(count) = self.pending_count {
+            map.insert("pending_count".into(), json!(count));
+        }
+        if !self.pending_for.is_empty() {
+            map.insert("pending_for".into(), json!(self.pending_for));
+        }
+        if let Some(last) = &self.last_activity {
+            map.insert("last_activity".into(), json!(last));
+        }
+        if include_frontmatter && let Some(fm) = &self.frontmatter {
+            map.insert("frontmatter".into(), json!(fm));
+        }
+        Value::Object(map)
+    }
 }
 
 /// Options for the `write` function.

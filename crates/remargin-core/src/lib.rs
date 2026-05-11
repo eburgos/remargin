@@ -27,5 +27,6 @@ pub mod parser;
 pub mod path;
 pub mod permissions;
 pub mod reactions;
+pub mod responses;
 pub mod skill;
 pub mod writer;

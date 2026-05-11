@@ -110,6 +110,24 @@ pub struct MvOutcome {
     pub topology: MvTopology,
 }
 
+impl MvOutcome {
+    /// Canonical JSON shape consumed by both `cmd_mv` (CLI) and
+    /// `handle_mv` (MCP). Pinned by `adapter_parity` tests.
+    #[must_use]
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "bytes_moved": self.bytes_moved,
+            "dst_absolute": self.dst_absolute.display().to_string(),
+            "fallback_copy": self.action.fallback_copy,
+            "is_directory": self.topology.is_directory,
+            "nested_files_moved": self.nested_files_moved,
+            "noop_same_path": self.topology.noop_same_path,
+            "overwritten": self.action.overwritten,
+            "src_absolute": self.src_absolute.display().to_string(),
+        })
+    }
+}
+
 /// Topology of the move's source and how src/dst aligned. Flattened
 /// into [`MvOutcome`]'s JSON output.
 #[derive(Debug, Clone, Serialize)]

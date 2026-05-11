@@ -37,6 +37,7 @@ use crate::parser;
 use crate::path::expand_path;
 use crate::permissions::inspect as permissions_inspect;
 use crate::permissions::op_guard::{CallerInfo, check_against_resolved_for_caller};
+use crate::responses;
 use crate::writer::InsertPosition;
 
 /// Standard JSON-RPC: invalid params.
@@ -1394,12 +1395,7 @@ fn handle_ack(
         }
     }
 
-    let key = if remove {
-        "unacknowledged"
-    } else {
-        "acknowledged"
-    };
-    Ok(json!({ key: ids }))
+    Ok(responses::ack(&ids, remove))
 }
 
 /// Handle the `batch` tool: create multiple comments atomically.
@@ -1427,8 +1423,7 @@ fn handle_batch(
 
     let path = base_dir.join(file);
     let ids = operations::batch::batch_comment(system, &path, cfg, &batch_ops)?;
-
-    Ok(json!({ "ids": ids }))
+    Ok(responses::batch(&ids))
 }
 
 /// Handle the `comment` tool: create a single comment.
@@ -1476,8 +1471,7 @@ fn handle_comment(
 
     let path = base_dir.join(file);
     let new_id = operations::create_comment(system, &path, cfg, &create_params)?;
-
-    Ok(json!({ "id": new_id }))
+    Ok(responses::comment_created(&new_id))
 }
 
 /// Handle the `comments` tool: list all comments in a document.
@@ -1511,8 +1505,7 @@ fn handle_comments(
         let formatted = display::format_comments_pretty(file, &comments);
         Ok(tool_result_text(&formatted))
     } else {
-        let result: Vec<Value> = comments.iter().map(|cm| serialize_comment(cm)).collect();
-        Ok(json!({ "comments": result }))
+        Ok(json!({ "comments": comments }))
     }
 }
 
@@ -1531,8 +1524,7 @@ fn handle_delete(
 
     let path = base_dir.join(file);
     operations::delete_comments(system, &path, cfg, &id_refs)?;
-
-    Ok(json!({ "deleted": ids }))
+    Ok(responses::comments_deleted(&ids))
 }
 
 /// Handle the `edit` tool: edit a comment's content.
@@ -1570,8 +1562,7 @@ fn handle_edit(
         new_content,
         new_kinds.as_deref(),
     )?;
-
-    Ok(json!({ "edited": comment_id }))
+    Ok(responses::comment_edited(comment_id))
 }
 
 /// Handle the `get` tool: read a file's contents.
@@ -1686,9 +1677,7 @@ fn handle_ls(
 
     let entries = document::ls(system, base_dir, target, config)?;
 
-    let results: Vec<Value> = entries.iter().map(serialize_list_entry).collect();
-
-    Ok(json!({ "entries": results }))
+    Ok(json!({ "entries": entries }))
 }
 
 /// Handle the `metadata` tool: get document metadata.
@@ -1703,36 +1692,7 @@ fn handle_metadata(
 
     let meta = document::metadata(system, base_dir, target, false, &config.trusted_roots)?;
 
-    // File-level fields are always present; markdown fields are emitted only
-    // when the file was parsed.
-    let mut result = json!({
-        "binary": meta.binary,
-        "mime": meta.mime,
-        "path": meta.path,
-        "size_bytes": meta.size_bytes,
-    });
-    let map = result.as_object_mut().unwrap();
-
-    if let Some(count) = meta.comment_count {
-        map.insert("comment_count".into(), json!(count));
-    }
-    if let Some(count) = meta.line_count {
-        map.insert("line_count".into(), json!(count));
-    }
-    if let Some(count) = meta.pending_count {
-        map.insert("pending_count".into(), json!(count));
-    }
-    if !meta.pending_for.is_empty() {
-        map.insert("pending_for".into(), json!(meta.pending_for));
-    }
-    if let Some(last) = &meta.last_activity {
-        map.insert("last_activity".into(), json!(last));
-    }
-    if let Some(fm) = &meta.frontmatter {
-        map.insert("frontmatter".into(), json!(fm));
-    }
-
-    Ok(result)
+    Ok(meta.to_json(true))
 }
 
 /// Build the canonical "this plan op is CLI-only" error returned when
@@ -1920,11 +1880,7 @@ fn handle_purge(
     }
 
     let result = purge::purge(system, &path, cfg)?;
-
-    Ok(json!({
-        "comments_removed": result.comments_removed,
-        "attachments_cleaned": result.attachments_cleaned
-    }))
+    Ok(result.to_json())
 }
 
 /// Handle the `query` tool: search across documents.
@@ -1942,10 +1898,10 @@ fn handle_query(
         let output = display::format_query_pretty(&results, filter.pending_label());
         Ok(json!({ "text": output }))
     } else {
-        let entries: Vec<Value> = results.iter().map(serialize_query_result).collect();
-        Ok(
-            json!({ "base_path": format!("{}/", path_str.trim_end_matches('/')), "results": entries }),
-        )
+        Ok(json!({
+            "base_path": format!("{}/", path_str.trim_end_matches('/')),
+            "results": results,
+        }))
     }
 }
 
@@ -2039,9 +1995,7 @@ fn handle_react(
 
     let path = base_dir.join(file);
     operations::react(system, &path, cfg, comment_id, emoji, remove)?;
-
-    let action = if remove { "removed" } else { "added" };
-    Ok(json!({ "action": action, "emoji": emoji, "comment_id": comment_id }))
+    Ok(responses::react(emoji, comment_id, remove))
 }
 
 /// Handle the `rm` tool: remove a file from the managed document tree.
@@ -2054,11 +2008,7 @@ fn handle_rm(
     let path_str = required_str(params, "path")?;
     let target = Path::new(path_str);
     let result = document::rm(system, base_dir, target, config)?;
-
-    Ok(json!({
-        "deleted": path_str,
-        "existed": result.existed,
-    }))
+    Ok(result.to_json(path_str))
 }
 
 /// Handle the `mv` tool: move or rename a tracked file.
@@ -2074,17 +2024,7 @@ fn handle_mv(
 
     let args = mv_op::MvArgs::new(PathBuf::from(src), PathBuf::from(dst)).with_force(force);
     let outcome = mv_op::mv(system, base_dir, config, &args)?;
-
-    Ok(json!({
-        "bytes_moved": outcome.bytes_moved,
-        "dst_absolute": outcome.dst_absolute.display().to_string(),
-        "fallback_copy": outcome.action.fallback_copy,
-        "is_directory": outcome.topology.is_directory,
-        "nested_files_moved": outcome.nested_files_moved,
-        "noop_same_path": outcome.topology.noop_same_path,
-        "overwritten": outcome.action.overwritten,
-        "src_absolute": outcome.src_absolute.display().to_string(),
-    }))
+    Ok(outcome.to_json())
 }
 
 /// Handle the `sandbox_add` tool: stage files in the caller's sandbox.
@@ -2260,34 +2200,7 @@ fn handle_sign(
     let path = base_dir.join(file);
     let options = operations::sign::SignOptions { repair_checksum };
     let result = operations::sign::sign_comments(system, &path, cfg, &selection, options)?;
-
-    let signed: Vec<Value> = result
-        .signed
-        .iter()
-        .map(|e| json!({ "id": e.id, "ts": e.ts }))
-        .collect();
-    let skipped: Vec<Value> = result
-        .skipped
-        .iter()
-        .map(|e| json!({ "id": e.id, "reason": e.reason }))
-        .collect();
-    let repaired: Vec<Value> = result
-        .repaired
-        .iter()
-        .map(|e| {
-            json!({
-                "id": e.id,
-                "old_checksum": e.old_checksum,
-                "new_checksum": e.new_checksum,
-            })
-        })
-        .collect();
-
-    Ok(json!({
-        "repaired": repaired,
-        "signed": signed,
-        "skipped": skipped,
-    }))
+    Ok(result.to_json())
 }
 
 /// Handle the `verify` tool: verify comment integrity.
@@ -2301,19 +2214,7 @@ fn handle_verify(
 
     let path = base_dir.join(file);
     let report = operations::verify::verify_and_refresh(system, &path, config)?;
-    let results: Vec<Value> = report
-        .results
-        .iter()
-        .map(|row| {
-            json!({
-                "id": row.id,
-                "checksum_ok": row.checksum_ok,
-                "signature": row.signature.as_str(),
-            })
-        })
-        .collect();
-
-    Ok(json!({ "results": results, "ok": report.ok }))
+    Ok(report.to_json())
 }
 
 /// Handle the `whoami` tool. Mirrors `remargin identity show` —
@@ -2371,123 +2272,6 @@ fn handle_write(
     let outcome = document::write(system, base_dir, target, content, cfg, opts)?;
 
     Ok(outcome.to_json(path_str, binary, raw))
-}
-
-/// Serialize a comment to a JSON value for the `comments` tool response.
-fn serialize_comment(cm: &parser::Comment) -> Value {
-    let author_type = cm.author_type.as_str();
-    let mut obj = json!({
-        "id": cm.id,
-        "author": cm.author,
-        "type": author_type,
-        "ts": cm.ts.to_rfc3339(),
-        "checksum": cm.checksum,
-        "content": cm.content,
-        "line": cm.line,
-    });
-
-    let map = obj.as_object_mut().unwrap();
-
-    if !cm.to.is_empty() {
-        map.insert("to".into(), json!(cm.to));
-    }
-    if let Some(reply_to) = &cm.reply_to {
-        map.insert("reply_to".into(), json!(reply_to));
-    }
-    if let Some(thread) = &cm.thread {
-        map.insert("thread".into(), json!(thread));
-    }
-    if !cm.ack.is_empty() {
-        let acks: Vec<Value> = cm
-            .ack
-            .iter()
-            .map(|a| json!({ "author": a.author, "ts": a.ts.to_rfc3339() }))
-            .collect();
-        map.insert("ack".into(), json!(acks));
-    }
-    if !cm.reactions.is_empty() {
-        map.insert("reactions".into(), json!(cm.reactions));
-    }
-    if !cm.attachments.is_empty() {
-        map.insert("attachments".into(), json!(cm.attachments));
-    }
-    if let Some(sig) = &cm.signature {
-        map.insert("signature".into(), json!(sig));
-    }
-
-    obj
-}
-
-/// Serialize a list entry to a JSON value for the `ls` tool response.
-fn serialize_list_entry(entry: &document::ListEntry) -> Value {
-    let mut obj = json!({
-        "path": entry.path.display().to_string(),
-        "is_dir": entry.is_dir,
-    });
-    let map = obj.as_object_mut().unwrap();
-    if let Some(size) = entry.size {
-        map.insert("size".into(), json!(size));
-    }
-    if let Some(pending) = entry.remargin_pending {
-        map.insert("remargin_pending".into(), json!(pending));
-    }
-    if let Some(last) = &entry.remargin_last_activity {
-        map.insert("remargin_last_activity".into(), json!(last));
-    }
-    obj
-}
-
-/// Serialize a query result to a JSON value for the `query` tool response.
-fn serialize_query_result(r: &query::QueryResult) -> Value {
-    let mut obj = json!({
-        "path": r.path.display().to_string(),
-        "comment_count": r.comment_count,
-        "pending_count": r.pending_count,
-    });
-    let map = obj.as_object_mut().unwrap();
-    if !r.pending_for.is_empty() {
-        map.insert("pending_for".into(), json!(r.pending_for));
-    }
-    if let Some(ts) = &r.last_activity {
-        map.insert("last_activity".into(), json!(ts.to_rfc3339()));
-    }
-    if !r.comments.is_empty() {
-        map.insert(
-            "comments".into(),
-            json!(
-                r.comments
-                    .iter()
-                    .map(serialize_expanded_comment)
-                    .collect::<Vec<_>>()
-            ),
-        );
-    }
-    obj
-}
-
-/// Serialize an [`ExpandedComment`](query::ExpandedComment) to a JSON value.
-fn serialize_expanded_comment(cm: &query::ExpandedComment) -> Value {
-    let author_type = cm.author_type.as_str();
-    json!({
-        "id": cm.id,
-        "author": cm.author,
-        "author_type": author_type,
-        "content": cm.content,
-        "file": cm.file.display().to_string(),
-        "ts": cm.ts.to_rfc3339(),
-        "line": cm.line,
-        "to": cm.to,
-        "ack": cm.ack.iter().map(|a| json!({
-            "author": a.author,
-            "ts": a.ts.to_rfc3339(),
-        })).collect::<Vec<_>>(),
-        "reply_to": cm.reply_to,
-        "thread": cm.thread,
-        "reactions": cm.reactions,
-        "attachments": cm.attachments,
-        "checksum": cm.checksum,
-        "signature": cm.signature,
-    })
 }
 
 /// Process a single JSON-RPC request and return a response (or `None` for notifications).

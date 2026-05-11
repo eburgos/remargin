@@ -38,6 +38,17 @@ pub struct PurgeResult {
     pub comments_removed: usize,
 }
 
+impl PurgeResult {
+    /// Canonical JSON shape for the non-recursive purge.
+    #[must_use]
+    pub fn to_json(&self) -> JsonValue {
+        json!({
+            "comments_removed": self.comments_removed,
+            "attachments_cleaned": self.attachments_cleaned,
+        })
+    }
+}
+
 /// Per-file outcome record produced by [`purge_dir`].
 ///
 /// Mirrors the per-path-failure shape used by

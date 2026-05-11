@@ -41,6 +41,7 @@ use remargin_core::permissions::claude_sync::rule_shape::OverlapKind;
 use remargin_core::permissions::inspect as permissions_inspect;
 use remargin_core::permissions::restrict as permissions_restrict;
 use remargin_core::permissions::unprotect as permissions_unprotect;
+use remargin_core::responses;
 use remargin_core::skill;
 use remargin_core::writer::InsertPosition;
 
@@ -2879,12 +2880,7 @@ fn cmd_ack(
             }
         }
     }
-    let key = if remove {
-        "unacknowledged"
-    } else {
-        "acknowledged"
-    };
-    print_output(sinks, json_mode, &json!({ key: ids }))
+    print_output(sinks, json_mode, &responses::ack(ids, remove))
 }
 
 fn cmd_batch(
@@ -2909,7 +2905,7 @@ fn cmd_batch(
     }
 
     let created_ids = operations::batch::batch_comment(system, &path, config, &batch_ops)?;
-    print_output(sinks, json_mode, &json!({ "ids": created_ids }))
+    print_output(sinks, json_mode, &responses::batch(&created_ids))
 }
 
 fn resolve_comment_position(
@@ -2954,7 +2950,7 @@ fn cmd_comment(
         out_raw(sinks, &updated)?;
     }
 
-    print_output(sinks, cp.json_mode, &json!({ "id": new_id }))
+    print_output(sinks, cp.json_mode, &responses::comment_created(&new_id))
 }
 
 fn cmd_comments(
@@ -3017,7 +3013,7 @@ fn cmd_delete(
     let path = resolve_doc_path(system, cwd, file)?;
     let id_refs: Vec<&str> = ids.iter().map(String::as_str).collect();
     operations::delete_comments(system, &path, config, &id_refs)?;
-    print_output(sinks, json_mode, &json!({ "deleted": ids }))
+    print_output(sinks, json_mode, &responses::comments_deleted(ids))
 }
 
 fn cmd_edit(
@@ -3029,7 +3025,7 @@ fn cmd_edit(
 ) -> Result<()> {
     let path = resolve_doc_path(system, cwd, p.file)?;
     operations::edit_comment(system, &path, config, p.id, p.content, p.remargin_kind)?;
-    print_output(sinks, p.json_mode, &json!({ "edited": p.id }))
+    print_output(sinks, p.json_mode, &responses::comment_edited(p.id))
 }
 
 fn cmd_get(
@@ -3934,32 +3930,7 @@ fn cmd_metadata(
         &config.trusted_roots,
     )?;
 
-    // File-level fields are always present. Markdown fields are only emitted
-    // when the file was parsed.
-    let mut result = json!({
-        "binary": meta.binary,
-        "mime": meta.mime,
-        "path": meta.path,
-        "size_bytes": meta.size_bytes,
-    });
-    let map = result.as_object_mut().unwrap();
-    if let Some(count) = meta.comment_count {
-        map.insert("comment_count".into(), json!(count));
-    }
-    if let Some(count) = meta.line_count {
-        map.insert("line_count".into(), json!(count));
-    }
-    if let Some(count) = meta.pending_count {
-        map.insert("pending_count".into(), json!(count));
-    }
-    if !meta.pending_for.is_empty() {
-        map.insert("pending_for".into(), json!(meta.pending_for));
-    }
-    if let Some(last) = &meta.last_activity {
-        map.insert("last_activity".into(), json!(last));
-    }
-
-    print_output(sinks, json_mode, &result)
+    print_output(sinks, json_mode, &meta.to_json(false))
 }
 
 /// Route a `plan` subcommand to the correct per-op projection.
@@ -4660,15 +4631,7 @@ fn cmd_purge(
         );
     }
     let result = purge::purge(system, &path, config)?;
-
-    print_output(
-        sinks,
-        json_mode,
-        &json!({
-            "comments_removed": result.comments_removed,
-            "attachments_cleaned": result.attachments_cleaned,
-        }),
-    )
+    print_output(sinks, json_mode, &result.to_json())
 }
 
 fn cmd_query(
@@ -4832,11 +4795,10 @@ fn cmd_react(
         params.emoji,
         params.remove,
     )?;
-    let action = if params.remove { "removed" } else { "added" };
     print_output(
         sinks,
         params.json_mode,
-        &json!({ "action": action, "emoji": params.emoji, "comment_id": params.id }),
+        &responses::react(params.emoji, params.id, params.remove),
     )
 }
 
@@ -5063,23 +5025,10 @@ fn cmd_mv(
     let outcome = mv_op::mv(system, cwd, config, &args)?;
 
     if params.json_mode {
-        out_json(sinks, &mv_outcome_json(&outcome))
+        out_json(sinks, &outcome.to_json())
     } else {
         out(sinks, &mv_outcome_pretty(params.src, params.dst, &outcome))
     }
-}
-
-fn mv_outcome_json(outcome: &mv_op::MvOutcome) -> serde_json::Value {
-    json!({
-        "bytes_moved": outcome.bytes_moved,
-        "dst_absolute": outcome.dst_absolute.display().to_string(),
-        "fallback_copy": outcome.action.fallback_copy,
-        "is_directory": outcome.topology.is_directory,
-        "nested_files_moved": outcome.nested_files_moved,
-        "noop_same_path": outcome.topology.noop_same_path,
-        "overwritten": outcome.action.overwritten,
-        "src_absolute": outcome.src_absolute.display().to_string(),
-    })
 }
 
 fn mv_outcome_pretty(src: &str, dst: &str, outcome: &mv_op::MvOutcome) -> String {
@@ -5130,13 +5079,7 @@ fn cmd_rm(
     let result = document::rm(system, cwd, &target, config)?;
 
     if json_mode {
-        out_json(
-            sinks,
-            &json!({
-                "deleted": file,
-                "existed": result.existed,
-            }),
-        )
+        out_json(sinks, &result.to_json(file))
     } else if result.existed {
         out(sinks, &format!("deleted: {file}"))
     } else {
@@ -5246,7 +5189,7 @@ fn cmd_sign(
     options.repair_checksum = repair_checksum;
     let result = operations::sign::sign_comments(system, &path, config, &selection, options)?;
     if json_mode {
-        print_output(sinks, true, &sign_result_json(&result))
+        print_output(sinks, true, &result.to_json())
     } else {
         render_sign_result_text(sinks, &result)
     }
@@ -5261,31 +5204,6 @@ fn build_sign_selection(all_mine: bool, ids: &[String]) -> Result<operations::si
     } else {
         operations::sign::SignSelection::Ids(ids.to_vec())
     })
-}
-
-fn sign_result_json(result: &operations::sign::SignResult) -> Value {
-    let signed: Vec<Value> = result
-        .signed
-        .iter()
-        .map(|entry| json!({ "id": entry.id, "ts": entry.ts }))
-        .collect();
-    let skipped: Vec<Value> = result
-        .skipped
-        .iter()
-        .map(|entry| json!({ "id": entry.id, "reason": entry.reason }))
-        .collect();
-    let repaired: Vec<Value> = result
-        .repaired
-        .iter()
-        .map(|entry| {
-            json!({
-                "id": entry.id,
-                "old_checksum": entry.old_checksum,
-                "new_checksum": entry.new_checksum,
-            })
-        })
-        .collect();
-    json!({ "repaired": repaired, "signed": signed, "skipped": skipped })
 }
 
 fn render_sign_result_text(
@@ -5468,20 +5386,9 @@ fn cmd_verify(
 ) -> Result<()> {
     let path = resolve_doc_path(system, cwd, file)?;
     let report = operations::verify::verify_and_refresh(system, &path, config)?;
-    let results: Vec<Value> = report
-        .results
-        .iter()
-        .map(|row| {
-            json!({
-                "id": row.id,
-                "checksum_ok": row.checksum_ok,
-                "signature": row.signature.as_str(),
-            })
-        })
-        .collect();
 
     if json_mode {
-        print_output(sinks, true, &json!({ "results": results, "ok": report.ok }))?;
+        print_output(sinks, true, &report.to_json())?;
     } else {
         for row in &report.results {
             let chk = if row.checksum_ok { "ok" } else { "FAIL" };

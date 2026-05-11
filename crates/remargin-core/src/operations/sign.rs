@@ -43,6 +43,7 @@ use std::path::Path;
 
 use anyhow::{Context as _, Result, bail};
 use os_shim::System;
+use serde_json::{Value, json};
 
 use crate::config::ResolvedConfig;
 use crate::crypto::{compute_checksum, compute_signature};
@@ -113,6 +114,36 @@ pub struct SignResult {
     pub signed: Vec<SignedEntry>,
     /// Comments the op skipped with per-id reason.
     pub skipped: Vec<SkippedEntry>,
+}
+
+impl SignResult {
+    /// Canonical JSON shape consumed by both `cmd_sign` (CLI) and
+    /// `handle_sign` (MCP).
+    #[must_use]
+    pub fn to_json(&self) -> Value {
+        let signed: Vec<Value> = self
+            .signed
+            .iter()
+            .map(|e| json!({ "id": e.id, "ts": e.ts }))
+            .collect();
+        let skipped: Vec<Value> = self
+            .skipped
+            .iter()
+            .map(|e| json!({ "id": e.id, "reason": e.reason }))
+            .collect();
+        let repaired: Vec<Value> = self
+            .repaired
+            .iter()
+            .map(|e| {
+                json!({
+                    "id": e.id,
+                    "old_checksum": e.old_checksum,
+                    "new_checksum": e.new_checksum,
+                })
+            })
+            .collect();
+        json!({ "repaired": repaired, "signed": signed, "skipped": skipped })
+    }
 }
 
 /// One entry in [`SignResult::repaired`] — a comment whose stored

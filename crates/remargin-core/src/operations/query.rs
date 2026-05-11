@@ -239,6 +239,7 @@ pub struct QueryResult {
     /// Total number of comments in the document.
     pub comment_count: u32,
     /// Individual matching comments (populated by default; empty in summary mode).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub comments: Vec<ExpandedComment>,
     /// Most recent activity timestamp.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -248,6 +249,7 @@ pub struct QueryResult {
     /// Number of pending (unacked) comments.
     pub pending_count: u32,
     /// Unique recipients on unacked comments.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub pending_for: Vec<String>,
 }
 
