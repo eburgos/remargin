@@ -84,6 +84,26 @@ interface SandboxSectionProps {
    * `<InlinePromptEditor>` via `<PromptGroupSection>`.
    */
   availableFolders?: string[];
+  /**
+   * Absolute filesystem path of the vault root. When set, per-prompt
+   * headers strip it from `group.scope` so the second row renders as a
+   * vault-relative path (e.g. `./src/01_personal/remargin/`).
+   */
+  vaultRoot?: string;
+}
+
+// WHY: the backend returns absolute host paths in resolved.source; the
+// vault-relative form is what the user actually recognises in the UI.
+function formatScopeRelative(scope: string, vaultRoot?: string): string {
+  if (scope === "(vault)") return "./";
+  if (scope === "(unknown)" || scope === "resolve failed") return scope;
+  let rel = scope;
+  if (vaultRoot && (rel === vaultRoot || rel.startsWith(`${vaultRoot}/`))) {
+    rel = rel.length === vaultRoot.length ? "" : rel.slice(vaultRoot.length + 1);
+  }
+  if (rel.length === 0) return "./";
+  if (rel.startsWith("/")) return rel;
+  return `./${rel}/`;
 }
 
 function errorMessage(err: unknown): string {
@@ -96,13 +116,6 @@ function errorMessage(err: unknown): string {
   }
 }
 
-/**
- * Sidebar section that lists files the current identity has touched in its
- * remargin sandbox. Renders a by-prompt outer grouping (one section per
- * resolved system prompt; Default group last) wrapping the original
- * Staged/Unstaged structure from task 24. Single Submit-all button at the
- * bottom; the per-group submit was retired by `r8w`/`uhs`.
- */
 export function SandboxSection({
   refreshKey,
   viewMode = "flat",
@@ -112,6 +125,7 @@ export function SandboxSection({
   onDeletePrompt,
   savePromptDisabledReason,
   availableFolders,
+  vaultRoot,
 }: SandboxSectionProps) {
   const backend = useBackend();
   const [files, setFiles] = useState<string[]>([]);
@@ -288,6 +302,47 @@ export function SandboxSection({
     [submitting, staged, onSubmit]
   );
 
+  const submitAllPayload = useMemo<StagedGroup[]>(
+    () =>
+      groups
+        .filter((g) => !g.hasError && g.staged.length > 0)
+        .map((g) => ({ prompt: g.prompt, files: g.staged })),
+    [groups]
+  );
+  const submitAllCount = useMemo(
+    () => submitAllPayload.reduce((acc, g) => acc + g.files.length, 0),
+    [submitAllPayload]
+  );
+
+  const handleSubmitAll = useCallback(async () => {
+    if (submitting || submitAllPayload.length === 0) return;
+    setSubmitting(true);
+    setError(null);
+    setGroupStatus(new Map());
+    setGroupErrors(new Map());
+    const progress: SubmitProgress = {
+      onGroupStart: (g) => {
+        const k = g.prompt.source ?? DEFAULT_GROUP_KEY;
+        setGroupStatus((prev) => new Map(prev).set(k, "pending"));
+      },
+      onGroupComplete: (g, result) => {
+        const k = g.prompt.source ?? DEFAULT_GROUP_KEY;
+        setGroupStatus((prev) => new Map(prev).set(k, result.ok ? "ok" : "failed"));
+        if (result.error) {
+          setGroupErrors((prev) => new Map(prev).set(k, result.error ?? "submit failed"));
+        }
+      },
+    };
+    try {
+      await onSubmit?.(submitAllPayload, progress);
+    } catch (err) {
+      console.error("SandboxSection.handleSubmitAll failed:", err);
+      setError(errorMessage(err));
+    } finally {
+      setSubmitting(false);
+    }
+  }, [submitting, submitAllPayload, onSubmit]);
+
   if (loading && files.length === 0) {
     return <div className="px-4 py-3 text-xs text-text-faint">Loading sandbox...</div>;
   }
@@ -340,12 +395,27 @@ export function SandboxSection({
               onDeletePrompt={onDeletePrompt}
               savePromptDisabledReason={savePromptDisabledReason}
               availableFolders={availableFolders}
+              vaultRoot={vaultRoot}
               onSubmitGroup={handleSubmitGroup}
               submitting={submitting}
             />
           );
         })}
       </div>
+
+      {submitAllCount > 0 && (
+        <div className="flex items-center justify-end px-4 py-2 border-t border-bg-border">
+          <Button
+            size="sm"
+            className="h-7 px-3 text-xs bg-accent text-white hover:bg-accent-hover"
+            disabled={!!submitting}
+            onClick={() => void handleSubmitAll()}
+          >
+            <Send className="w-3 h-3 mr-1" />
+            {submitting ? "Submitting..." : `Submit all (${submitAllCount})`}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -431,6 +501,8 @@ export interface PromptGroupSectionProps {
   savePromptDisabledReason?: string;
   /** Forwarded to the create-mode folder picker in `<InlinePromptEditor>`. */
   availableFolders?: string[];
+  /** Forwarded so the header's second row can render a vault-relative scope. */
+  vaultRoot?: string;
   /** Per-group Submit. Renders inside the Staged sub-section. */
   onSubmitGroup?: (group: PromptGroup) => void | Promise<void>;
   /** True while any group's Submit is in flight; disables every group's Submit. */
@@ -458,6 +530,7 @@ export function PromptGroupSection({
   onDeletePrompt,
   savePromptDisabledReason,
   availableFolders,
+  vaultRoot,
   onSubmitGroup,
   submitting,
 }: PromptGroupSectionProps) {
@@ -506,65 +579,74 @@ export function PromptGroupSection({
     [onDeletePrompt]
   );
 
+  const scopeDisplay = formatScopeRelative(group.scope, vaultRoot);
+
   return (
     <div className="flex flex-col">
       <div
-        className="flex items-center justify-between px-3 py-2 cursor-pointer select-none hover:bg-bg-hover"
+        className="flex flex-col gap-0.5 pl-7 pr-3 py-2 cursor-pointer select-none hover:bg-bg-hover"
         onClick={() => setHeaderOpen((v) => !v)}
         title={group.hasError ? group.errorMessage : undefined}
       >
-        <div className="flex items-center gap-1.5 min-w-0">
-          <HeaderChevron className="w-3 h-3 text-text-faint shrink-0" />
-          <PromptIcon className="w-3 h-3 text-text-faint shrink-0" />
-          <span className="text-xs font-semibold text-text-normal truncate">{group.name}</span>
-          <span className="text-[10px] text-text-faint truncate">{group.scope}</span>
-          <span className="inline-flex items-center justify-center min-w-4 h-4 px-1.5 text-[9px] text-text-muted bg-bg-border rounded-full">
-            {group.files.length}
-          </span>
-          {status === "pending" && (
-            <Loader2
-              className="w-3 h-3 text-text-faint shrink-0 animate-spin"
-              aria-label="Submitting"
-            />
-          )}
-          {status === "ok" && (
-            <Check className="w-3 h-3 text-green-500 shrink-0" aria-label="Submitted" />
-          )}
-          {status === "failed" && (
-            <span title={statusError} className="inline-flex shrink-0">
-              <TriangleAlert className="w-3 h-3 text-red-400 shrink-0" aria-label="Submit failed" />
+        <div className="flex items-center justify-between gap-2 min-w-0">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <HeaderChevron className="w-3 h-3 text-text-faint shrink-0" />
+            <PromptIcon className="w-3 h-3 text-text-faint shrink-0" />
+            <span className="text-xs font-semibold text-text-normal truncate">{group.name}</span>
+            <span className="inline-flex items-center justify-center min-w-4 h-4 px-1.5 text-[9px] text-text-muted bg-bg-border rounded-full shrink-0">
+              {group.files.length}
             </span>
-          )}
+            {status === "pending" && (
+              <Loader2
+                className="w-3 h-3 text-text-faint shrink-0 animate-spin"
+                aria-label="Submitting"
+              />
+            )}
+            {status === "ok" && (
+              <Check className="w-3 h-3 text-green-500 shrink-0" aria-label="Submitted" />
+            )}
+            {status === "failed" && (
+              <span title={statusError} className="inline-flex shrink-0">
+                <TriangleAlert
+                  className="w-3 h-3 text-red-400 shrink-0"
+                  aria-label="Submit failed"
+                />
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-0.5 shrink-0">
+            {group.isDefault && !group.hasError && !editing && (
+              <button
+                type="button"
+                className="text-[10px] text-text-faint hover:text-text-normal px-1 py-0.5"
+                title="Configure prompt"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setEditing(true);
+                  setHeaderOpen(true);
+                }}
+              >
+                + Configure
+              </button>
+            )}
+            {!group.hasError && (
+              <button
+                type="button"
+                className="flex items-center justify-center w-5 h-5 rounded-sm text-text-faint hover:text-text-normal hover:bg-bg-border"
+                title={editing ? "Close editor" : "Edit prompt"}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setEditing((v) => !v);
+                  setHeaderOpen(true);
+                }}
+              >
+                <ObsidianIcon icon="settings" size={12} />
+              </button>
+            )}
+          </div>
         </div>
-        <div className="flex items-center gap-0.5">
-          {group.isDefault && !group.hasError && !editing && (
-            <button
-              type="button"
-              className="text-[10px] text-text-faint hover:text-text-normal px-1 py-0.5"
-              title="Configure prompt"
-              onClick={(e) => {
-                e.stopPropagation();
-                setEditing(true);
-                setHeaderOpen(true);
-              }}
-            >
-              + Configure
-            </button>
-          )}
-          {!group.hasError && (
-            <button
-              type="button"
-              className="flex items-center justify-center w-5 h-5 rounded-sm text-text-faint hover:text-text-normal hover:bg-bg-border"
-              title={editing ? "Close editor" : "Edit prompt"}
-              onClick={(e) => {
-                e.stopPropagation();
-                setEditing((v) => !v);
-                setHeaderOpen(true);
-              }}
-            >
-              <ObsidianIcon icon="settings" size={12} />
-            </button>
-          )}
+        <div className="pl-[36px] text-[10px] text-text-faint truncate" title={group.scope}>
+          {scopeDisplay}
         </div>
       </div>
 

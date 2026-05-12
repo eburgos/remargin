@@ -317,6 +317,9 @@ export function RemarginSidebar({ plugin }: RemarginSidebarProps) {
           onSavePrompt={handleSavePrompt}
           onDeletePrompt={handleDeletePrompt}
           availableFolders={availableFolders}
+          vaultRoot={
+            (plugin.app.vault.adapter as unknown as { basePath?: string }).basePath ?? undefined
+          }
         />
       }
       inboxActions={<ViewToggle value={inboxView} onChange={handleInboxView} />}

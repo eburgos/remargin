@@ -112,7 +112,10 @@ describe("PromptGroupSection — header chrome", () => {
   it("renders the prompt name and scope", () => {
     const html = render(explicit());
     assert.ok(html.includes(">Draft prompt<"), `expected prompt name, got: ${html.slice(0, 300)}`);
-    assert.ok(html.includes(">notes/foo<"), `expected scope label, got: ${html.slice(0, 300)}`);
+    assert.ok(
+      html.includes("./notes/foo/"),
+      `expected vault-relative scope label, got: ${html.slice(0, 300)}`
+    );
   });
 
   it("renders the file count badge", () => {

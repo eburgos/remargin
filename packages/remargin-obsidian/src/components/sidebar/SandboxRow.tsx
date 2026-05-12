@@ -52,7 +52,7 @@ export function SandboxRow({
         <FileText className="w-3 h-3 text-text-faint shrink-0" />
         <button
           type="button"
-          className="flex-1 !appearance-none !bg-transparent !border-0 !px-0 !py-0 !rounded-none !shadow-none text-xs font-mono text-text-muted truncate text-left hover:text-text-normal"
+          className="flex-1 !appearance-none !bg-transparent !border-0 !px-0 !py-0 !rounded-none !shadow-none text-xs font-mono text-text-muted truncate !text-left hover:text-text-normal"
           onClick={() => onOpenFile(path)}
           title={path}
         >
@@ -70,12 +70,12 @@ export function SandboxRow({
       <Checkbox
         checked={selected}
         onCheckedChange={() => onToggleSelected(path)}
-        className="w-3 h-3"
+        className="!w-3 !h-3"
       />
       <FileText className="w-3 h-3 text-text-faint shrink-0" />
       <button
         type="button"
-        className="flex-1 !appearance-none !bg-transparent !border-0 !px-0 !py-0 !rounded-none !shadow-none text-xs font-mono text-text-muted truncate text-left hover:text-text-normal"
+        className="flex-1 !appearance-none !bg-transparent !border-0 !px-0 !py-0 !rounded-none !shadow-none text-xs font-mono text-text-muted truncate !text-left hover:text-text-normal"
         onClick={() => onOpenFile(path)}
         title={path}
       >
