@@ -1,4 +1,3 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, relative as relativePath } from "node:path";
 import { Notice, TFile } from "obsidian";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -238,27 +237,40 @@ export function RemarginSidebar({ plugin }: RemarginSidebarProps) {
   );
 
   const handleOpenLog = useCallback(
-    (absLogPath: string) => {
+    async (absLogPath: string): Promise<void> => {
       const vaultPath =
         (plugin.app.vault.adapter as unknown as { basePath?: string }).basePath ?? "";
+      const relPath = vaultPath ? relativePath(vaultPath, absLogPath) : absLogPath;
+      const adapter = plugin.app.vault.adapter;
       try {
-        mkdirSync(dirname(absLogPath), { recursive: true });
-        if (!existsSync(absLogPath)) writeFileSync(absLogPath, "");
+        const dir = dirname(relPath);
+        // WHY: vault.adapter keeps Obsidian's file index in sync; node's
+        // fs would leave the new file invisible to getAbstractFileByPath
+        // until the file watcher polls, and the fallback through
+        // openLinkText then re-tries createFolder and throws.
+        if (dir && dir !== "." && !(await adapter.exists(dir))) {
+          await adapter.mkdir(dir);
+        }
+        if (!(await adapter.exists(relPath))) {
+          await adapter.write(relPath, "");
+        }
       } catch (err) {
         console.error("[remargin] failed to ensure log file exists:", err);
         new Notice(`Could not prepare submit log: ${err instanceof Error ? err.message : err}`);
         return;
       }
-      const relPath = vaultPath ? relativePath(vaultPath, absLogPath) : absLogPath;
       const tfile = plugin.app.vault.getAbstractFileByPath(relPath);
-      const open =
-        tfile instanceof TFile
-          ? plugin.app.workspace.getLeaf("tab").openFile(tfile)
-          : plugin.app.workspace.openLinkText(relPath, "/", "tab");
-      Promise.resolve(open).catch((err: unknown) => {
+      if (!(tfile instanceof TFile)) {
+        console.error("[remargin] submit log not in vault index after write:", relPath);
+        new Notice(`Submit log written but not yet indexed: ${relPath}`);
+        return;
+      }
+      try {
+        await plugin.app.workspace.getLeaf("tab").openFile(tfile);
+      } catch (err) {
         console.error("[remargin] failed to open submit log:", err);
         new Notice(`Could not open submit log: ${err instanceof Error ? err.message : err}`);
-      });
+      }
     },
     [plugin]
   );
