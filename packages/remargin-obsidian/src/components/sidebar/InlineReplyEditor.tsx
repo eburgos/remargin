@@ -21,6 +21,7 @@ export function InlineReplyEditor({ file, replyTo, onClose, onSubmitted }: Inlin
   const backend = useBackend();
   const [submitting, setSubmitting] = useState(false);
   const [hasContent, setHasContent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   // Parent author, resolved lazily so we can pre-select and lock the
   // chip when the reply composer opens. The CLI enforces the
   // parent-in-to invariant server-side (rem-kja); the lock is purely
@@ -39,6 +40,7 @@ export function InlineReplyEditor({ file, replyTo, onClose, onSubmitted }: Inlin
     const content = viewRef.current?.state.doc.toString().trim() ?? "";
     if (!content || submitting) return;
     setSubmitting(true);
+    setError(null);
     try {
       await backend.comment(file, content, {
         replyTo,
@@ -47,8 +49,10 @@ export function InlineReplyEditor({ file, replyTo, onClose, onSubmitted }: Inlin
         to,
       });
       onSubmitted();
-    } catch {
-      // no-op
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("InlineReplyEditor: comment failed", { file, replyTo, err });
+      setError(message);
     } finally {
       setSubmitting(false);
     }
@@ -115,6 +119,11 @@ export function InlineReplyEditor({ file, replyTo, onClose, onSubmitted }: Inlin
       </div>
       <RecipientPicker selected={to} onChange={setTo} locked={locked} />
       <div ref={editorRef} />
+      {error && (
+        <div className="text-[10px] text-red-400 font-mono whitespace-pre-wrap break-words">
+          {error}
+        </div>
+      )}
       <div className="flex items-center justify-between">
         <span className="text-[9px] text-text-faint">Ctrl+Enter to send</span>
         <Button
