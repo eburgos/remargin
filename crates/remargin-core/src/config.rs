@@ -36,8 +36,7 @@ pub struct Config {
     #[serde(default)]
     pub ignore: Vec<String>,
     pub key: Option<String>,
-    #[serde(default = "default_mode")]
-    pub mode: Mode,
+    pub mode: Option<Mode>,
     /// Permissions block. Missing in legacy
     /// `.remargin.yaml` files; defaults to an empty
     /// [`Permissions`] so back-compat parsing stays lossless.
@@ -431,10 +430,6 @@ fn default_assets_dir() -> String {
     String::from("assets")
 }
 
-const fn default_mode() -> Mode {
-    Mode::Open
-}
-
 /// Walk-based fallback used by [`ResolvedConfig::resolve`] when no
 /// identity flags were supplied. The three-branch resolver requires an
 /// `identity:` field in every file it considers — it is a signing-oriented
@@ -512,15 +507,31 @@ fn find_file_upward(
 /// Returns an error if a `.remargin.yaml` exists on the walk but cannot be
 /// read or parsed.
 pub fn resolve_mode(system: &dyn System, start_dir: &Path) -> Result<ResolvedMode> {
-    match load_config_filtered_with_path(system, start_dir, None)? {
-        Some((path, cfg)) => Ok(ResolvedMode {
-            mode: cfg.mode,
-            source: Some(path),
-        }),
-        None => Ok(ResolvedMode {
-            mode: Mode::Open,
-            source: None,
-        }),
+    let mut current = start_dir.to_path_buf();
+    loop {
+        let candidate = current.join(CONFIG_FILENAME);
+        if system
+            .exists(&candidate)
+            .with_context(|| format!("checking existence of {}", candidate.display()))?
+        {
+            let content = system
+                .read_to_string(&candidate)
+                .with_context(|| format!("reading {}", candidate.display()))?;
+            let cfg: Config = serde_yaml::from_str(&content)
+                .with_context(|| format!("parsing {}", candidate.display()))?;
+            if let Some(mode) = cfg.mode {
+                return Ok(ResolvedMode {
+                    mode,
+                    source: Some(candidate),
+                });
+            }
+        }
+        if !current.pop() {
+            return Ok(ResolvedMode {
+                mode: Mode::Open,
+                source: None,
+            });
+        }
     }
 }
 

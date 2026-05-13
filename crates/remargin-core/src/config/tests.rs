@@ -119,7 +119,7 @@ fn full_config_parse() {
         .unwrap();
     assert_eq!(config.identity.as_deref(), Some("eduardo"));
     assert_eq!(config.author_type.as_deref(), Some("human"));
-    assert_eq!(config.mode, Mode::Strict);
+    assert_eq!(config.mode, Some(Mode::Strict));
     assert_eq!(config.key.as_deref(), Some("id_ed25519"));
     assert_eq!(config.assets_dir, ".assets");
     assert_eq!(config.ignore, vec!["node_modules", "target"]);
@@ -138,7 +138,7 @@ fn minimal_config_defaults() {
         .unwrap()
         .unwrap();
     assert_eq!(config.identity.as_deref(), Some("bob"));
-    assert_eq!(config.mode, Mode::Open);
+    assert_eq!(config.mode, None);
     assert_eq!(config.assets_dir, "assets");
     assert!(config.ignore.is_empty());
     assert!(config.key.is_none());
@@ -585,8 +585,10 @@ fn resolve_mode_ignores_type_filter() {
 }
 
 #[test]
-fn resolve_mode_uses_default_when_config_omits_mode() {
-    // A config without a `mode:` field parses as Mode::Open (default).
+fn resolve_mode_walks_past_configs_without_an_explicit_mode_field() {
+    // A config without a `mode:` field does not declare a realm; the
+    // walk must continue upward. With no further config the resolver
+    // falls back to Open and reports no source.
     let system = MockSystem::new()
         .with_file(
             Path::new("/project/.remargin.yaml"),
@@ -596,9 +598,32 @@ fn resolve_mode_uses_default_when_config_omits_mode() {
 
     let resolved = resolve_mode(&system, Path::new("/project")).unwrap();
     assert_eq!(resolved.mode, Mode::Open);
+    assert!(
+        resolved.source.is_none(),
+        "a yaml without `mode:` must not show up as the mode source"
+    );
+}
+
+#[test]
+fn resolve_mode_skips_inner_yaml_without_mode_and_uses_outer_strict() {
+    // The exact shape the live vault hits: an outer yaml declares strict;
+    // an inner yaml in a subdirectory only carries a system_prompt block
+    // with no mode field. The walk for a file in the inner dir must reach
+    // the outer's strict declaration.
+    let system = MockSystem::new()
+        .with_file(Path::new("/vault/.remargin.yaml"), b"mode: strict\n")
+        .unwrap()
+        .with_file(
+            Path::new("/vault/sub/.remargin.yaml"),
+            b"system_prompt:\n  name: x\n  prompt: y\n",
+        )
+        .unwrap();
+
+    let resolved = resolve_mode(&system, Path::new("/vault/sub")).unwrap();
+    assert_eq!(resolved.mode, Mode::Strict);
     assert_eq!(
         resolved.source.as_deref(),
-        Some(Path::new("/project/.remargin.yaml"))
+        Some(Path::new("/vault/.remargin.yaml"))
     );
 }
 

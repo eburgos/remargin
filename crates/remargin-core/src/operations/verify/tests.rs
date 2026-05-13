@@ -6,7 +6,7 @@
 
 extern crate alloc;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use chrono::DateTime;
 use os_shim::System as _;
@@ -1033,6 +1033,240 @@ fn verify_and_refresh_is_a_no_op_when_frontmatter_is_already_current() {
 // Regression coverage: until commit_with_verify did the realm walk,
 // these ops silently ran under the caller's mode and the gate did not
 // fire on the realm's rules.
+
+#[test]
+fn realm_walk_passes_through_yamls_without_a_mode_field() {
+    // An intermediate .remargin.yaml that only declares system_prompt
+    // (no `mode:`) must NOT short-circuit the realm walk. The default
+    // mode is Open; if the walk stops at this file, a strict realm
+    // root one level higher is silently ignored and ops run as Open.
+    let private_key = "\
+-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
+QyNTUxOQAAACC1X7nyFUdfsMF7x8GI40lTjtT8jK7q/sqImy3eaP4ZlQAAAJDk27dx5Nu3
+cQAAAAtzc2gtZWQyNTUxOQAAACC1X7nyFUdfsMF7x8GI40lTjtT8jK7q/sqImy3eaP4ZlQ
+AAAEAk2Tz65AVfgL3ddyz72e8OkjFsl+pyRUGWLQkHBKtYx7VfufIVR1+wwXvHwYjjSVOO
+1PyMrur+yoibLd5o/hmVAAAADXRlc3RAcmVtYXJnaW4=
+-----END OPENSSH PRIVATE KEY-----
+";
+    let registry_yaml = "\
+participants:
+  alice:
+    type: human
+    status: active
+    pubkeys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILVfufIVR1+wwXvHwYjjSVOO1PyMrur+yoibLd5o/hmV test@remargin
+";
+    let prompt_only_yaml = "\
+system_prompt:
+  name: Inner prompt
+  prompt: |
+    body
+";
+    let doc = "\
+---
+title: T
+---
+
+# H
+";
+    let system = MockSystem::new()
+        .with_file(Path::new("/vault/.remargin.yaml"), b"mode: strict\n")
+        .unwrap()
+        .with_file(
+            Path::new("/vault/.remargin-registry.yaml"),
+            registry_yaml.as_bytes(),
+        )
+        .unwrap()
+        .with_file(
+            Path::new("/vault/sub/.remargin.yaml"),
+            prompt_only_yaml.as_bytes(),
+        )
+        .unwrap()
+        .with_file(Path::new("/vault/sub/doc.md"), doc.as_bytes())
+        .unwrap()
+        .with_file(Path::new("/keys/alice"), private_key.as_bytes())
+        .unwrap();
+
+    let mut cfg = make_config(Mode::Open, None);
+    cfg.identity = Some(String::from("alice"));
+    cfg.key_path = Some(PathBuf::from("/keys/alice"));
+
+    let pos = InsertPosition::Append;
+    let new_id = create_comment(
+        &system,
+        Path::new("/vault/sub/doc.md"),
+        &cfg,
+        &CreateCommentParams {
+            attachments: &[],
+            auto_ack: false,
+            content: "hello",
+            position: &pos,
+            remargin_kind: &[],
+            reply_to: None,
+            sandbox: false,
+            to: &[],
+        },
+    )
+    .unwrap();
+
+    let written = parser::parse_file(&system, Path::new("/vault/sub/doc.md")).unwrap();
+    let new_cm = written.find_comment(&new_id).unwrap();
+    assert!(
+        new_cm.signature.is_some(),
+        "an intermediate prompt-only yaml must not hijack the realm walk; \
+         the strict declaration one level up still applies, so the new \
+         comment must be signed"
+    );
+}
+
+#[test]
+fn create_comment_signs_when_realm_is_strict_even_if_caller_mode_is_open() {
+    let private_key = "\
+-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
+QyNTUxOQAAACC1X7nyFUdfsMF7x8GI40lTjtT8jK7q/sqImy3eaP4ZlQAAAJDk27dx5Nu3
+cQAAAAtzc2gtZWQyNTUxOQAAACC1X7nyFUdfsMF7x8GI40lTjtT8jK7q/sqImy3eaP4ZlQ
+AAAEAk2Tz65AVfgL3ddyz72e8OkjFsl+pyRUGWLQkHBKtYx7VfufIVR1+wwXvHwYjjSVOO
+1PyMrur+yoibLd5o/hmVAAAADXRlc3RAcmVtYXJnaW4=
+-----END OPENSSH PRIVATE KEY-----
+";
+    let registry_yaml = "\
+participants:
+  alice:
+    type: human
+    status: active
+    pubkeys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILVfufIVR1+wwXvHwYjjSVOO1PyMrur+yoibLd5o/hmV test@remargin
+";
+    let doc = "\
+---
+title: T
+---
+
+# H
+";
+    let system = MockSystem::new()
+        .with_file(Path::new("/d/.remargin.yaml"), b"mode: strict\n")
+        .unwrap()
+        .with_file(
+            Path::new("/d/.remargin-registry.yaml"),
+            registry_yaml.as_bytes(),
+        )
+        .unwrap()
+        .with_file(Path::new("/d/a.md"), doc.as_bytes())
+        .unwrap()
+        .with_file(Path::new("/keys/alice"), private_key.as_bytes())
+        .unwrap();
+
+    // Caller mirrors what handle_comment hands to create_comment: mode
+    // and registry inherited from the MCP startup walk (Open here),
+    // identity + key_path resolved from the --config target.
+    let mut cfg = make_config(Mode::Open, None);
+    cfg.identity = Some(String::from("alice"));
+    cfg.key_path = Some(PathBuf::from("/keys/alice"));
+
+    let pos = InsertPosition::Append;
+    let new_id = create_comment(
+        &system,
+        Path::new("/d/a.md"),
+        &cfg,
+        &CreateCommentParams {
+            attachments: &[],
+            auto_ack: false,
+            content: "hello",
+            position: &pos,
+            remargin_kind: &[],
+            reply_to: None,
+            sandbox: false,
+            to: &[],
+        },
+    )
+    .unwrap();
+
+    let written = parser::parse_file(&system, Path::new("/d/a.md")).unwrap();
+    let new_cm = written.find_comment(&new_id).unwrap();
+    assert!(
+        new_cm.signature.is_some(),
+        "realm is strict + alice is registered-active + a key is configured; \
+         create_comment must sign before write, but signature is None"
+    );
+}
+
+#[test]
+fn create_comment_signs_when_realm_yaml_is_several_dirs_above_doc() {
+    // Real-world shape: vault declares strict at the root; the doc lives
+    // several levels deep; the registry sits one level above the vault.
+    // The walks must traverse all those intermediate empty directories
+    // to find both the realm config and the registry.
+    let private_key = "\
+-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
+QyNTUxOQAAACC1X7nyFUdfsMF7x8GI40lTjtT8jK7q/sqImy3eaP4ZlQAAAJDk27dx5Nu3
+cQAAAAtzc2gtZWQyNTUxOQAAACC1X7nyFUdfsMF7x8GI40lTjtT8jK7q/sqImy3eaP4ZlQ
+AAAEAk2Tz65AVfgL3ddyz72e8OkjFsl+pyRUGWLQkHBKtYx7VfufIVR1+wwXvHwYjjSVOO
+1PyMrur+yoibLd5o/hmVAAAADXRlc3RAcmVtYXJnaW4=
+-----END OPENSSH PRIVATE KEY-----
+";
+    let registry_yaml = "\
+participants:
+  alice:
+    type: human
+    status: active
+    pubkeys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILVfufIVR1+wwXvHwYjjSVOO1PyMrur+yoibLd5o/hmV test@remargin
+";
+    let doc = "\
+---
+title: T
+---
+
+# H
+";
+    let system = MockSystem::new()
+        .with_file(
+            Path::new("/home/u/.remargin-registry.yaml"),
+            registry_yaml.as_bytes(),
+        )
+        .unwrap()
+        .with_file(Path::new("/home/u/vault/.remargin.yaml"), b"mode: strict\n")
+        .unwrap()
+        .with_file(Path::new("/home/u/vault/a/b/c/doc.md"), doc.as_bytes())
+        .unwrap()
+        .with_file(Path::new("/keys/alice"), private_key.as_bytes())
+        .unwrap();
+
+    let mut cfg = make_config(Mode::Open, None);
+    cfg.identity = Some(String::from("alice"));
+    cfg.key_path = Some(PathBuf::from("/keys/alice"));
+
+    let pos = InsertPosition::Append;
+    let new_id = create_comment(
+        &system,
+        Path::new("/home/u/vault/a/b/c/doc.md"),
+        &cfg,
+        &CreateCommentParams {
+            attachments: &[],
+            auto_ack: false,
+            content: "hello",
+            position: &pos,
+            remargin_kind: &[],
+            reply_to: None,
+            sandbox: false,
+            to: &[],
+        },
+    )
+    .unwrap();
+
+    let written = parser::parse_file(&system, Path::new("/home/u/vault/a/b/c/doc.md")).unwrap();
+    let new_cm = written.find_comment(&new_id).unwrap();
+    assert!(
+        new_cm.signature.is_some(),
+        "realm is strict 3 dirs up + registry is 4 dirs up + alice is \
+         registered-active + a key is configured; create_comment must \
+         sign before write"
+    );
+}
 
 #[test]
 fn ack_bypasses_realm_strict_mode_today() {
