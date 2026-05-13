@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join as joinPath } from "node:path";
+import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname as dirnamePath, join as joinPath } from "node:path";
 import { spawn } from "child_process";
 import { z } from "zod/v4";
 import {
@@ -608,6 +608,8 @@ export class RemarginBackend {
     const timeout = opts?.timeout ?? 300_000;
     const fullPrompt = files.length > 0 ? `${prompt}\n\nFiles:\n${files.join("\n")}` : prompt;
 
+    const logStream = opts?.logPath ? openLogStream(opts.logPath, binary, fullPrompt, cwd) : null;
+
     return new Promise<void>((resolve, reject) => {
       const child = spawn(binary, ["-p", fullPrompt], { cwd });
       const stderrChunks: Buffer[] = [];
@@ -620,31 +622,37 @@ export class RemarginBackend {
         fn();
       };
 
-      child.stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
-      // Drain stdout so the child doesn't deadlock on a full pipe; we
-      // intentionally do not capture it (Claude's own writes land on
-      // disk via the remargin skill).
-      child.stdout.on("data", () => {
-        /* discard */
+      child.stderr.on("data", (chunk: Buffer) => {
+        stderrChunks.push(chunk);
+        logStream?.write(chunk);
+      });
+      // Drain stdout so the child doesn't deadlock on a full pipe.
+      child.stdout.on("data", (chunk: Buffer) => {
+        logStream?.write(chunk);
       });
 
       const timer = setTimeout(() => {
         child.kill();
-        settle(() => reject(new Error(`claude timed out after ${timeout}ms`)));
+        settle(() => {
+          logStream?.end(`\n[remargin] killed: timeout after ${timeout}ms\n`);
+          reject(new Error(`claude timed out after ${timeout}ms`));
+        });
       }, timeout);
 
       child.on("error", (err: NodeJS.ErrnoException) => {
         settle(() => {
-          if (err.code === "ENOENT") {
-            reject(new Error(`claude binary not found at "${binary}". Check plugin settings.`));
-          } else {
-            reject(new Error(`failed to spawn claude: ${err.message}`));
-          }
+          const msg =
+            err.code === "ENOENT"
+              ? `claude binary not found at "${binary}". Check plugin settings.`
+              : `failed to spawn claude: ${err.message}`;
+          logStream?.end(`\n[remargin] spawn error: ${msg}\n`);
+          reject(new Error(msg));
         });
       });
 
       child.on("close", (code) => {
         settle(() => {
+          logStream?.end(`\n[remargin] exit ${code ?? "unknown"}\n`);
           if (code !== 0) {
             const stderr = Buffer.concat(stderrChunks).toString("utf-8");
             const detail = stderr.trim() || `exit code ${code ?? "unknown"}`;
@@ -680,4 +688,20 @@ export interface InvokeClaudeOpts {
    * directory (or vault root when blank).
    */
   cwd?: string;
+  /**
+   * Absolute path of the per-run log file. When set, stdout+stderr are
+   * appended in real time. Parent directories are created if missing.
+   */
+  logPath?: string;
+}
+
+function openLogStream(logPath: string, binary: string, fullPrompt: string, cwd: string) {
+  mkdirSync(dirnamePath(logPath), { recursive: true });
+  const stream = createWriteStream(logPath, { flags: "a" });
+  const header =
+    `=== ${new Date().toISOString()} ===\n` +
+    `cwd: ${cwd}\n` +
+    `$ ${binary} -p <prompt of ${fullPrompt.length} chars>\n\n`;
+  stream.write(header);
+  return stream;
 }

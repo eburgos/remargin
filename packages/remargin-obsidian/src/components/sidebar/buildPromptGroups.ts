@@ -10,6 +10,11 @@ export const DEFAULT_GROUP_KEY = "__default__";
 export interface StagedGroup {
   prompt: ResolvedSystemPrompt;
   files: string[];
+  /**
+   * Absolute path of the per-run log file the backend should append
+   * stdout/stderr to. Computed by the sandbox UI at Submit time.
+   */
+  logPath?: string;
 }
 
 /** Outcome of one group's invocation in the Submit-all pipeline. */

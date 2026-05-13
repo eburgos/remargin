@@ -1,5 +1,6 @@
-import { dirname } from "node:path";
-import { Notice, type TFile } from "obsidian";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname, relative as relativePath } from "node:path";
+import { Notice, TFile } from "obsidian";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   StagedGroup,
@@ -221,7 +222,10 @@ export function RemarginSidebar({ plugin }: RemarginSidebarProps) {
     async (groups: StagedGroup[], progress?: SubmitProgress): Promise<SubmitGroupResult[]> => {
       const results = await runSubmitAll({
         groups,
-        runGroup: (group) => plugin.backend.invokeClaude(group.prompt.prompt, group.files),
+        runGroup: (group) =>
+          plugin.backend.invokeClaude(group.prompt.prompt, group.files, {
+            logPath: group.logPath,
+          }),
         cleanupGroup: (group) => plugin.backend.sandboxRemove(group.files),
         bumpRefresh,
         progress,
@@ -231,6 +235,32 @@ export function RemarginSidebar({ plugin }: RemarginSidebarProps) {
       return results;
     },
     [plugin, bumpRefresh]
+  );
+
+  const handleOpenLog = useCallback(
+    (absLogPath: string) => {
+      const vaultPath =
+        (plugin.app.vault.adapter as unknown as { basePath?: string }).basePath ?? "";
+      try {
+        mkdirSync(dirname(absLogPath), { recursive: true });
+        if (!existsSync(absLogPath)) writeFileSync(absLogPath, "");
+      } catch (err) {
+        console.error("[remargin] failed to ensure log file exists:", err);
+        new Notice(`Could not prepare submit log: ${err instanceof Error ? err.message : err}`);
+        return;
+      }
+      const relPath = vaultPath ? relativePath(vaultPath, absLogPath) : absLogPath;
+      const tfile = plugin.app.vault.getAbstractFileByPath(relPath);
+      const open =
+        tfile instanceof TFile
+          ? plugin.app.workspace.getLeaf("tab").openFile(tfile)
+          : plugin.app.workspace.openLinkText(relPath, "/", "tab");
+      Promise.resolve(open).catch((err: unknown) => {
+        console.error("[remargin] failed to open submit log:", err);
+        new Notice(`Could not open submit log: ${err instanceof Error ? err.message : err}`);
+      });
+    },
+    [plugin]
   );
 
   const handleSavePrompt = useCallback(
@@ -320,6 +350,7 @@ export function RemarginSidebar({ plugin }: RemarginSidebarProps) {
           vaultRoot={
             (plugin.app.vault.adapter as unknown as { basePath?: string }).basePath ?? undefined
           }
+          onOpenLog={handleOpenLog}
         />
       }
       inboxActions={<ViewToggle value={inboxView} onChange={handleInboxView} />}

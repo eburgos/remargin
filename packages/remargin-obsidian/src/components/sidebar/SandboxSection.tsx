@@ -29,6 +29,7 @@ import { Button } from "@/components/ui/button";
 import { ObsidianIcon } from "@/components/ui/ObsidianIcon";
 import { useBackend } from "@/hooks/useBackend";
 import { buildFileTree, type FileTreeNode } from "@/lib/buildFileTree";
+import { submitLogPath } from "@/lib/submitLogPath";
 import type { ViewMode } from "@/types";
 
 export type { PromptGroup, StagedGroup };
@@ -90,6 +91,12 @@ interface SandboxSectionProps {
    * vault-relative path (e.g. `./src/01_personal/remargin/`).
    */
   vaultRoot?: string;
+  /**
+   * Called with an absolute log-file path so the caller can open it in
+   * an Obsidian leaf. Invoked once per group at Submit time (for live
+   * tail) and again when the user clicks a failed group's log link.
+   */
+  onOpenLog?: (logPath: string) => void;
 }
 
 // WHY: the backend returns absolute host paths in resolved.source; the
@@ -104,6 +111,17 @@ function formatScopeRelative(scope: string, vaultRoot?: string): string {
   if (rel.length === 0) return "./";
   if (rel.startsWith("/")) return rel;
   return `./${rel}/`;
+}
+
+function firstErrorLine(raw?: string): string | undefined {
+  if (!raw) return undefined;
+  const lines = raw
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+  if (lines.length === 0) return undefined;
+  const flagged = lines.find((l) => /error|fail/i.test(l));
+  return flagged ?? lines[0];
 }
 
 function errorMessage(err: unknown): string {
@@ -126,6 +144,7 @@ export function SandboxSection({
   savePromptDisabledReason,
   availableFolders,
   vaultRoot,
+  onOpenLog,
 }: SandboxSectionProps) {
   const backend = useBackend();
   const [files, setFiles] = useState<string[]>([]);
@@ -254,6 +273,20 @@ export function SandboxSection({
     new Map()
   );
   const [groupErrors, setGroupErrors] = useState<Map<string, string>>(new Map());
+  const [groupLogPaths, setGroupLogPaths] = useState<Map<string, string>>(new Map());
+
+  const buildStagedWithLog = useCallback(
+    (group: PromptGroup, stagedFiles: string[]): StagedGroup => {
+      const lp = vaultRoot ? submitLogPath(vaultRoot, group.prompt.name) : undefined;
+      const key = group.source ?? DEFAULT_GROUP_KEY;
+      if (lp) {
+        setGroupLogPaths((prev) => new Map(prev).set(key, lp));
+        onOpenLog?.(lp);
+      }
+      return { prompt: group.prompt, files: stagedFiles, logPath: lp };
+    },
+    [vaultRoot, onOpenLog]
+  );
 
   const handleSubmitGroup = useCallback(
     async (group: PromptGroup) => {
@@ -262,7 +295,6 @@ export function SandboxSection({
       const stagedFiles = group.files.filter((f) => staged.has(f));
       if (stagedFiles.length === 0) return;
       const key = group.source ?? DEFAULT_GROUP_KEY;
-      const payload: StagedGroup[] = [{ prompt: group.prompt, files: stagedFiles }];
       setSubmitting(true);
       setError(null);
       setGroupStatus((prev) => {
@@ -275,6 +307,8 @@ export function SandboxSection({
         next.delete(key);
         return next;
       });
+
+      const payload: StagedGroup[] = [buildStagedWithLog(group, stagedFiles)];
 
       const progress: SubmitProgress = {
         onGroupStart: (g) => {
@@ -299,27 +333,25 @@ export function SandboxSection({
         setSubmitting(false);
       }
     },
-    [submitting, staged, onSubmit]
+    [submitting, staged, onSubmit, buildStagedWithLog]
   );
 
-  const submitAllPayload = useMemo<StagedGroup[]>(
-    () =>
-      groups
-        .filter((g) => !g.hasError && g.staged.length > 0)
-        .map((g) => ({ prompt: g.prompt, files: g.staged })),
+  const eligibleSubmitGroups = useMemo(
+    () => groups.filter((g) => !g.hasError && g.staged.length > 0),
     [groups]
   );
   const submitAllCount = useMemo(
-    () => submitAllPayload.reduce((acc, g) => acc + g.files.length, 0),
-    [submitAllPayload]
+    () => eligibleSubmitGroups.reduce((acc, g) => acc + g.staged.length, 0),
+    [eligibleSubmitGroups]
   );
 
   const handleSubmitAll = useCallback(async () => {
-    if (submitting || submitAllPayload.length === 0) return;
+    if (submitting || eligibleSubmitGroups.length === 0) return;
     setSubmitting(true);
     setError(null);
     setGroupStatus(new Map());
     setGroupErrors(new Map());
+    const payload: StagedGroup[] = eligibleSubmitGroups.map((g) => buildStagedWithLog(g, g.staged));
     const progress: SubmitProgress = {
       onGroupStart: (g) => {
         const k = g.prompt.source ?? DEFAULT_GROUP_KEY;
@@ -334,14 +366,14 @@ export function SandboxSection({
       },
     };
     try {
-      await onSubmit?.(submitAllPayload, progress);
+      await onSubmit?.(payload, progress);
     } catch (err) {
       console.error("SandboxSection.handleSubmitAll failed:", err);
       setError(errorMessage(err));
     } finally {
       setSubmitting(false);
     }
-  }, [submitting, submitAllPayload, onSubmit]);
+  }, [submitting, eligibleSubmitGroups, onSubmit, buildStagedWithLog]);
 
   if (loading && files.length === 0) {
     return <div className="px-4 py-3 text-xs text-text-faint">Loading sandbox...</div>;
@@ -398,6 +430,8 @@ export function SandboxSection({
               vaultRoot={vaultRoot}
               onSubmitGroup={handleSubmitGroup}
               submitting={submitting}
+              logPath={groupLogPaths.get(key)}
+              onOpenLog={onOpenLog}
             />
           );
         })}
@@ -507,6 +541,10 @@ export interface PromptGroupSectionProps {
   onSubmitGroup?: (group: PromptGroup) => void | Promise<void>;
   /** True while any group's Submit is in flight; disables every group's Submit. */
   submitting?: boolean;
+  /** Absolute log-file path for this group's most recent submit, if any. */
+  logPath?: string;
+  /** Click handler bound to the failed-status icon when a logPath exists. */
+  onOpenLog?: (logPath: string) => void;
 }
 
 // Exported for component-test isolation; internal in production use.
@@ -533,6 +571,8 @@ export function PromptGroupSection({
   vaultRoot,
   onSubmitGroup,
   submitting,
+  logPath,
+  onOpenLog,
 }: PromptGroupSectionProps) {
   const [headerOpen, setHeaderOpen] = useState(true);
   const [editing, setEditing] = useState(false);
@@ -605,14 +645,29 @@ export function PromptGroupSection({
             {status === "ok" && (
               <Check className="w-3 h-3 text-green-500 shrink-0" aria-label="Submitted" />
             )}
-            {status === "failed" && (
-              <span title={statusError} className="inline-flex shrink-0">
-                <TriangleAlert
-                  className="w-3 h-3 text-red-400 shrink-0"
-                  aria-label="Submit failed"
-                />
-              </span>
-            )}
+            {status === "failed" &&
+              (logPath && onOpenLog ? (
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 shrink-0 px-1 py-0.5 rounded-sm border border-red-400 text-red-400 hover:bg-red-500/10"
+                  title={firstErrorLine(statusError) ?? "Open submit log"}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenLog(logPath);
+                  }}
+                  aria-label="Open submit log"
+                >
+                  <TriangleAlert className="w-3 h-3 shrink-0" />
+                  <span className="text-[9px] font-semibold underline">open log</span>
+                </button>
+              ) : (
+                <span title={statusError} className="inline-flex shrink-0">
+                  <TriangleAlert
+                    className="w-3 h-3 text-red-400 shrink-0"
+                    aria-label="Submit failed"
+                  />
+                </span>
+              ))}
           </div>
           <div className="flex items-center gap-0.5 shrink-0">
             {group.isDefault && !group.hasError && !editing && (
