@@ -514,10 +514,10 @@ The Claude Code plugin ships the remargin skill plus the `/remargin:process-file
 
 ```bash
 # Register the marketplace and install the plugin
-remargin plugin install
+remargin claude plugin install
 
 # Verify installation
-remargin plugin test
+remargin claude plugin test
 ```
 
 ### Permissions
@@ -541,7 +541,7 @@ For a project using remargin with Claude Code:
 ```bash
 # Install both MCP server and plugin
 remargin mcp install
-remargin plugin install
+remargin claude plugin install
 
 # Add permissions (optional, avoids confirmation prompts)
 # Edit .claude/settings.local.json and add mcp__remargin__* to allow list

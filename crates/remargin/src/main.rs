@@ -523,14 +523,6 @@ enum Commands {
         #[command(flatten)]
         identity_args: IdentityArgs,
     },
-    /// Manage the remargin Claude Code plugin.
-    Plugin {
-        /// Subcommand: install, uninstall, test.
-        #[command(subcommand)]
-        action: PluginAction,
-        #[command(flatten)]
-        output_args: OutputArgs,
-    },
     /// Folder-scoped system-prompt resolver.
     ///
     /// Read-only walk-up that mirrors the identity resolver but anchors
@@ -796,6 +788,14 @@ enum Commands {
 /// `.remargin-restrictions.json` sidecar).
 #[derive(clap::Subcommand)]
 enum ClaudeAction {
+    /// Manage the remargin Claude Code plugin.
+    Plugin {
+        /// Subcommand: install, uninstall, test.
+        #[command(subcommand)]
+        action: PluginAction,
+        #[command(flatten)]
+        output_args: OutputArgs,
+    },
     /// Claude Code `PreToolUse` hook dispatcher.
     ///
     /// Reads a `PreToolUse` event JSON envelope from stdin, extracts
@@ -1700,7 +1700,6 @@ const fn subcommand_output(cmd: &Commands) -> Option<&OutputArgs> {
         | Commands::Mcp { output_args, .. }
         | Commands::Metadata { output_args, .. }
         | Commands::Mv { output_args, .. }
-        | Commands::Plugin { output_args, .. }
         | Commands::Prompt { output_args, .. }
         | Commands::Purge { output_args, .. }
         | Commands::Query { output_args, .. }
@@ -1725,7 +1724,8 @@ const fn subcommand_output(cmd: &Commands) -> Option<&OutputArgs> {
 /// Pull the per-action [`OutputArgs`] from a [`ClaudeAction`] variant.
 const fn claude_action_output(action: &ClaudeAction) -> &OutputArgs {
     match action {
-        ClaudeAction::Pretool { output_args }
+        ClaudeAction::Plugin { output_args, .. }
+        | ClaudeAction::Pretool { output_args }
         | ClaudeAction::Restrict { output_args, .. }
         | ClaudeAction::Unrestrict { output_args, .. } => output_args,
     }
@@ -1899,7 +1899,6 @@ const fn subcommand_is_config_free(cmd: &Commands) -> bool {
         | Commands::Claude { .. }
         | Commands::Identity { .. }
         | Commands::Permissions { .. }
-        | Commands::Plugin { .. }
         | Commands::ResolveMode { .. }
         | Commands::Keygen { .. } => true,
         #[cfg(feature = "obsidian")]
@@ -1966,7 +1965,6 @@ const fn subcommand_identity(cmd: &Commands) -> Option<&IdentityArgs> {
         | Commands::Ls { .. }
         | Commands::Metadata { .. }
         | Commands::Permissions { .. }
-        | Commands::Plugin { .. }
         | Commands::Registry { .. }
         | Commands::ResolveMode { .. }
         | Commands::Search { .. }
@@ -1998,7 +1996,6 @@ const fn subcommand_assets(cmd: &Commands) -> Option<&AssetsArgs> {
         | Commands::Mv { .. }
         | Commands::Permissions { .. }
         | Commands::Plan { .. }
-        | Commands::Plugin { .. }
         | Commands::Prompt { .. }
         | Commands::Purge { .. }
         | Commands::Query { .. }
@@ -2051,7 +2048,6 @@ const fn subcommand_unrestricted(cmd: &Commands) -> Option<&UnrestrictedArgs> {
         | Commands::Mv { .. }
         | Commands::Permissions { .. }
         | Commands::Plan { .. }
-        | Commands::Plugin { .. }
         | Commands::Prompt { .. }
         | Commands::Purge { .. }
         | Commands::Query { .. }
@@ -2173,7 +2169,6 @@ fn try_dispatch_config_free(
         Commands::Keygen { .. } => handle_keygen(&cli.command, sinks, system).map(Some),
         #[cfg(feature = "obsidian")]
         Commands::Obsidian { .. } => handle_obsidian(&cli.command, sinks, system, cwd).map(Some),
-        Commands::Plugin { .. } => handle_plugin(&cli.command, sinks).map(Some),
         Commands::Activity { .. } => handle_activity(&cli.command, sinks, system, cwd).map(Some),
         Commands::Permissions { action } => cmd_permissions(sinks, system, cwd, action).map(Some),
         Commands::Claude { action } => handle_claude(action, sinks, system, cwd).map(Some),
@@ -2314,14 +2309,11 @@ fn handle_obsidian(
     cmd_obsidian(sinks, system, cwd, action, output_args.json)
 }
 
-fn handle_plugin(command: &Commands, sinks: &mut IoSinks<'_>) -> Result<()> {
-    let Commands::Plugin {
-        action,
-        output_args,
-    } = command
-    else {
-        bail!("internal: handle_plugin called with wrong subcommand");
-    };
+fn handle_plugin(
+    sinks: &mut IoSinks<'_>,
+    action: &PluginAction,
+    output_args: &OutputArgs,
+) -> Result<()> {
     cmd_plugin(sinks, action, output_args.json)
 }
 
@@ -2358,6 +2350,10 @@ fn handle_claude(
     cwd: &Path,
 ) -> Result<()> {
     match action {
+        ClaudeAction::Plugin {
+            action: plugin_action,
+            output_args,
+        } => handle_plugin(sinks, plugin_action, output_args),
         ClaudeAction::Pretool { .. } => handle_claude_pretool(sinks, system),
         ClaudeAction::Restrict {
             path,
@@ -2453,7 +2449,6 @@ fn dispatch_with_config(
         | Commands::Mcp { .. }
         | Commands::Keygen { .. }
         | Commands::Permissions { .. }
-        | Commands::Plugin { .. }
         | Commands::ResolveMode { .. } => Ok(()),
         #[cfg(feature = "obsidian")]
         Commands::Obsidian { .. } => Ok(()),
