@@ -524,6 +524,14 @@ enum Commands {
         #[command(flatten)]
         identity_args: IdentityArgs,
     },
+    /// Manage the remargin Claude Code plugin.
+    Plugin {
+        /// Subcommand: install, uninstall, test.
+        #[command(subcommand)]
+        action: PluginAction,
+        #[command(flatten)]
+        output_args: OutputArgs,
+    },
     /// Folder-scoped system-prompt resolver.
     ///
     /// Read-only walk-up that mirrors the identity resolver but anchors
@@ -1275,6 +1283,17 @@ enum SandboxAction {
     },
 }
 
+/// Plugin subcommands.
+#[derive(clap::Subcommand)]
+enum PluginAction {
+    /// Register the marketplace and install the remargin plugin.
+    Install,
+    /// Check plugin installation status.
+    Test,
+    /// Uninstall the remargin plugin.
+    Uninstall,
+}
+
 /// Skill subcommands.
 #[derive(clap::Subcommand)]
 enum SkillAction {
@@ -1713,6 +1732,7 @@ const fn subcommand_output(cmd: &Commands) -> Option<&OutputArgs> {
         | Commands::Mcp { output_args, .. }
         | Commands::Metadata { output_args, .. }
         | Commands::Mv { output_args, .. }
+        | Commands::Plugin { output_args, .. }
         | Commands::Prompt { output_args, .. }
         | Commands::Purge { output_args, .. }
         | Commands::Query { output_args, .. }
@@ -1912,6 +1932,7 @@ const fn subcommand_is_config_free(cmd: &Commands) -> bool {
         | Commands::Claude { .. }
         | Commands::Identity { .. }
         | Commands::Permissions { .. }
+        | Commands::Plugin { .. }
         | Commands::ResolveMode { .. }
         | Commands::Keygen { .. }
         | Commands::Skill { .. } => true,
@@ -1979,6 +2000,7 @@ const fn subcommand_identity(cmd: &Commands) -> Option<&IdentityArgs> {
         | Commands::Ls { .. }
         | Commands::Metadata { .. }
         | Commands::Permissions { .. }
+        | Commands::Plugin { .. }
         | Commands::Registry { .. }
         | Commands::ResolveMode { .. }
         | Commands::Search { .. }
@@ -2011,6 +2033,7 @@ const fn subcommand_assets(cmd: &Commands) -> Option<&AssetsArgs> {
         | Commands::Mv { .. }
         | Commands::Permissions { .. }
         | Commands::Plan { .. }
+        | Commands::Plugin { .. }
         | Commands::Prompt { .. }
         | Commands::Purge { .. }
         | Commands::Query { .. }
@@ -2064,6 +2087,7 @@ const fn subcommand_unrestricted(cmd: &Commands) -> Option<&UnrestrictedArgs> {
         | Commands::Mv { .. }
         | Commands::Permissions { .. }
         | Commands::Plan { .. }
+        | Commands::Plugin { .. }
         | Commands::Prompt { .. }
         | Commands::Purge { .. }
         | Commands::Query { .. }
@@ -2187,6 +2211,7 @@ fn try_dispatch_config_free(
         #[cfg(feature = "obsidian")]
         Commands::Obsidian { .. } => handle_obsidian(&cli.command, sinks, system, cwd).map(Some),
         Commands::Skill { .. } => handle_skill(&cli.command, sinks, system).map(Some),
+        Commands::Plugin { .. } => handle_plugin(&cli.command, sinks).map(Some),
         Commands::Activity { .. } => handle_activity(&cli.command, sinks, system, cwd).map(Some),
         Commands::Permissions { action } => cmd_permissions(sinks, system, cwd, action).map(Some),
         Commands::Claude { action } => handle_claude(action, sinks, system, cwd).map(Some),
@@ -2338,6 +2363,17 @@ fn handle_skill(command: &Commands, sinks: &mut IoSinks<'_>, system: &dyn System
     cmd_skill(sinks, system, action, output_args.json)
 }
 
+fn handle_plugin(command: &Commands, sinks: &mut IoSinks<'_>) -> Result<()> {
+    let Commands::Plugin {
+        action,
+        output_args,
+    } = command
+    else {
+        bail!("internal: handle_plugin called with wrong subcommand");
+    };
+    cmd_plugin(sinks, action, output_args.json)
+}
+
 fn handle_activity(
     command: &Commands,
     sinks: &mut IoSinks<'_>,
@@ -2466,6 +2502,7 @@ fn dispatch_with_config(
         | Commands::Mcp { .. }
         | Commands::Keygen { .. }
         | Commands::Permissions { .. }
+        | Commands::Plugin { .. }
         | Commands::ResolveMode { .. }
         | Commands::Skill { .. } => Ok(()),
         #[cfg(feature = "obsidian")]
@@ -5682,6 +5719,98 @@ fn cmd_skill(
                 print_output(sinks, true, &json!({ "uninstalled": true }))
             } else {
                 writeln!(sinks.stderr, "Skill uninstalled.").context("writing to stderr")?;
+                Ok(())
+            }
+        }
+    }
+}
+
+fn cmd_plugin(sinks: &mut IoSinks<'_>, action: &PluginAction, json_mode: bool) -> Result<()> {
+    use std::process::Command;
+    const MARKETPLACE: &str = "github:tixena/remargin";
+    const PLUGIN_REF: &str = "remargin@remargin";
+
+    match action {
+        PluginAction::Install => {
+            // marketplace add is idempotent on the claude side; tolerate the
+            // already-registered case by inspecting stderr only on failure.
+            let market = Command::new("claude")
+                .args(["plugins", "marketplace", "add", MARKETPLACE])
+                .output()
+                .context(
+                    "running 'claude plugins marketplace add' -- is Claude Code CLI installed?",
+                )?;
+            if !market.status.success() {
+                let stderr = String::from_utf8_lossy(&market.stderr);
+                if !stderr.contains("already") {
+                    anyhow::bail!("claude plugins marketplace add failed: {stderr}");
+                }
+            }
+
+            let install = Command::new("claude")
+                .args(["plugins", "install", PLUGIN_REF])
+                .output()
+                .context("running 'claude plugins install' -- is Claude Code CLI installed?")?;
+            if !install.status.success() {
+                let stderr = String::from_utf8_lossy(&install.stderr);
+                anyhow::bail!("claude plugins install failed: {stderr}");
+            }
+
+            if json_mode {
+                print_output(
+                    sinks,
+                    true,
+                    &json!({
+                        "installed": true,
+                        "marketplace": MARKETPLACE,
+                        "plugin": PLUGIN_REF,
+                    }),
+                )
+            } else {
+                writeln!(
+                    sinks.stderr,
+                    "Plugin {PLUGIN_REF} installed from {MARKETPLACE}.",
+                )
+                .context("writing to stderr")?;
+                Ok(())
+            }
+        }
+        PluginAction::Uninstall => {
+            let output = Command::new("claude")
+                .args(["plugins", "uninstall", PLUGIN_REF])
+                .output()
+                .context("running 'claude plugins uninstall' -- is Claude Code CLI installed?")?;
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                anyhow::bail!("claude plugins uninstall failed: {stderr}");
+            }
+
+            if json_mode {
+                print_output(sinks, true, &json!({ "uninstalled": true }))
+            } else {
+                writeln!(sinks.stderr, "Plugin {PLUGIN_REF} uninstalled.")
+                    .context("writing to stderr")?;
+                Ok(())
+            }
+        }
+        PluginAction::Test => {
+            let output = Command::new("claude")
+                .args(["plugins", "list"])
+                .output()
+                .context("running 'claude plugins list' -- is Claude Code CLI installed?")?;
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let installed = stdout.lines().any(|l| l.contains("remargin"));
+            let status_str = if installed {
+                "installed"
+            } else {
+                "not_installed"
+            };
+
+            if json_mode {
+                print_output(sinks, true, &json!({ "status": status_str }))
+            } else {
+                writeln!(sinks.stderr, "Plugin status: {status_str}")
+                    .context("writing to stderr")?;
                 Ok(())
             }
         }

@@ -84,6 +84,16 @@ mod tests {
         // the tracing sub-subscriber, and the MCP loop. Not per-op glue;
         // configuration-heavy setup code.
         m.insert("cmd_mcp", (100, "MCP server bootstrap + tracing setup"));
+        // CLI: plugin install / uninstall / test — shells out to the
+        // Claude CLI for marketplace + plugin management; each arm is
+        // build-args + output-handling glue, not per-op core logic.
+        m.insert(
+            "cmd_plugin",
+            (
+                100,
+                "shells out to claude plugins marketplace add / install / uninstall / list",
+            ),
+        );
         // CLI: Obsidian install/uninstall — opt-in via the `obsidian`
         // feature; interactive-ish download + patch flow that is itself
         // not part of the document API surface.
