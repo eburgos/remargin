@@ -39,6 +39,7 @@ use remargin_core::parser;
 use remargin_core::path::expand_path;
 use remargin_core::permissions::claude_sync::rule_shape::OverlapKind;
 use remargin_core::permissions::inspect as permissions_inspect;
+use remargin_core::permissions::pretool::{PretoolOutcome, pretool};
 use remargin_core::permissions::restrict as permissions_restrict;
 use remargin_core::permissions::unprotect as permissions_unprotect;
 use remargin_core::responses;
@@ -53,6 +54,14 @@ const EXIT_PRESERVATION: u8 = 5;
 const EXIT_SKILL: u8 = 6;
 const EXIT_NOT_FOUND: u8 = 7;
 const EXIT_AMBIGUOUS: u8 = 8;
+/// Claude Code's `PreToolUse` hook contract maps exit 2 to "block the
+/// tool call and feed stderr back to the model". Use the same value
+/// for fail-closed pretool outcomes so the hook signal is intact.
+const EXIT_PRETOOL_FAIL: u8 = 2;
+/// Marker prefix in the error message so the top-level error mapper
+/// can route pretool failures to exit code 2 (Claude Code's blocking
+/// signal) without mistaking them for general CLI errors.
+const PRETOOL_FAIL_SENTINEL: &str = "__remargin_pretool_fail__:";
 /// Gitignore-style "no match" sentinel returned by
 /// `permissions check` when the path is unrestricted.
 /// Numerically equal to [`EXIT_ERROR`] so existing tooling that branches
@@ -788,6 +797,19 @@ enum Commands {
 /// `.remargin-restrictions.json` sidecar).
 #[derive(clap::Subcommand)]
 enum ClaudeAction {
+    /// Claude Code `PreToolUse` hook dispatcher.
+    ///
+    /// Reads a `PreToolUse` event JSON envelope from stdin, extracts
+    /// the path(s) the tool is about to touch, and emits Claude
+    /// Code's `PreToolUse` decision JSON on stdout. Silent allow for
+    /// paths outside the realm's `trusted_roots`; deny with a per-tool
+    /// contextual message for paths inside it (redirecting Claude at
+    /// the right `mcp__remargin__*` op). Fail closed: any internal
+    /// error exits 2 so Claude Code blocks the tool call.
+    Pretool {
+        #[command(flatten)]
+        output_args: OutputArgs,
+    },
     /// Restrict an agent-edit subpath.
     ///
     /// Adds a `permissions.trusted_roots` entry to the nearest
@@ -1716,7 +1738,8 @@ const fn subcommand_output(cmd: &Commands) -> Option<&OutputArgs> {
 /// Pull the per-action [`OutputArgs`] from a [`ClaudeAction`] variant.
 const fn claude_action_output(action: &ClaudeAction) -> &OutputArgs {
     match action {
-        ClaudeAction::Restrict { output_args, .. }
+        ClaudeAction::Pretool { output_args }
+        | ClaudeAction::Restrict { output_args, .. }
         | ClaudeAction::Unrestrict { output_args, .. } => output_args,
     }
 }
@@ -1802,6 +1825,8 @@ fn classify_error(err: &anyhow::Error) -> u8 {
     let msg = format!("{err:#}");
     if msg.contains(PERMISSIONS_NOT_RESTRICTED_MARKER) {
         EXIT_NOT_RESTRICTED
+    } else if msg.contains(PRETOOL_FAIL_SENTINEL) {
+        EXIT_PRETOOL_FAIL
     } else if msg.contains("Lint error") {
         EXIT_LINT
     } else if msg.contains("checksum") || msg.contains("signature") || msg.contains("integrity") {
@@ -2071,6 +2096,11 @@ fn run(cli: &Cli, system: &dyn System, cwd: &Path, sinks: &mut IoSinks<'_>) -> E
                 // Output already emitted on the success path; we only
                 // need the gitignore-style exit code, no "error: ..."
                 // render.
+            } else if let Some(reason) = err_msg.strip_prefix(PRETOOL_FAIL_SENTINEL) {
+                // Pretool fail-closed: Claude Code reads stderr and
+                // feeds it back to the model. No "error: " prefix —
+                // just the bare reason.
+                let _ = writeln!(sinks.stderr, "{reason}");
             } else if json_mode {
                 let payload = verify_failure.map_or_else(
                     || json!({ "error": err_msg }),
@@ -2338,6 +2368,7 @@ fn handle_claude(
     cwd: &Path,
 ) -> Result<()> {
     match action {
+        ClaudeAction::Pretool { .. } => handle_claude_pretool(sinks, system),
         ClaudeAction::Restrict {
             path,
             also_deny_bash,
@@ -2368,6 +2399,29 @@ fn handle_claude(
             user_settings.as_deref(),
             output_args.json,
         ),
+    }
+}
+
+/// Reads the `PreToolUse` event JSON from stdin, runs the core
+/// [`remargin_core::permissions::pretool::pretool`] function, and
+/// emits the outcome. Fail-closed: any failure exits via
+/// [`anyhow::bail!`] so the surrounding runner returns a non-zero
+/// status (mapped to Claude Code's blocking semantics).
+fn handle_claude_pretool(sinks: &mut IoSinks<'_>, system: &dyn System) -> Result<()> {
+    let mut buf = Vec::new();
+    io::stdin()
+        .read_to_end(&mut buf)
+        .context("reading stdin for claude pretool")?;
+    match pretool(system, &buf) {
+        PretoolOutcome::SilentAllow => Ok(()),
+        PretoolOutcome::Deny(decision) => {
+            let json = serde_json::to_string(&decision).context("serializing pretool decision")?;
+            writeln!(sinks.stdout, "{json}").context("writing claude pretool decision")
+        }
+        PretoolOutcome::Fail(reason) => Err(anyhow::anyhow!("{PRETOOL_FAIL_SENTINEL}{reason}")),
+        _ => Err(anyhow::anyhow!(
+            "{PRETOOL_FAIL_SENTINEL}unexpected pretool outcome",
+        )),
     }
 }
 

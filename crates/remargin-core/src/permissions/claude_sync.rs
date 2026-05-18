@@ -108,11 +108,12 @@ use crate::permissions::sidecar::{self, SidecarEntry};
 const EDITOR_TOOLS: &[&str] = &["Edit", "Write", "Read", "NotebookEdit"];
 
 /// Default-deny Bash command tokens for the restricted path.
-/// Every entry expands to `Bash(<token> {glob_root}/**)`,
-/// so a token of `cp *` becomes `Bash(cp * /path/**)` while a bare
-/// `tee` becomes `Bash(tee /path/**)`. The trailing `*` (or its
-/// absence) is part of the token by design — the format string in
-/// [`rules_for`] does NOT inject one.
+///
+/// Every entry expands to `Bash(<token> {glob_root}/**)`, so a token
+/// of `cp *` becomes `Bash(cp * /path/**)` while a bare `tee` becomes
+/// `Bash(tee /path/**)`. The trailing `*` (or its absence) is part of
+/// the token by design — the format string in [`rules_for`] does NOT
+/// inject one.
 ///
 /// The list is broad on purpose: most entries below can read, modify,
 /// create, delete, or otherwise mutate a file on disk, which would
@@ -173,7 +174,7 @@ const EDITOR_TOOLS: &[&str] = &["Edit", "Write", "Read", "NotebookEdit"];
 /// - **`mktemp`**: NOT added. Creates files in a tempdir, not the
 ///   restricted root; hostile use would still need a follow-up write
 ///   that the existing rules catch.
-pub(crate) const BASH_MUTATORS: &[&str] = &[
+pub const BASH_MUTATORS: &[&str] = &[
     // Write-side mutators (original surface).
     "cp *",
     "mv *",
