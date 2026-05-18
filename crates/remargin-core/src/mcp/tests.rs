@@ -2356,9 +2356,7 @@ fn mcp_plan_ack_returns_report_without_touching_disk() {
                 "arguments": {
                     "op": "ack",
                     "file": "doc.md",
-                    "ids": [id],
-                    "identity": "bob",
-                    "type": "human"
+                    "ids": [id]
                 }
             }
         }),
@@ -3073,14 +3071,14 @@ fn mcp_plan_rejects_unknown_op() {
     );
 }
 
-// ----------: identity-declaration schema parity ----------
+// ---------- identity-flag rejection on MCP surface ----------
 
-/// Every mutating tool that accepts a per-tool identity declaration must
-/// advertise the four-field contract (`config_path`, `identity`, `type`,
-/// `key`) and the top-level `not/allOf` exclusivity clause. Read-only
-/// tools MUST NOT.
+/// No MCP tool — mutating or read-only — may advertise the four
+/// identity-declaration flags. `identity_create` is exempt: there
+/// `identity`/`type`/`key` name the NEW identity being created, not
+/// the caller's principal.
 #[test]
-fn identity_declaration_schema_present_on_mutating_tools() {
+fn no_identity_flags_on_any_mcp_tool_schema() {
     let base = Path::new("/docs");
     let system = MockSystem::new();
     let config = test_config();
@@ -3098,58 +3096,23 @@ fn identity_declaration_schema_present_on_mutating_tools() {
     );
 
     let tools = response["result"]["tools"].as_array().unwrap();
-    let mutating = [
-        "ack",
-        "batch",
-        "comment",
-        "delete",
-        "edit",
-        "plan",
-        "purge",
-        "react",
-        "sandbox_add",
-        "sandbox_list",
-        "sandbox_remove",
-        "sign",
-        "write",
-    ];
-    for name in mutating {
-        let maybe_tool = tools.iter().find(|t| t["name"] == name);
-        assert!(maybe_tool.is_some(), "missing tool {name}");
-        let tool = maybe_tool.unwrap();
-        let props = &tool["inputSchema"]["properties"];
-        for field in ["config_path", "identity", "key", "type"] {
-            assert!(
-                props[field].is_object(),
-                "tool {name} missing identity-declaration field {field}"
-            );
+    for tool in tools {
+        let name = tool["name"].as_str().unwrap();
+        if name == "identity_create" {
+            continue;
         }
-        let not = &tool["inputSchema"]["not"];
-        assert!(
-            not.is_object(),
-            "tool {name} missing top-level `not` exclusivity clause"
-        );
-        let required = not["allOf"][0]["required"].as_array().unwrap();
-        assert!(
-            required.iter().any(|v| v == "config_path"),
-            "tool {name} exclusivity clause missing config_path"
-        );
-    }
-
-    let read_only = [
-        "comments", "get", "lint", "ls", "metadata", "query", "search",
-    ];
-    for name in read_only {
-        let maybe_tool = tools.iter().find(|t| t["name"] == name);
-        assert!(maybe_tool.is_some(), "missing tool {name}");
-        let tool = maybe_tool.unwrap();
         let props = &tool["inputSchema"]["properties"];
         for field in ["config_path", "identity", "key", "type"] {
             assert!(
                 props.get(field).is_none_or(Value::is_null),
-                "read-only tool {name} must not advertise identity-declaration field {field}"
+                "tool {name} must not advertise identity-declaration field {field}"
             );
         }
+        let not = &tool["inputSchema"].get("not");
+        assert!(
+            not.is_none() || not.unwrap().is_null(),
+            "tool {name} must not carry a top-level `not` exclusivity clause"
+        );
     }
 }
 
@@ -3188,12 +3151,96 @@ fn no_mode_or_dry_run_in_any_schema() {
     }
 }
 
-/// Passing both `config_path` and `identity` to the same call must be
-/// rejected — schema-level `not/allOf` says so, and the handler re-checks.
+/// Every MCP tool (except `identity_create`) rejects each of the four
+/// identity-declaration flags at the handler layer. Defense against
+/// clients that ignore the schema.
 #[test]
-fn comment_rejects_config_path_with_identity_declaration() {
+fn every_mcp_tool_rejects_identity_flags() {
     let base = Path::new("/docs");
     let system = system_with_doc(base, "doc.md", "# Hello\n");
+    let config = test_config();
+
+    let cases: &[(&str, Value)] = &[
+        ("ack", json!({"file": "doc.md", "ids": ["abc"]})),
+        ("activity", json!({})),
+        (
+            "batch",
+            json!({"file": "doc.md", "operations": [{"content": "x"}]}),
+        ),
+        ("comment", json!({"file": "doc.md", "content": "x"})),
+        ("comments", json!({"file": "doc.md"})),
+        ("delete", json!({"file": "doc.md", "ids": ["abc"]})),
+        (
+            "edit",
+            json!({"file": "doc.md", "id": "abc", "content": "y"}),
+        ),
+        ("get", json!({"path": "doc.md"})),
+        ("lint", json!({"path": "doc.md"})),
+        ("ls", json!({})),
+        ("metadata", json!({"path": "doc.md"})),
+        ("mv", json!({"file": "doc.md", "id": "abc", "to": "end"})),
+        ("permissions_check", json!({"op": "comment"})),
+        ("permissions_show", json!({})),
+        (
+            "plan",
+            json!({"op": "comment", "file": "doc.md", "content": "x"}),
+        ),
+        ("prompt_delete", json!({})),
+        ("prompt_list", json!({})),
+        ("prompt_resolve", json!({})),
+        ("prompt_set", json!({"name": "p", "prompt": "do thing"})),
+        ("purge", json!({"file": "doc.md"})),
+        ("query", json!({})),
+        (
+            "react",
+            json!({"file": "doc.md", "id": "abc", "emoji": "+1"}),
+        ),
+        ("rm", json!({"path": "doc.md"})),
+        ("sandbox_add", json!({"files": ["doc.md"]})),
+        ("sandbox_list", json!({})),
+        ("sandbox_remove", json!({"files": ["doc.md"]})),
+        ("search", json!({"query": "x"})),
+        ("sign", json!({"file": "doc.md"})),
+        ("verify", json!({"file": "doc.md"})),
+        ("whoami", json!({})),
+        ("write", json!({"path": "doc.md", "content": "hi"})),
+    ];
+
+    for (tool, base_args) in cases {
+        for flag in ["config_path", "identity", "key", "type"] {
+            let mut args = base_args.clone();
+            args[flag] = json!("anything");
+            let response = call(
+                &system,
+                base,
+                &config,
+                &json!({
+                    "jsonrpc": "2.0",
+                    "id": 1_i32,
+                    "method": "tools/call",
+                    "params": {"name": tool, "arguments": args}
+                }),
+            );
+            assert!(
+                is_tool_error(&response),
+                "tool {tool} did not reject flag {flag}: {response}"
+            );
+            let msg = response["result"]["content"][0]["text"].as_str().unwrap();
+            assert!(
+                msg.contains("identity flag") && msg.contains(flag),
+                "tool {tool} returned wrong diagnostic for {flag}: {msg}"
+            );
+        }
+    }
+}
+
+/// `identity_create` keeps `identity`/`type`/`key` in its schema —
+/// those name the NEW identity being created, not a per-call caller
+/// principal.
+#[test]
+fn identity_create_keeps_identity_fields() {
+    let base = Path::new("/docs");
+    let system = MockSystem::new();
     let config = test_config();
 
     let response = call(
@@ -3203,143 +3250,23 @@ fn comment_rejects_config_path_with_identity_declaration() {
         &json!({
             "jsonrpc": "2.0",
             "id": 1_i32,
-            "method": "tools/call",
-            "params": {
-                "name": "comment",
-                "arguments": {
-                    "file": "doc.md",
-                    "content": "hi",
-                    "config_path": "/does/not/matter.yaml",
-                    "identity": "bob"
-                }
-            }
+            "method": "tools/list",
+            "params": {}
         }),
     );
 
-    assert!(is_tool_error(&response));
-    let msg = response["result"]["content"][0]["text"].as_str().unwrap();
-    assert!(
-        msg.contains("config_path conflicts with identity"),
-        "expected exclusivity diagnostic, got: {msg}"
-    );
-}
-
-/// `config_path` alone loads the target file and adopts its identity for
-/// this call without touching any other caller field.
-#[test]
-fn comment_with_config_path_loads_alternate_identity() {
-    let base = Path::new("/docs");
-    let config_yaml =
-        b"identity: alt-alice\ntype: human\nassets_dir: assets\nmode: open\n" as &[u8];
-    let system = MockSystem::new()
-        .with_file(base.join("doc.md"), b"# Hello\n\nBody.\n")
-        .unwrap()
-        .with_file(Path::new("/other/.remargin.yaml"), config_yaml)
+    let tools = response["result"]["tools"].as_array().unwrap();
+    let tool = tools
+        .iter()
+        .find(|t| t["name"] == "identity_create")
         .unwrap();
-    let config = test_config();
-
-    let response = call(
-        &system,
-        base,
-        &config,
-        &json!({
-            "jsonrpc": "2.0",
-            "id": 1_i32,
-            "method": "tools/call",
-            "params": {
-                "name": "comment",
-                "arguments": {
-                    "file": "doc.md",
-                    "content": "via config_path",
-                    "config_path": "/other/.remargin.yaml"
-                }
-            }
-        }),
-    );
-
-    assert!(!is_tool_error(&response), "got error: {response}");
-    let created_id = String::from(extract_tool_text(&response)["id"].as_str().unwrap());
-
-    // Verify the comment was authored by the config-declared identity.
-    let doc_text = system.read_to_string(&base.join("doc.md")).unwrap();
-    let doc = parser::parse(&doc_text).unwrap();
-    let comment = doc.find_comment(&created_id).unwrap();
-    assert_eq!(comment.author, "alt-alice");
-    assert_eq!(comment.author_type, AuthorType::Human);
-}
-
-/// Manual `{identity, type}` declaration (open mode; no key required) is the
-/// branch-2 happy path — identity and type are both adopted.
-#[test]
-fn comment_with_manual_identity_type_declaration_writes_as_new_identity() {
-    let base = Path::new("/docs");
-    let system = system_with_doc(base, "doc.md", "# Hello\n\nBody.\n");
-    let config = test_config();
-
-    let response = call(
-        &system,
-        base,
-        &config,
-        &json!({
-            "jsonrpc": "2.0",
-            "id": 1_i32,
-            "method": "tools/call",
-            "params": {
-                "name": "comment",
-                "arguments": {
-                    "file": "doc.md",
-                    "content": "manual declaration",
-                    "identity": "manual-bob",
-                    "type": "agent"
-                }
-            }
-        }),
-    );
-
-    assert!(!is_tool_error(&response), "got error: {response}");
-    let created_id = String::from(extract_tool_text(&response)["id"].as_str().unwrap());
-
-    let doc_text = system.read_to_string(&base.join("doc.md")).unwrap();
-    let doc = parser::parse(&doc_text).unwrap();
-    let comment = doc.find_comment(&created_id).unwrap();
-    assert_eq!(comment.author, "manual-bob");
-    assert_eq!(comment.author_type, AuthorType::Agent);
-}
-
-/// Unknown author-type strings surface a diagnostic rather than silently
-/// falling through — matches the CLI's `parse_author_type` behavior.
-#[test]
-fn comment_rejects_unknown_type_value() {
-    let base = Path::new("/docs");
-    let system = system_with_doc(base, "doc.md", "# Hello\n");
-    let config = test_config();
-
-    let response = call(
-        &system,
-        base,
-        &config,
-        &json!({
-            "jsonrpc": "2.0",
-            "id": 1_i32,
-            "method": "tools/call",
-            "params": {
-                "name": "comment",
-                "arguments": {
-                    "file": "doc.md",
-                    "content": "x",
-                    "identity": "bob",
-                    "type": "martian"
-                }
-            }
-        }),
-    );
-
-    assert!(is_tool_error(&response));
-    let msg = response["result"]["content"][0]["text"].as_str().unwrap();
-    assert!(
-        msg.contains("unknown author type"),
-        "expected author-type diagnostic, got: {msg}"
-    );
+    let props = &tool["inputSchema"]["properties"];
+    for field in ["identity", "key", "type"] {
+        assert!(
+            props[field].is_object(),
+            "identity_create must expose {field} (names the new identity)"
+        );
+    }
 }
 
 // ===========================================================================
@@ -3766,13 +3693,13 @@ fn mcp_whoami_with_no_config_returns_found_false() {
     assert!(result.get("identity").is_none() || result["identity"].is_null());
 }
 
+/// `whoami` returns the server's startup identity; per-call projection
+/// via `config_path` is rejected. Use the CLI to project a different
+/// identity.
 #[test]
-fn mcp_whoami_with_config_path_projects_alternate_identity() {
+fn mcp_whoami_rejects_config_path() {
     let base = Path::new("/docs");
-    let yaml = b"identity: alt-bob\ntype: agent\nassets_dir: assets\nmode: open\n" as &[u8];
-    let system = MockSystem::new()
-        .with_file(Path::new("/other/.remargin.yaml"), yaml)
-        .unwrap();
+    let system = MockSystem::new();
     let config = test_config();
 
     let response = call(
@@ -3792,39 +3719,9 @@ fn mcp_whoami_with_config_path_projects_alternate_identity() {
         }),
     );
 
-    assert!(!is_tool_error(&response), "got error: {response}");
-    let result = extract_tool_text(&response);
-    assert_eq!(result["found"].as_bool(), Some(true));
-    assert_eq!(result["identity"].as_str(), Some("alt-bob"));
-    assert_eq!(result["author_type"].as_str(), Some("agent"));
-}
-
-#[test]
-fn mcp_whoami_rejects_config_path_with_manual_flags() {
-    let base = Path::new("/docs");
-    let system = MockSystem::new();
-    let config = test_config();
-
-    let response = call(
-        &system,
-        base,
-        &config,
-        &json!({
-            "jsonrpc": "2.0",
-            "id": 1_i32,
-            "method": "tools/call",
-            "params": {
-                "name": "whoami",
-                "arguments": {
-                    "config_path": "/other/.remargin.yaml",
-                    "identity": "bob",
-                    "type": "human"
-                }
-            }
-        }),
-    );
-
     assert!(is_tool_error(&response));
+    let msg = response["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(msg.contains("config_path"), "got: {msg}");
 }
 
 // ---------- remargin_kind surface ----------

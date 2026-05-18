@@ -17,7 +17,7 @@ use os_shim::System;
 use serde_json::{Map, Value, json};
 
 use crate::activity;
-use crate::config::identity::{IdentityFlags, resolve_identity, resolve_identity_report};
+use crate::config::identity::{IdentityFlags, resolve_identity_report};
 use crate::config::permissions::resolve::{ResolvedPermissions, resolve_permissions};
 use crate::config::system_prompt::resolve_system_prompt;
 use crate::config::{ResolvedConfig, parse_author_type};
@@ -99,6 +99,11 @@ const NO_PATH_TOOLS: &[&str] = &[
 /// absent, so it is handled inline rather than via this list.
 const PATH_DEFAULTS_TO_CWD_TOOLS: &[&str] = &["activity", "ls", "query", "sandbox_list", "search"];
 
+/// Identity-declaration flags the MCP surface rejects. An MCP server
+/// is launched per session with a stable startup identity, so per-call
+/// identity flips are out of scope. The CLI keeps these flags.
+const REJECTED_IDENTITY_FLAGS: &[&str] = &["config_path", "identity", "key", "type"];
+
 /// Description of a single MCP tool.
 struct ToolDesc {
     /// Human-readable description.
@@ -109,67 +114,25 @@ struct ToolDesc {
     schema: Value,
 }
 
-/// Merge the identity-flag schema fragment into a per-tool schema. The tool's
-/// own `properties` map gets the four identity fields; its top-level
-/// constraints get the exclusivity clause. Today no tool declares a
-/// top-level `not` of its own; if that changes, the merge needs to
-/// compose clauses rather than overwrite.
-fn with_identity_flag_schema(mut base: Value) -> Value {
-    let Some(base_obj) = base.as_object_mut() else {
-        return base;
-    };
-
-    let base_props = base_obj
-        .entry(String::from("properties"))
-        .or_insert_with(|| json!({}));
-    if let (Some(props_map), Value::Object(overlay_props)) = (
-        base_props.as_object_mut(),
-        json!({
-            "config_path": {
-                "type": "string",
-                "description": "Path to a .remargin.yaml that declares a complete identity. Mutually exclusive with identity / type / key."
-            },
-            "identity": {
-                "type": "string",
-                "description": "Declare the identity for this operation. Use together with type (and key in strict mode), or alone to filter the identity walk."
-            },
-            "key": {
-                "type": "string",
-                "description": "Signing key path (strict mode). Shorthand: a bare name resolves to ~/.ssh/<name>."
-            },
-            "type": {
-                "type": "string",
-                "enum": ["human", "agent"],
-                "description": "Author type for the declared identity: human or agent."
-            }
-        }),
-    ) {
-        for (k, v) in overlay_props {
-            props_map.insert(k, v);
+/// Reject any identity-declaration flag in `params`. Returns the
+/// error message on the first hit. Defense against clients that
+/// ignore the schema (which no longer advertises these flags).
+fn reject_identity_flags(tool: &str, params: &Map<String, Value>) -> Option<String> {
+    // `identity_create` is exempt: its `identity` / `type` / `key`
+    // params name the NEW identity being rendered, not a per-call
+    // re-declaration of the caller's identity.
+    if tool == "identity_create" {
+        return None;
+    }
+    for &flag in REJECTED_IDENTITY_FLAGS {
+        if params.contains_key(flag) {
+            return Some(format!(
+                "identity flag '{flag}' is not supported on MCP tool '{tool}'; use the CLI for \
+                 per-call identity projection"
+            ));
         }
     }
-
-    debug_assert!(
-        base_obj.get("not").is_none(),
-        "with_identity_flag_schema would overwrite an existing top-level `not` clause"
-    );
-    base_obj.insert(
-        String::from("not"),
-        json!({
-            "allOf": [
-                { "required": ["config_path"] },
-                {
-                    "anyOf": [
-                        { "required": ["identity"] },
-                        { "required": ["type"] },
-                        { "required": ["key"] }
-                    ]
-                }
-            ]
-        }),
-    );
-
-    base
+    None
 }
 
 /// Build the `activity` tool descriptor.
@@ -181,13 +144,13 @@ fn desc_activity() -> ToolDesc {
              change records (comments, acks, sandbox-adds) sorted by ts. With `since` omitted, \
              the per-file cutoff is the caller's last action in that file; files where the \
              caller has never acted return everything.",
-        schema: with_identity_flag_schema(json!({
+        schema: json!({
             "type": "object",
             "properties": {
                 "path": { "type": "string", "description": "File or directory to scan; defaults to the MCP server's working directory." },
                 "since": { "type": "string", "description": "ISO 8601 cutoff. Omit to derive per-file from caller's last action." }
             }
-        })),
+        }),
     }
 }
 
@@ -196,7 +159,7 @@ fn desc_ack() -> ToolDesc {
     ToolDesc {
         name: "ack",
         description: "Acknowledge one or more comments (or remove this identity's ack with remove=true). Omit file to resolve by ID across the folder tree.",
-        schema: with_identity_flag_schema(json!({
+        schema: json!({
             "type": "object",
             "properties": {
                 "file": { "type": "string", "description": "Path to the document (omit to resolve by ID across the folder tree)" },
@@ -209,7 +172,7 @@ fn desc_ack() -> ToolDesc {
                 "remove": { "type": "boolean", "description": "Remove this identity's ack instead of adding one", "default": false }
             },
             "required": ["ids"]
-        })),
+        }),
     }
 }
 
@@ -218,7 +181,7 @@ fn desc_batch() -> ToolDesc {
     ToolDesc {
         name: "batch",
         description: "Create multiple comments atomically",
-        schema: with_identity_flag_schema(json!({
+        schema: json!({
             "type": "object",
             "properties": {
                 "file": { "type": "string", "description": "Path to the document" },
@@ -242,7 +205,7 @@ fn desc_batch() -> ToolDesc {
                 }
             },
             "required": ["file", "operations"]
-        })),
+        }),
     }
 }
 
@@ -251,7 +214,7 @@ fn desc_comment() -> ToolDesc {
     ToolDesc {
         name: "comment",
         description: "Create a comment in a document",
-        schema: with_identity_flag_schema(json!({
+        schema: json!({
             "type": "object",
             "properties": {
                 "file": { "type": "string", "description": "Path to the document" },
@@ -282,7 +245,7 @@ fn desc_comment() -> ToolDesc {
                 }
             },
             "required": ["file", "content"]
-        })),
+        }),
     }
 }
 
@@ -313,7 +276,7 @@ fn desc_delete() -> ToolDesc {
     ToolDesc {
         name: "delete",
         description: "Delete one or more comments",
-        schema: with_identity_flag_schema(json!({
+        schema: json!({
             "type": "object",
             "properties": {
                 "file": { "type": "string", "description": "Path to the document" },
@@ -324,7 +287,7 @@ fn desc_delete() -> ToolDesc {
                 }
             },
             "required": ["file", "ids"]
-        })),
+        }),
     }
 }
 
@@ -333,7 +296,7 @@ fn desc_edit() -> ToolDesc {
     ToolDesc {
         name: "edit",
         description: "Edit a comment (cascading ack clear)",
-        schema: with_identity_flag_schema(json!({
+        schema: json!({
             "type": "object",
             "properties": {
                 "file": { "type": "string", "description": "Path to the document" },
@@ -346,7 +309,7 @@ fn desc_edit() -> ToolDesc {
                 }
             },
             "required": ["file", "id", "content"]
-        })),
+        }),
     }
 }
 
@@ -444,7 +407,7 @@ fn desc_plan() -> ToolDesc {
     ToolDesc {
         name: "plan",
         description: "Dry-run projection for mutating ops. Returns a PlanReport (noop/would_commit/reject_reason/checksums/changed_line_ranges/comment diff) without touching disk. Document ops: ack, batch, comment, delete, edit, purge, react, sandbox-add, sandbox-remove, sign, write. File-relocation op: mv - surfaces an `mv_diff` describing canonical src/dst, dst_exists, noop_same_path, idempotent_already_settled. Config ops (claude_restrict / claude_unrestrict) are CLI-only - use `remargin plan claude restrict` / `remargin plan claude unrestrict`.",
-        schema: with_identity_flag_schema(json!({
+        schema: json!({
             "type": "object",
             "properties": {
                 "op": { "type": "string", "description": "Op to project: ack | comment | delete | edit | react | batch | mv | purge | sandbox-add | sandbox-remove | sign | write" },
@@ -502,7 +465,7 @@ fn desc_plan() -> ToolDesc {
                 "raw": { "type": "boolean", "description": "For write: treat content as raw bytes; plan returns a non-Markdown reject_reason", "default": false }
             },
             "required": ["op"]
-        })),
+        }),
     }
 }
 
@@ -511,37 +474,31 @@ fn desc_purge() -> ToolDesc {
     ToolDesc {
         name: "purge",
         description: "Strip all comments from a document, or every .md file in a directory when `recursive` is true. To preview without writing, use `plan` with op=\"purge\".",
-        schema: with_identity_flag_schema(json!({
+        schema: json!({
             "type": "object",
             "properties": {
                 "file": { "type": "string", "description": "Path to the document (or directory when `recursive` is true)" },
                 "recursive": { "type": "boolean", "description": "Recursively purge every visible .md file under `file` (treats `file` as a directory)." }
             },
             "required": ["file"]
-        })),
+        }),
     }
 }
 
 /// Build the `prompt_resolve` tool descriptor.
-///
-/// Read-only walk-up: surfaces the nearest `system_prompt:` block
-/// declared on a `.remargin.yaml` for the supplied file or directory,
-/// falling through to the locked Default body when the walk exhausts.
-/// Identity flags are accepted for surface symmetry but never gate the
-/// resolution.
 fn desc_prompt_resolve() -> ToolDesc {
     ToolDesc {
         name: "prompt_resolve",
         description: "Resolve the nearest folder-scoped system prompt for a file or directory. \
              Walks `.remargin.yaml` files upward; first one declaring a `system_prompt:` block \
              wins. Falls through to a locked Default body when the walk exhausts. Read-only.",
-        schema: with_identity_flag_schema(json!({
+        schema: json!({
             "type": "object",
             "properties": {
                 "file": { "type": "string", "description": "Path to the file (or directory) to resolve a prompt for." }
             },
             "required": ["file"]
-        })),
+        }),
     }
 }
 
@@ -553,7 +510,7 @@ fn desc_prompt_set() -> ToolDesc {
              Other fields in the file are preserved byte-for-byte. The post-write diff refuses \
              any change outside the system_prompt mapping. Folder defaults to the MCP root when \
              omitted.",
-        schema: with_identity_flag_schema(json!({
+        schema: json!({
             "type": "object",
             "properties": {
                 "folder": { "type": "string", "description": "Folder containing the `.remargin.yaml`. Defaults to the MCP root." },
@@ -561,7 +518,7 @@ fn desc_prompt_set() -> ToolDesc {
                 "prompt": { "type": "string", "description": "Prompt body text. Required." }
             },
             "required": ["name", "prompt"]
-        })),
+        }),
     }
 }
 
@@ -572,13 +529,13 @@ fn desc_prompt_delete() -> ToolDesc {
         description: "Strip the `system_prompt:` block from `<folder>/.remargin.yaml`. Idempotent: \
              a missing block (or missing file) succeeds. The .remargin.yaml is preserved even if \
              it ends up empty. Folder defaults to the MCP root.",
-        schema: with_identity_flag_schema(json!({
+        schema: json!({
             "type": "object",
             "properties": {
                 "folder": { "type": "string", "description": "Folder containing the `.remargin.yaml`. Defaults to the MCP root." }
             },
             "required": []
-        })),
+        }),
     }
 }
 
@@ -665,7 +622,7 @@ fn desc_react() -> ToolDesc {
     ToolDesc {
         name: "react",
         description: "Add or remove an emoji reaction",
-        schema: with_identity_flag_schema(json!({
+        schema: json!({
             "type": "object",
             "properties": {
                 "file": { "type": "string", "description": "Path to the document" },
@@ -674,7 +631,7 @@ fn desc_react() -> ToolDesc {
                 "remove": { "type": "boolean", "description": "Remove instead of add", "default": false }
             },
             "required": ["file", "id", "emoji"]
-        })),
+        }),
     }
 }
 
@@ -726,7 +683,7 @@ fn desc_sign() -> ToolDesc {
              content was edited out-of-band and the signer wants to re-vouch \
              for the updated content). To preview without writing, use `plan` \
              with op=\"sign\".",
-        schema: with_identity_flag_schema(json!({
+        schema: json!({
             "type": "object",
             "properties": {
                 "file": { "type": "string", "description": "Path to the document" },
@@ -739,7 +696,7 @@ fn desc_sign() -> ToolDesc {
                 "repair_checksum": { "type": "boolean", "description": "Recompute each target comment's checksum from its current content before signing. Scoped by the forgery guard: only the caller's own comments can be repaired.", "default": false }
             },
             "required": ["file"]
-        })),
+        }),
     }
 }
 
@@ -760,27 +717,17 @@ fn desc_verify() -> ToolDesc {
 }
 
 /// Build the `whoami` tool descriptor.
-///
-/// Mirrors the CLI `remargin identity show` surface. With no flags,
-/// returns the server's startup-resolved identity. The standard
-/// per-call identity flags (`config_path` | `identity` + `type` (+
-/// `key` when strict)) project a what-would-I-be-under-these-flags
-/// answer without touching disk. Returns `{"found": false}` when no
-/// identity is configured (read-only diagnostic surface — never a
-/// hard error on missing config).
 fn desc_whoami() -> ToolDesc {
     ToolDesc {
         name: "whoami",
-        description: "Return the effective identity remargin sees for this caller. \
-             With no flags, reports the MCP server's startup-resolved identity. \
-             With the standard identity flags, projects the identity that would \
-             apply under those flags. Returns `{found: false}` when no identity \
-             is configured (soft miss; never errors on missing config).",
-        schema: with_identity_flag_schema(json!({
+        description: "Return the MCP server's startup-resolved identity. \
+             Returns `{found: false}` when no identity is configured \
+             (soft miss; never errors on missing config).",
+        schema: json!({
             "type": "object",
             "properties": {},
             "required": []
-        })),
+        }),
     }
 }
 
@@ -823,7 +770,7 @@ fn desc_sandbox_add() -> ToolDesc {
     ToolDesc {
         name: "sandbox_add",
         description: "Stage one or more markdown files in the caller's sandbox. Idempotent per identity.",
-        schema: with_identity_flag_schema(json!({
+        schema: json!({
             "type": "object",
             "properties": {
                 "files": {
@@ -833,7 +780,7 @@ fn desc_sandbox_add() -> ToolDesc {
                 }
             },
             "required": ["files"]
-        })),
+        }),
     }
 }
 
@@ -842,7 +789,7 @@ fn desc_sandbox_remove() -> ToolDesc {
     ToolDesc {
         name: "sandbox_remove",
         description: "Remove the caller's sandbox entry from one or more markdown files. Idempotent per identity.",
-        schema: with_identity_flag_schema(json!({
+        schema: json!({
             "type": "object",
             "properties": {
                 "files": {
@@ -852,7 +799,7 @@ fn desc_sandbox_remove() -> ToolDesc {
                 }
             },
             "required": ["files"]
-        })),
+        }),
     }
 }
 
@@ -861,12 +808,12 @@ fn desc_sandbox_list() -> ToolDesc {
     ToolDesc {
         name: "sandbox_list",
         description: "Return all markdown files in the given path that are staged for the caller's identity.",
-        schema: with_identity_flag_schema(json!({
+        schema: json!({
             "type": "object",
             "properties": {
                 "path": { "type": "string", "description": "Base directory to walk (default: .)", "default": "." }
             }
-        })),
+        }),
     }
 }
 
@@ -875,7 +822,7 @@ fn desc_write() -> ToolDesc {
     ToolDesc {
         name: "write",
         description: "Write document contents (comment-preserving)",
-        schema: with_identity_flag_schema(json!({
+        schema: json!({
             "type": "object",
             "properties": {
                 "path": { "type": "string", "description": "Path to the file" },
@@ -887,7 +834,7 @@ fn desc_write() -> ToolDesc {
                 "raw": { "type": "boolean", "description": "Write content exactly as provided, skipping frontmatter injection and comment preservation. Not supported for markdown (.md) files.", "default": false }
             },
             "required": ["path", "content"]
-        })),
+        }),
     }
 }
 
@@ -1077,93 +1024,6 @@ fn string_array(params: &Map<String, Value>, field: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Build the CLI-equivalent [`IdentityFlags`] from a tool params map.
-/// Returns `None` when no identity-declaration field is present, so
-/// handlers can fast-path the "use the base config as-is" case.
-///
-/// Enforces the same exclusivity rule clap enforces on the CLI: when
-/// `config_path` is supplied, none of `identity`, `type`, `key` may be.
-/// This duplicates the schema-level `not/allOf` clause on purpose —
-/// JSON-Schema enforcement varies by MCP client, and the handler is
-/// the last defensible checkpoint before `resolve_identity` sees the
-/// flags.
-fn identity_flags_from_params(params: &Map<String, Value>) -> Result<Option<IdentityFlags>> {
-    let config_path = optional_str(params, "config_path");
-    let identity = optional_str(params, "identity");
-    let type_str = optional_str(params, "type");
-    let key = optional_str(params, "key");
-
-    if config_path.is_none() && identity.is_none() && type_str.is_none() && key.is_none() {
-        return Ok(None);
-    }
-
-    if config_path.is_some() && (identity.is_some() || type_str.is_some() || key.is_some()) {
-        bail!(
-            "config_path conflicts with identity / type / key: \
-             pass one complete identity declaration, not a mix"
-        );
-    }
-
-    let author_type = type_str.map(parse_author_type).transpose()?;
-
-    Ok(Some(IdentityFlags {
-        author_type,
-        config_path: config_path.map(PathBuf::from),
-        identity: identity.map(String::from),
-        key: key.map(String::from),
-    }))
-}
-
-/// Resolve a per-tool identity declaration from tool parameters and
-/// replace the identity fields on a cloned base [`ResolvedConfig`].
-///
-/// Extracts `{config_path | identity, type, key}` via
-/// [`identity_flags_from_params`] and — when any field is present —
-/// hands them to [`resolve_identity`], the same three-branch resolver the
-/// CLI uses. The resolved identity then replaces the `identity`,
-/// `author_type`, and (when present) `key_path` fields on a cloned
-/// config; mode, registry, and the rest are preserved from the walk-up
-/// resolution that served the MCP request. The returned config is
-/// revalidated via the same registry + strict-key gate that fires on
-/// construction so no branch can skip enforcement.
-fn resolve_identity_from_params(
-    system: &dyn System,
-    base_dir: &Path,
-    config: &ResolvedConfig,
-    params: &Map<String, Value>,
-) -> Result<Option<ResolvedConfig>> {
-    let Some(flags) = identity_flags_from_params(params)? else {
-        return Ok(None);
-    };
-
-    let resolved = resolve_identity(
-        system,
-        base_dir,
-        &config.mode,
-        &flags,
-        config.registry.as_ref(),
-    )?;
-
-    let mut declared = config.clone();
-    declared.identity = Some(resolved.identity);
-    declared.author_type = Some(resolved.author_type);
-    if let Some(key_path) = resolved.key_path {
-        declared.key_path = Some(key_path);
-    }
-
-    Ok(Some(declared))
-}
-
-/// Pick the per-tool declared identity when present, otherwise the
-/// server-level default. Used everywhere the handler needs "the config
-/// this specific call runs under".
-fn effective_config<'cfg>(
-    config: &'cfg ResolvedConfig,
-    declared: Option<&'cfg ResolvedConfig>,
-) -> &'cfg ResolvedConfig {
-    declared.unwrap_or(config)
-}
-
 /// Dispatch-time boundary check. Mirrors the historic `McpSandbox` for
 /// unconstrained sessions (cwd fallback) and routes constrained / locked
 /// sessions through `op_guard` so `trusted_roots` and `deny_ops` drive
@@ -1332,6 +1192,13 @@ fn dispatch_tool(
     };
     let p = &normalized;
 
+    // Reject identity-declaration flags. The schema no longer
+    // advertises them, but a schema-ignoring client can still send
+    // them — this is the last defensible checkpoint.
+    if let Some(msg) = reject_identity_flags(tool_name, p) {
+        return tool_result_error(&msg);
+    }
+
     // Dispatch-time boundary check. UNCONSTRAINED sessions get the
     // cwd-fallback behaviour the historic `McpSandbox` enforced;
     // CONSTRAINED / LOCKED sessions surface `op_guard` violations
@@ -1385,7 +1252,7 @@ fn dispatch_tool(
         "search" => handle_search(system, base_dir, p),
         "sign" => handle_sign(system, base_dir, config, p),
         "verify" => handle_verify(system, base_dir, config, p),
-        "whoami" => handle_whoami(system, base_dir, p),
+        "whoami" => handle_whoami(system, base_dir),
         "write" => handle_write(system, base_dir, config, p),
         _ => return tool_result_error(&format!("unknown tool: {tool_name}")),
     };
@@ -1434,8 +1301,7 @@ fn handle_activity(
         ),
         None => None,
     };
-    let declared = resolve_identity_from_params(system, base_dir, config, params)?;
-    let cfg = effective_config(config, declared.as_ref());
+    let cfg = config;
     let caller = cfg
         .identity
         .as_deref()
@@ -1454,8 +1320,7 @@ fn handle_ack(
 ) -> Result<Value> {
     let ids = string_array(params, "ids");
     let remove = optional_bool(params, "remove");
-    let declared = resolve_identity_from_params(system, base_dir, config, params)?;
-    let cfg = effective_config(config, declared.as_ref());
+    let cfg = config;
 
     if let Some(file) = optional_str(params, "file") {
         // Direct file path provided.
@@ -1499,8 +1364,7 @@ fn handle_batch(
     params: &Map<String, Value>,
 ) -> Result<Value> {
     let file = required_str(params, "file")?;
-    let declared = resolve_identity_from_params(system, base_dir, config, params)?;
-    let cfg = effective_config(config, declared.as_ref());
+    let cfg = config;
     let ops_value = params
         .get("operations")
         .and_then(Value::as_array)
@@ -1543,8 +1407,7 @@ fn handle_comment(
     } else {
         remargin_kind_raw
     };
-    let declared = resolve_identity_from_params(system, base_dir, config, params)?;
-    let cfg = effective_config(config, declared.as_ref());
+    let cfg = config;
 
     let position = resolve_insert_position(params, reply_to.as_deref());
 
@@ -1612,8 +1475,7 @@ fn handle_delete(
     let file = required_str(params, "file")?;
     let ids = string_array(params, "ids");
     let id_refs: Vec<&str> = ids.iter().map(String::as_str).collect();
-    let declared = resolve_identity_from_params(system, base_dir, config, params)?;
-    let cfg = effective_config(config, declared.as_ref());
+    let cfg = config;
 
     let path = base_dir.join(file);
     operations::delete_comments(system, &path, cfg, &id_refs)?;
@@ -1643,8 +1505,7 @@ fn handle_edit(
         Some(Value::Null) | None => None,
         _ => anyhow::bail!("`remargin_kind`/`kind` must be an array of strings"),
     };
-    let declared = resolve_identity_from_params(system, base_dir, config, params)?;
-    let cfg = effective_config(config, declared.as_ref());
+    let cfg = config;
 
     let path = base_dir.join(file);
     operations::edit_comment(
@@ -1812,8 +1673,7 @@ fn handle_plan(
     params: &Map<String, Value>,
 ) -> Result<Value> {
     let op = required_str(params, "op")?;
-    let declared = resolve_identity_from_params(system, base_dir, config, params)?;
-    let cfg = effective_config(config, declared.as_ref());
+    let cfg = config;
 
     // `comment` needs an owned `InsertPosition` + attach refs that outlive
     // the `ProjectCommentParams` it feeds into — we stage them here so the
@@ -1951,11 +1811,8 @@ fn parse_plan_line_range(raw: &str) -> Result<(usize, usize)> {
     Ok((start, end))
 }
 
-/// Handle the `purge` tool: strip all comments from a document, or
-/// every visible `.md` file in a directory when `recursive` is true.
 /// Handle the `prompt_resolve` tool: walk-up the `.remargin.yaml`
-/// chain looking for a `system_prompt:` block. Read-only; identity
-/// flags are accepted (for surface symmetry) but never gate the walk.
+/// chain looking for a `system_prompt:` block. Read-only.
 fn handle_prompt_resolve(
     system: &dyn System,
     base_dir: &Path,
@@ -1991,8 +1848,7 @@ fn handle_prompt_set(
     let folder = resolve_folder_param(base_dir, params);
     let name = required_str(params, "name")?;
     let prompt = required_str(params, "prompt")?;
-    let declared = resolve_identity_from_params(system, base_dir, config, params)?;
-    let cfg = effective_config(config, declared.as_ref());
+    let cfg = config;
     let outcome = prompt_ops::set(system, &folder, Some(name), prompt, cfg)?;
     serde_json::to_value(&outcome).context("serializing prompt_set output")
 }
@@ -2004,8 +1860,7 @@ fn handle_prompt_delete(
     params: &Map<String, Value>,
 ) -> Result<Value> {
     let folder = resolve_folder_param(base_dir, params);
-    let declared = resolve_identity_from_params(system, base_dir, config, params)?;
-    let cfg = effective_config(config, declared.as_ref());
+    let cfg = config;
     let outcome = prompt_ops::delete(system, &folder, cfg)?;
     serde_json::to_value(&outcome).context("serializing prompt_delete output")
 }
@@ -2030,8 +1885,7 @@ fn handle_purge(
 ) -> Result<Value> {
     let file = required_str(params, "file")?;
     let recursive = optional_bool(params, "recursive");
-    let declared = resolve_identity_from_params(system, base_dir, config, params)?;
-    let cfg = effective_config(config, declared.as_ref());
+    let cfg = config;
 
     let path = base_dir.join(file);
 
@@ -2157,8 +2011,7 @@ fn handle_react(
     let comment_id = required_str(params, "id")?;
     let emoji = required_str(params, "emoji")?;
     let remove = optional_bool(params, "remove");
-    let declared = resolve_identity_from_params(system, base_dir, config, params)?;
-    let cfg = effective_config(config, declared.as_ref());
+    let cfg = config;
 
     let path = base_dir.join(file);
     operations::react(system, &path, cfg, comment_id, emoji, remove)?;
@@ -2204,8 +2057,7 @@ fn handle_sandbox_add(
     let file_strs = string_array(params, "files");
     let files: Vec<PathBuf> = file_strs.iter().map(|f| base_dir.join(f)).collect();
 
-    let declared = resolve_identity_from_params(system, base_dir, config, params)?;
-    let cfg = effective_config(config, declared.as_ref());
+    let cfg = config;
     let identity = cfg
         .identity
         .as_deref()
@@ -2225,8 +2077,7 @@ fn handle_sandbox_remove(
     let file_strs = string_array(params, "files");
     let files: Vec<PathBuf> = file_strs.iter().map(|f| base_dir.join(f)).collect();
 
-    let declared = resolve_identity_from_params(system, base_dir, config, params)?;
-    let cfg = effective_config(config, declared.as_ref());
+    let cfg = config;
     let identity = cfg
         .identity
         .as_deref()
@@ -2245,8 +2096,7 @@ fn handle_sandbox_list(
 ) -> Result<Value> {
     let root = base_dir.join(optional_str(params, "path").unwrap_or("."));
 
-    let declared = resolve_identity_from_params(system, base_dir, config, params)?;
-    let cfg = effective_config(config, declared.as_ref());
+    let cfg = config;
     let identity = cfg
         .identity
         .as_deref()
@@ -2361,8 +2211,7 @@ fn handle_sign(
     let selection = build_sign_selection(params, "sign")?;
     let repair_checksum = optional_bool(params, "repair_checksum");
 
-    let declared = resolve_identity_from_params(system, base_dir, config, params)?;
-    let cfg = effective_config(config, declared.as_ref());
+    let cfg = config;
 
     let path = base_dir.join(file);
     let options = operations::sign::SignOptions { repair_checksum };
@@ -2384,18 +2233,12 @@ fn handle_verify(
     Ok(report.to_json())
 }
 
-/// Handle the `whoami` tool. Mirrors `remargin identity show` —
-/// resolves the effective identity at `base_dir` under the per-call
-/// flags (defaults to no flags, which surfaces the startup
-/// identity). Soft-misses missing-config so the Obsidian plugin can
-/// poll on startup without seeing a hard error.
-fn handle_whoami(
-    system: &dyn System,
-    base_dir: &Path,
-    params: &Map<String, Value>,
-) -> Result<Value> {
-    let flags = identity_flags_from_params(params)?.unwrap_or_default();
-    let report = resolve_identity_report(system, base_dir, &flags)?;
+/// Handle the `whoami` tool. Returns the MCP server's startup
+/// identity. To project a different identity, use the CLI
+/// (`remargin identity show --identity X --type Y`). Soft-misses
+/// missing-config so polling clients don't see a hard error.
+fn handle_whoami(system: &dyn System, base_dir: &Path) -> Result<Value> {
+    let report = resolve_identity_report(system, base_dir, &IdentityFlags::default())?;
     serde_json::to_value(&report).context("serializing whoami report")
 }
 
@@ -2427,8 +2270,7 @@ fn handle_write(
         }
     };
 
-    let declared = resolve_identity_from_params(system, base_dir, config, params)?;
-    let cfg = effective_config(config, declared.as_ref());
+    let cfg = config;
 
     let opts = document::WriteOptions::new()
         .binary(binary)
@@ -2541,12 +2383,11 @@ fn process_message(
 ///
 /// `startup_flags` and `startup_assets_dir` carry the identity
 /// declaration and assets-dir value supplied on the `remargin mcp`
-/// command line. They are re-applied to every request so clients that
-/// don't pass per-tool identity fields inherit the server's declared
-/// default (instead of silently falling back to the walk-up's nearest
-/// `.remargin.yaml`). Per-tool identity declarations supplied in a
-/// tool-call's params supersede this default via
-/// [`resolve_identity_from_params`].
+/// command line. They are re-applied to every request so the server
+/// runs under its declared startup identity instead of falling back
+/// to the walk-up's nearest `.remargin.yaml`. Per-tool identity
+/// declarations are rejected on the MCP surface at the handler
+/// layer; use the CLI for per-call identity projection.
 ///
 /// # Errors
 ///
