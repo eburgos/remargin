@@ -198,4 +198,200 @@ mod tests {
         assert_eq!(obj.len(), 1);
         assert!(obj.contains_key("hookSpecificOutput"));
     }
+
+    fn run_pretool_args(args: &[&str], cwd: &Path, home: &Path) -> Output {
+        Command::cargo_bin("remargin")
+            .unwrap()
+            .current_dir(cwd)
+            .env("HOME", home)
+            .args(args)
+            .output()
+            .unwrap()
+    }
+
+    #[test]
+    fn pretool_install_local_writes_hook_to_project_settings() {
+        let realm = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+
+        let out = run_pretool_args(
+            &["claude", "pretool", "install", "--local"],
+            realm.path(),
+            home.path(),
+        );
+        assert!(
+            out.status.success(),
+            "install --local failed:\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr),
+        );
+
+        let settings_path = realm.path().join(".claude/settings.json");
+        let body = fs::read_to_string(&settings_path).unwrap();
+        let value: Value = serde_json::from_str(&body).unwrap();
+        let entries = value["hooks"]["PreToolUse"].as_array().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0]["hooks"][0]["command"].as_str().unwrap(),
+            "remargin claude pretool",
+        );
+    }
+
+    #[test]
+    fn pretool_install_user_writes_hook_to_home_settings() {
+        let realm = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+
+        let out = run_pretool_args(&["claude", "pretool", "install"], realm.path(), home.path());
+        assert!(
+            out.status.success(),
+            "install (user) failed:\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr),
+        );
+
+        let settings_path = home.path().join(".claude/settings.json");
+        let body = fs::read_to_string(&settings_path).unwrap();
+        let value: Value = serde_json::from_str(&body).unwrap();
+        assert!(value["hooks"]["PreToolUse"].is_array());
+    }
+
+    #[test]
+    fn pretool_install_is_idempotent() {
+        let realm = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+
+        run_pretool_args(
+            &["claude", "pretool", "install", "--local"],
+            realm.path(),
+            home.path(),
+        );
+        let second = run_pretool_args(
+            &["claude", "pretool", "--json", "install", "--local"],
+            realm.path(),
+            home.path(),
+        );
+        assert!(second.status.success());
+        let stdout = String::from_utf8(second.stdout).unwrap();
+        let payload: Value = serde_json::from_str(&stdout).unwrap();
+        assert_eq!(payload["status"].as_str().unwrap(), "already_installed");
+
+        let body = fs::read_to_string(realm.path().join(".claude/settings.json")).unwrap();
+        let value: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(value["hooks"]["PreToolUse"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn pretool_test_reports_install_state() {
+        let realm = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+
+        let before = run_pretool_args(
+            &["claude", "pretool", "--json", "test", "--local"],
+            realm.path(),
+            home.path(),
+        );
+        let before_json: Value = serde_json::from_slice(&before.stdout).unwrap();
+        assert_eq!(before_json["status"].as_str().unwrap(), "not_installed");
+
+        run_pretool_args(
+            &["claude", "pretool", "install", "--local"],
+            realm.path(),
+            home.path(),
+        );
+
+        let after = run_pretool_args(
+            &["claude", "pretool", "--json", "test", "--local"],
+            realm.path(),
+            home.path(),
+        );
+        let after_json: Value = serde_json::from_slice(&after.stdout).unwrap();
+        assert_eq!(after_json["status"].as_str().unwrap(), "installed");
+    }
+
+    #[test]
+    fn pretool_uninstall_removes_only_remargin_entry() {
+        let realm = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+
+        // Pre-seed settings with a foreign PreToolUse entry alongside.
+        let settings_dir = realm.path().join(".claude");
+        fs::create_dir_all(&settings_dir).unwrap();
+        let initial = json!({
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Bash",
+                        "hooks": [
+                            { "type": "command", "command": "other-tool" },
+                        ],
+                    },
+                ],
+            },
+        });
+        fs::write(
+            settings_dir.join("settings.json"),
+            serde_json::to_string_pretty(&initial).unwrap(),
+        )
+        .unwrap();
+
+        run_pretool_args(
+            &["claude", "pretool", "install", "--local"],
+            realm.path(),
+            home.path(),
+        );
+        let out = run_pretool_args(
+            &["claude", "pretool", "--json", "uninstall", "--local"],
+            realm.path(),
+            home.path(),
+        );
+        assert!(out.status.success());
+        let payload: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(payload["status"].as_str().unwrap(), "uninstalled");
+
+        let body = fs::read_to_string(settings_dir.join("settings.json")).unwrap();
+        let value: Value = serde_json::from_str(&body).unwrap();
+        let entries = value["hooks"]["PreToolUse"].as_array().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0]["hooks"][0]["command"].as_str().unwrap(),
+            "other-tool",
+        );
+    }
+
+    #[test]
+    fn pretool_uninstall_is_idempotent_when_not_installed() {
+        let realm = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+
+        let out = run_pretool_args(
+            &["claude", "pretool", "--json", "uninstall", "--local"],
+            realm.path(),
+            home.path(),
+        );
+        assert!(out.status.success());
+        let payload: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(payload["status"].as_str().unwrap(), "not_installed");
+    }
+
+    #[test]
+    fn bare_pretool_still_runs_the_dispatcher() {
+        let realm = realm_with_claude();
+        fs::create_dir_all(realm.path().join("secret")).unwrap();
+        let user_settings = realm.path().join("hermetic-user-settings.json");
+        restrict_in(realm.path(), "secret", &user_settings);
+
+        let target = realm.path().join("secret/foo.md");
+        let stdin = envelope("Read", realm.path(), &json!({ "file_path": target }));
+
+        // Same as run_pretool, but explicitly the no-subcommand form.
+        let out = run_pretool(&stdin);
+        assert_eq!(out.status.code(), Some(0_i32));
+        let stdout = String::from_utf8(out.stdout).unwrap();
+        let payload: Value = serde_json::from_str(&stdout).unwrap();
+        assert_eq!(
+            payload["hookSpecificOutput"]["permissionDecision"],
+            json!("deny"),
+        );
+    }
 }

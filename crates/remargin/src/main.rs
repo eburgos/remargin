@@ -40,6 +40,7 @@ use remargin_core::path::expand_path;
 use remargin_core::permissions::claude_sync::rule_shape::OverlapKind;
 use remargin_core::permissions::inspect as permissions_inspect;
 use remargin_core::permissions::pretool::{PretoolOutcome, pretool};
+use remargin_core::permissions::pretool_install;
 use remargin_core::permissions::restrict as permissions_restrict;
 use remargin_core::permissions::unprotect as permissions_unprotect;
 use remargin_core::responses;
@@ -800,16 +801,15 @@ enum ClaudeAction {
         #[command(flatten)]
         output_args: OutputArgs,
     },
-    /// Claude Code `PreToolUse` hook dispatcher.
+    /// Claude Code `PreToolUse` hook surface.
     ///
-    /// Reads a `PreToolUse` event JSON envelope from stdin, extracts
-    /// the path(s) the tool is about to touch, and emits Claude
-    /// Code's `PreToolUse` decision JSON on stdout. Silent allow for
-    /// paths outside the realm's `trusted_roots`; deny with a per-tool
-    /// contextual message for paths inside it (redirecting Claude at
-    /// the right `mcp__remargin__*` op). Fail closed: any internal
-    /// error exits 2 so Claude Code blocks the tool call.
+    /// With no subcommand (or `dispatch`), reads a `PreToolUse` event
+    /// JSON envelope from stdin and emits Claude Code's decision JSON
+    /// on stdout. `install` / `uninstall` / `test` manage the hook
+    /// entry in the target Claude settings file.
     Pretool {
+        #[command(subcommand)]
+        action: Option<PretoolAction>,
         #[command(flatten)]
         output_args: OutputArgs,
     },
@@ -1278,6 +1278,29 @@ enum SandboxAction {
     },
 }
 
+/// `remargin claude pretool` subcommands.
+#[derive(clap::Subcommand)]
+enum PretoolAction {
+    /// Read a `PreToolUse` event from stdin and emit the decision JSON.
+    Dispatch,
+    /// Wire the `PreToolUse` hook into `~/.claude/settings.json`
+    /// (default) or `.claude/settings.json` with `--local`.
+    Install {
+        #[arg(long)]
+        local: bool,
+    },
+    /// Report whether the `PreToolUse` hook is wired.
+    Test {
+        #[arg(long)]
+        local: bool,
+    },
+    /// Remove the `PreToolUse` hook entry. Preserves unrelated entries.
+    Uninstall {
+        #[arg(long)]
+        local: bool,
+    },
+}
+
 /// Plugin subcommands.
 #[derive(clap::Subcommand)]
 enum PluginAction {
@@ -1741,7 +1764,7 @@ const fn subcommand_output(cmd: &Commands) -> Option<&OutputArgs> {
 const fn claude_action_output(action: &ClaudeAction) -> &OutputArgs {
     match action {
         ClaudeAction::Plugin { output_args, .. }
-        | ClaudeAction::Pretool { output_args }
+        | ClaudeAction::Pretool { output_args, .. }
         | ClaudeAction::Restrict { output_args, .. }
         | ClaudeAction::Unrestrict { output_args, .. } => output_args,
     }
@@ -2370,7 +2393,10 @@ fn handle_claude(
             action: plugin_action,
             output_args,
         } => handle_plugin(sinks, plugin_action, output_args),
-        ClaudeAction::Pretool { .. } => handle_claude_pretool(sinks, system),
+        ClaudeAction::Pretool {
+            action: pretool_action,
+            output_args,
+        } => handle_claude_pretool_action(sinks, system, pretool_action.as_ref(), output_args.json),
         ClaudeAction::Restrict {
             path,
             also_deny_bash,
@@ -2404,12 +2430,34 @@ fn handle_claude(
     }
 }
 
+/// Route `remargin claude pretool [subcommand]`. With no subcommand
+/// (or `dispatch`), runs the stdin/stdout hook dispatcher. The
+/// install / uninstall / test variants manage the hook entry in a
+/// Claude settings file.
+fn handle_claude_pretool_action(
+    sinks: &mut IoSinks<'_>,
+    system: &dyn System,
+    action: Option<&PretoolAction>,
+    json_mode: bool,
+) -> Result<()> {
+    match action {
+        None | Some(PretoolAction::Dispatch) => handle_claude_pretool_dispatch(sinks, system),
+        Some(PretoolAction::Install { local }) => {
+            cmd_pretool_install(sinks, system, *local, json_mode)
+        }
+        Some(PretoolAction::Uninstall { local }) => {
+            cmd_pretool_uninstall(sinks, system, *local, json_mode)
+        }
+        Some(PretoolAction::Test { local }) => cmd_pretool_test(sinks, system, *local, json_mode),
+    }
+}
+
 /// Reads the `PreToolUse` event JSON from stdin, runs the core
 /// [`remargin_core::permissions::pretool::pretool`] function, and
 /// emits the outcome. Fail-closed: any failure exits via
 /// [`anyhow::bail!`] so the surrounding runner returns a non-zero
 /// status (mapped to Claude Code's blocking semantics).
-fn handle_claude_pretool(sinks: &mut IoSinks<'_>, system: &dyn System) -> Result<()> {
+fn handle_claude_pretool_dispatch(sinks: &mut IoSinks<'_>, system: &dyn System) -> Result<()> {
     let mut buf = Vec::new();
     io::stdin()
         .read_to_end(&mut buf)
@@ -2425,6 +2473,126 @@ fn handle_claude_pretool(sinks: &mut IoSinks<'_>, system: &dyn System) -> Result
             "{PRETOOL_FAIL_SENTINEL}unexpected pretool outcome",
         )),
     }
+}
+
+fn pretool_settings_path(system: &dyn System, cwd: &Path, local: bool) -> Result<PathBuf> {
+    if local {
+        Ok(cwd.join(".claude/settings.json"))
+    } else {
+        expand_cli_path(system, DEFAULT_USER_SETTINGS)
+    }
+}
+
+fn cmd_pretool_install(
+    sinks: &mut IoSinks<'_>,
+    system: &dyn System,
+    local: bool,
+    json_mode: bool,
+) -> Result<()> {
+    let cwd = env::current_dir().context("resolving current directory")?;
+    let path = pretool_settings_path(system, &cwd, local)?;
+    let outcome = pretool_install::install(system, &path)?;
+    let scope = scope_label(local);
+    let status = match outcome {
+        pretool_install::InstallOutcome::AlreadyInstalled => "already_installed",
+        pretool_install::InstallOutcome::Installed => "installed",
+        _ => "unknown",
+    };
+    if json_mode {
+        print_output(
+            sinks,
+            true,
+            &json!({
+                "status": status,
+                "scope": scope,
+                "settings_file": path.display().to_string(),
+            }),
+        )
+    } else {
+        writeln!(
+            sinks.stderr,
+            "PreToolUse hook ({scope}): {status} at {}",
+            path.display(),
+        )
+        .context("writing to stderr")?;
+        Ok(())
+    }
+}
+
+fn cmd_pretool_uninstall(
+    sinks: &mut IoSinks<'_>,
+    system: &dyn System,
+    local: bool,
+    json_mode: bool,
+) -> Result<()> {
+    let cwd = env::current_dir().context("resolving current directory")?;
+    let path = pretool_settings_path(system, &cwd, local)?;
+    let outcome = pretool_install::uninstall(system, &path)?;
+    let scope = scope_label(local);
+    let status = match outcome {
+        pretool_install::UninstallOutcome::NotInstalled => "not_installed",
+        pretool_install::UninstallOutcome::Uninstalled => "uninstalled",
+        _ => "unknown",
+    };
+    if json_mode {
+        print_output(
+            sinks,
+            true,
+            &json!({
+                "status": status,
+                "scope": scope,
+                "settings_file": path.display().to_string(),
+            }),
+        )
+    } else {
+        writeln!(
+            sinks.stderr,
+            "PreToolUse hook ({scope}): {status} at {}",
+            path.display(),
+        )
+        .context("writing to stderr")?;
+        Ok(())
+    }
+}
+
+fn cmd_pretool_test(
+    sinks: &mut IoSinks<'_>,
+    system: &dyn System,
+    local: bool,
+    json_mode: bool,
+) -> Result<()> {
+    let cwd = env::current_dir().context("resolving current directory")?;
+    let path = pretool_settings_path(system, &cwd, local)?;
+    let outcome = pretool_install::test(system, &path)?;
+    let scope = scope_label(local);
+    let status = match outcome {
+        pretool_install::TestOutcome::Installed => "installed",
+        pretool_install::TestOutcome::NotInstalled => "not_installed",
+        _ => "unknown",
+    };
+    if json_mode {
+        print_output(
+            sinks,
+            true,
+            &json!({
+                "status": status,
+                "scope": scope,
+                "settings_file": path.display().to_string(),
+            }),
+        )
+    } else {
+        writeln!(
+            sinks.stderr,
+            "PreToolUse hook ({scope}): {status} at {}",
+            path.display(),
+        )
+        .context("writing to stderr")?;
+        Ok(())
+    }
+}
+
+const fn scope_label(local: bool) -> &'static str {
+    if local { "project" } else { "user" }
 }
 
 fn dispatch_with_config(
