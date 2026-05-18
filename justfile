@@ -51,9 +51,10 @@ install-obsidian vault: build-ts
     @echo "Installed to {{vault}}/.obsidian/plugins/remargin"
 
 # Propagate Cargo's workspace version into the Obsidian plugin's
-# manifest.json and package.json using jq. Cargo.toml is the single source
-# of truth for the plugin version; these JSON files are derived. Idempotent:
-# when the files already match Cargo, this recipe is a no-op.
+# manifest.json and package.json AND the Claude Code plugin's manifest +
+# marketplace entry using jq. Cargo.toml is the single source of truth for
+# the plugin version; these JSON files are derived. Idempotent: when the
+# files already match Cargo, this recipe is a no-op.
 sync-versions:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -62,7 +63,7 @@ sync-versions:
         echo "error: failed to extract remargin version from cargo metadata" >&2
         exit 1
     fi
-    for file in packages/remargin-obsidian/manifest.json packages/remargin-obsidian/package.json; do
+    for file in packages/remargin-obsidian/manifest.json packages/remargin-obsidian/package.json claude-plugin/.claude-plugin/plugin.json; do
         current=$(jq -r '.version' "${file}")
         if [ "${current}" = "${VERSION}" ]; then
             echo "${file}: ${VERSION} (already in sync)"
@@ -73,6 +74,17 @@ sync-versions:
             echo "${file}: ${current} -> ${VERSION}"
         fi
     done
+    # Marketplace entry: version lives under .plugins[].version, matched by name.
+    market=.claude-plugin/marketplace.json
+    current=$(jq -r '.plugins[] | select(.name=="remargin") | .version' "${market}")
+    if [ "${current}" = "${VERSION}" ]; then
+        echo "${market}: ${VERSION} (already in sync)"
+    else
+        tmp=$(mktemp)
+        jq --indent 2 --arg v "${VERSION}" '.plugins |= map(if .name == "remargin" then .version = $v else . end)' "${market}" > "${tmp}"
+        mv "${tmp}" "${market}"
+        echo "${market}: ${current} -> ${VERSION}"
+    fi
 
 # Publish the Obsidian plugin as a GitHub release tagged obsidian-v<version>.
 # Runs sync-versions first so manifest.json and package.json always reflect

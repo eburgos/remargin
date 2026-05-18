@@ -10,7 +10,7 @@
       "name": "remargin",
       "source": "./claude-plugin",
       "description": "Process sandboxed and individual managed markdown files in a remargin vault. Provides /remargin:process-file and /remargin:process-sandbox-group slash commands and a natural-language skill layer.",
-      "version": "0.1.0"
+      "version": "0.1.12"
     }
   ]
 }
