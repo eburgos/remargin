@@ -108,6 +108,14 @@ stop at the first match:
 10. **Never delete other participants' comments** to unblock your own op. Find another path or ask the user.
 11. **Always run `remargin activity` (or `/remargin:activity`) BEFORE processing comments — pending comments are only one signal.** Activity surfaces the full delta since you last acted on each file: comments addressed to you, comments addressed to others, broadcast comments, new acks on threads you participate in, reactions added/removed, comment edits, signatures landed on previously-unsigned comments, sandbox-adds by other identities. Replying to your pending queue without checking activity means you miss context that may change what your reply should say — e.g. someone else already answered, a thread you're in just got new participants, an edit invalidated the assumption behind your draft. Do not hand-roll timestamps from `comments` / `query` for this purpose; those tools don't compute the per-file caller-last-action cutoff and don't fold edits / reactions / sandbox refreshes into a single change list.
 12. **Each participant owns their own ack queue.** Don't ack on someone else's behalf, and never advise them to leave a comment unacked — their queue is their decision. You may deliberately leave your own reply unacked to keep it visible in your own pending queue.
+13. **Comments are markdown — write them as markdown.** Every comment body (new comments, replies, edits) renders as markdown for human readers. Use markdown formatting where it helps readability:
+    - Inline `` `code` `` for paths, identifiers, op names, commands.
+    - Fenced code blocks for multi-line code, YAML, JSON, command output.
+    - Bullet or numbered lists for enumerations.
+    - **Bold** or *italic* for emphasis on a phrase, not whole paragraphs.
+    - Markdown links (`[label](url)`) when pointing at external references.
+
+    Don't over-decorate plain prose — a one-line answer stays a one-line answer. The bar is readability for a human scanning a thread, not styling for its own sake.
 
 ---
 
