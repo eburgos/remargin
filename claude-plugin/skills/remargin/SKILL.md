@@ -116,6 +116,7 @@ stop at the first match:
     - Markdown links (`[label](url)`) when pointing at external references.
 
     Don't over-decorate plain prose — a one-line answer stays a one-line answer. The bar is readability for a human scanning a thread, not styling for its own sake.
+14. **Prefer partial writes over rewriting the whole file.** `write` accepts `start_line` / `end_line` (1-indexed, inclusive) to replace just a line range while leaving the rest of the file untouched. Use this whenever you're changing a few lines, fixing a section, or updating one paragraph in a large doc. Rewriting the whole file forces you to carry the entire body in your context (slow, expensive, and one typo can corrupt the rest). Comment preservation, frontmatter handling, and the verify gate all run identically on partial writes. Reserve whole-file `write` for new files (`create=true`) or genuine wholesale rewrites.
 
 ---
 
@@ -194,8 +195,8 @@ remargin batch --ops '[
 | Read with line numbers | `get path=... line_numbers=true` |
 | Read binary (non-md) | `get binary=true` (run `metadata` first to check `size_bytes`) |
 | Search text | `search pattern=... [scope=all|body|comments] [regex=true]` |
-| Replace whole file | `write path=... content=...` (comment-preserving) |
-| Replace a line range | `write path=... start_line=N end_line=M content=...` |
+| Replace a line range (preferred for edits) | `write path=... start_line=N end_line=M content=...` |
+| Replace whole file (rare — usually wrong for edits) | `write path=... content=...` (comment-preserving) |
 | Create a new file | `write path=... content=... create=true` |
 | Write non-markdown | `write path=... content=... raw=true` |
 | Delete a file | `rm path=...` |
@@ -335,6 +336,8 @@ Each is a concrete failure mode that has bitten a session.
 ❌ **`write` that drops comments to unblock yourself.** If preservation fails, re-read with `get`, rebuild correct content, retry. Never delete others' comments.
 
 ❌ **Rewriting a file to "fix" a verify mismatch.** That's the symptom, not the cause. Surface to the user.
+
+❌ **Rewriting the whole file when you only need to change a few lines.** `write` accepts `start_line` + `end_line` for partial writes that leave the rest of the file untouched. Use the partial form; reserve whole-file writes for new files (`create=true`) or genuine wholesale rewrites.
 
 ---
 
