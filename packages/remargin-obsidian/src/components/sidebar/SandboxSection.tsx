@@ -25,7 +25,6 @@ import {
 } from "@/components/sidebar/InlinePromptEditor";
 import { SandboxGroupHeader } from "@/components/sidebar/SandboxGroupHeader";
 import { SandboxRow } from "@/components/sidebar/SandboxRow";
-import { Button } from "@/components/ui/button";
 import { ObsidianIcon } from "@/components/ui/ObsidianIcon";
 import { useBackend } from "@/hooks/useBackend";
 import { buildFileTree, type FileTreeNode } from "@/lib/buildFileTree";
@@ -393,14 +392,10 @@ export function SandboxSection({
   }
 
   return (
-    <div className="flex flex-col min-w-0">
-      {error && (
-        <div className="px-4 py-2 text-[10px] text-red-400 font-mono whitespace-pre-wrap break-words">
-          {error}
-        </div>
-      )}
+    <div className="remargin-sandbox">
+      {error && <div className="remargin-sandbox__error">{error}</div>}
 
-      <div className="flex flex-col min-w-0">
+      <div className="rmg-l1-body">
         {groups.map((group) => {
           const key = group.source ?? DEFAULT_GROUP_KEY;
           return (
@@ -435,21 +430,22 @@ export function SandboxSection({
             />
           );
         })}
-      </div>
 
-      {submitAllCount > 0 && (
-        <div className="flex items-center justify-end px-4 py-2 border-t border-bg-border">
-          <Button
-            size="sm"
-            className="h-7 px-3 text-xs bg-accent text-white hover:bg-accent-hover"
-            disabled={!!submitting}
-            onClick={() => void handleSubmitAll()}
-          >
-            <Send className="w-3 h-3 mr-1" />
-            {submitting ? "Submitting..." : `Submit all (${submitAllCount})`}
-          </Button>
-        </div>
-      )}
+        {submitAllCount > 0 && (
+          <div className="rmg-l1__action">
+            <button
+              type="button"
+              className="rmg-btn-submit rmg-btn-submit--primary"
+              disabled={!!submitting}
+              onClick={() => void handleSubmitAll()}
+            >
+              <Send />
+              <span>{submitting ? "Submitting…" : "Submit all"}</span>
+              {!submitting && <span className="rmg-btn-submit__num">{submitAllCount}</span>}
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -622,88 +618,94 @@ export function PromptGroupSection({
   const scopeDisplay = formatScopeRelative(group.scope, vaultRoot);
 
   return (
-    <div className="flex flex-col">
+    <section className="rmg-l2" aria-label={group.name}>
       <div
-        className="flex flex-col gap-0.5 pl-7 pr-3 py-2 cursor-pointer select-none hover:bg-bg-hover"
+        className="rmg-l2__head"
+        data-open={headerOpen ? "true" : "false"}
+        role="button"
+        tabIndex={0}
         onClick={() => setHeaderOpen((v) => !v)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setHeaderOpen((v) => !v);
+          }
+        }}
         title={group.hasError ? group.errorMessage : undefined}
       >
-        <div className="flex items-center justify-between gap-2 min-w-0">
-          <div className="flex items-center gap-1.5 min-w-0">
-            <HeaderChevron className="w-3 h-3 text-text-faint shrink-0" />
-            <PromptIcon className="w-3 h-3 text-text-faint shrink-0" />
-            <span className="text-xs font-semibold text-text-normal truncate">{group.name}</span>
-            <span className="inline-flex items-center justify-center min-w-4 h-4 px-1.5 text-[9px] text-text-muted bg-bg-border rounded-full shrink-0">
-              {group.files.length}
+        <HeaderChevron className="rmg-l2__chev" />
+        <div className="rmg-l2__title-wrap">
+          <PromptIcon className="rmg-l2__icon" />
+          <span className="rmg-l2__title">{group.name}</span>
+          <span className="rmg-l2__count">{group.files.length}</span>
+          {status === "pending" && (
+            <span className="rmg-l2__status rmg-l2__status--pending">
+              <Loader2 className="animate-spin" aria-label="Submitting" />
             </span>
-            {status === "pending" && (
-              <Loader2
-                className="w-3 h-3 text-text-faint shrink-0 animate-spin"
-                aria-label="Submitting"
-              />
-            )}
-            {status === "ok" && (
-              <Check className="w-3 h-3 text-green-500 shrink-0" aria-label="Submitted" />
-            )}
-            {status === "failed" &&
-              (logPath && onOpenLog ? (
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1 shrink-0 px-1 py-0.5 rounded-sm border border-red-400 text-red-400 hover:bg-red-500/10"
-                  title={firstErrorLine(statusError) ?? "Open submit log"}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onOpenLog(logPath);
-                  }}
-                  aria-label="Open submit log"
-                >
-                  <TriangleAlert className="w-3 h-3 shrink-0" />
-                  <span className="text-[9px] font-semibold underline">open log</span>
-                </button>
-              ) : (
-                <span title={statusError} className="inline-flex shrink-0">
-                  <TriangleAlert
-                    className="w-3 h-3 text-red-400 shrink-0"
-                    aria-label="Submit failed"
-                  />
-                </span>
-              ))}
-          </div>
-          <div className="flex items-center gap-0.5 shrink-0">
-            {group.isDefault && !group.hasError && !editing && (
+          )}
+          {status === "ok" && (
+            <span className="rmg-l2__status rmg-l2__status--ok text-green-500">
+              <Check aria-label="Submitted" />
+            </span>
+          )}
+          {status === "failed" &&
+            (logPath && onOpenLog ? (
               <button
                 type="button"
-                className="text-[10px] text-text-faint hover:text-text-normal px-1 py-0.5"
-                title="Configure prompt"
+                className="rmg-icon-btn rmg-icon-btn--sm rmg-l2__status rmg-l2__status--fail text-red-400"
+                title={firstErrorLine(statusError) ?? "Open submit log"}
                 onClick={(e) => {
                   e.stopPropagation();
-                  setEditing(true);
-                  setHeaderOpen(true);
+                  onOpenLog(logPath);
                 }}
+                aria-label="Open submit log"
               >
-                + Configure
+                <TriangleAlert />
               </button>
-            )}
-            {!group.hasError && (
-              <button
-                type="button"
-                className="flex items-center justify-center w-5 h-5 rounded-sm text-text-faint hover:text-text-normal hover:bg-bg-border"
-                title={editing ? "Close editor" : "Edit prompt"}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setEditing((v) => !v);
-                  setHeaderOpen(true);
-                }}
+            ) : (
+              <span
+                className="rmg-l2__status rmg-l2__status--fail text-red-400"
+                title={statusError}
               >
-                <ObsidianIcon icon="settings" size={12} />
-              </button>
-            )}
-          </div>
+                <TriangleAlert aria-label="Submit failed" />
+              </span>
+            ))}
         </div>
-        <div className="pl-[36px] text-[10px] text-text-faint truncate" title={group.scope}>
-          {scopeDisplay}
+        <div className="rmg-l2__actions">
+          {group.isDefault && !group.hasError && !editing && (
+            <button
+              type="button"
+              className="rmg-l2__configure"
+              title="Configure prompt"
+              onClick={(e) => {
+                e.stopPropagation();
+                setEditing(true);
+                setHeaderOpen(true);
+              }}
+            >
+              + Configure
+            </button>
+          )}
+          {!group.hasError && (
+            <button
+              type="button"
+              className="rmg-icon-btn rmg-icon-btn--sm"
+              title={editing ? "Close editor" : "Edit prompt"}
+              aria-label={editing ? "Close editor" : "Edit prompt"}
+              onClick={(e) => {
+                e.stopPropagation();
+                setEditing((v) => !v);
+                setHeaderOpen(true);
+              }}
+            >
+              <ObsidianIcon icon="settings" size={12} />
+            </button>
+          )}
         </div>
       </div>
+      <span className="rmg-l2__path" title={group.scope}>
+        {scopeDisplay}
+      </span>
 
       {headerOpen && editing && onSavePrompt && (
         <InlinePromptEditor
@@ -721,91 +723,108 @@ export function PromptGroupSection({
 
       {headerOpen && (
         <>
-          <SandboxGroupHeader
-            label="Staged"
-            count={group.staged.length}
-            open={stagedOpen}
-            onToggleOpen={onToggleStagedOpen}
-            leftBulkIcon="check-check"
-            leftBulkTitle="Toggle select all staged"
-            onLeftBulk={() => onSelectAll(group.staged)}
-            rightBulkIcon="minus"
-            rightBulkTitle="Unstage selected (or all)"
-            onRightBulk={unstageSelectedOrAll}
-            disabled={group.staged.length === 0 || group.hasError}
-          />
-          {stagedOpen && viewMode === "flat"
-            ? group.staged.map((file) => (
-                <SandboxRow
-                  key={`s:${file}`}
-                  path={file}
-                  variant="staged"
-                  selected={selected.has(file)}
-                  onToggleSelected={onToggleSelected}
-                  onOpenFile={onOpenFile}
-                />
-              ))
-            : stagedOpen && (
-                <SandboxTreeGroup
-                  files={group.staged}
-                  variant="staged"
-                  selected={selected}
-                  onToggleSelected={onToggleSelected}
-                  onOpenFile={onOpenFile}
-                />
-              )}
-          {stagedOpen && onSubmitGroup && (
-            <div className="flex items-center justify-end px-4 py-2">
-              <Button
-                size="sm"
-                className="h-7 px-3 text-xs bg-accent text-white hover:bg-accent-hover"
-                disabled={group.staged.length === 0 || group.hasError || !!submitting}
-                onClick={() => void onSubmitGroup(group)}
-              >
-                <Send className="w-3 h-3 mr-1" />
-                {submitting ? "Submitting..." : `Submit (${group.staged.length})`}
-              </Button>
-            </div>
-          )}
+          {/* ====== L3: Staged ====== */}
+          <section className="rmg-l3 rmg-l3--staged" aria-label="Staged files">
+            <SandboxGroupHeader
+              label="Staged"
+              count={group.staged.length}
+              open={stagedOpen}
+              onToggleOpen={onToggleStagedOpen}
+              leftBulkIcon="square-check"
+              leftBulkTitle="Select all"
+              onLeftBulk={() => onSelectAll(group.staged)}
+              rightBulkIcon="arrow-down-to-line"
+              rightBulkTitle="Unstage selected"
+              onRightBulk={unstageSelectedOrAll}
+              disabled={group.staged.length === 0 || group.hasError}
+            />
+            {stagedOpen && (
+              <div className="rmg-l3__body">
+                {viewMode === "flat" ? (
+                  group.staged.map((file) => (
+                    <SandboxRow
+                      key={`s:${file}`}
+                      path={file}
+                      variant="staged"
+                      selected={selected.has(file)}
+                      onToggleSelected={onToggleSelected}
+                      onOpenFile={onOpenFile}
+                    />
+                  ))
+                ) : (
+                  <SandboxTreeGroup
+                    files={group.staged}
+                    variant="staged"
+                    selected={selected}
+                    onToggleSelected={onToggleSelected}
+                    onOpenFile={onOpenFile}
+                  />
+                )}
+              </div>
+            )}
+            {stagedOpen && onSubmitGroup && (
+              <div className="rmg-l3__action">
+                <button
+                  type="button"
+                  className="rmg-btn-submit"
+                  disabled={group.staged.length === 0 || group.hasError || !!submitting}
+                  onClick={() => void onSubmitGroup(group)}
+                >
+                  <Send />
+                  <span>{submitting ? "Submitting…" : "Submit"}</span>
+                  {!submitting && group.staged.length > 0 && (
+                    <span className="rmg-btn-submit__num">{group.staged.length}</span>
+                  )}
+                </button>
+              </div>
+            )}
+          </section>
 
-          <SandboxGroupHeader
-            label="Unstaged"
-            count={group.unstaged.length}
-            open={unstagedOpen}
-            onToggleOpen={onToggleUnstagedOpen}
-            leftBulkIcon="plus"
-            leftBulkTitle="Stage selected (or all)"
-            onLeftBulk={stageSelectedOrAll}
-            rightBulkIcon="check-check"
-            rightBulkTitle="Stage everything unstaged"
-            onRightBulk={() => onStageBulk(group.unstaged)}
-            disabled={group.unstaged.length === 0 || group.hasError}
-          />
-          {unstagedOpen && viewMode === "flat"
-            ? group.unstaged.map((file) => (
-                <SandboxRow
-                  key={`u:${file}`}
-                  path={file}
-                  variant="unstaged"
-                  selected={selected.has(file)}
-                  onToggleSelected={onToggleSelected}
-                  onOpenFile={onOpenFile}
-                  onRemoveFile={onRemoveFile}
-                />
-              ))
-            : unstagedOpen && (
-                <SandboxTreeGroup
-                  files={group.unstaged}
-                  variant="unstaged"
-                  selected={selected}
-                  onToggleSelected={onToggleSelected}
-                  onOpenFile={onOpenFile}
-                  onRemoveFile={onRemoveFile}
-                />
-              )}
+          {/* ====== L3: Unstaged ====== */}
+          <section className="rmg-l3 rmg-l3--unstaged" aria-label="Unstaged files">
+            <SandboxGroupHeader
+              label="Unstaged"
+              count={group.unstaged.length}
+              open={unstagedOpen}
+              onToggleOpen={onToggleUnstagedOpen}
+              leftBulkIcon="arrow-up-to-line"
+              leftBulkTitle="Stage selected"
+              onLeftBulk={stageSelectedOrAll}
+              rightBulkIcon="chevrons-up"
+              rightBulkTitle="Stage all unstaged"
+              onRightBulk={() => onStageBulk(group.unstaged)}
+              disabled={group.unstaged.length === 0 || group.hasError}
+            />
+            {unstagedOpen && (
+              <div className="rmg-l3__body">
+                {viewMode === "flat" ? (
+                  group.unstaged.map((file) => (
+                    <SandboxRow
+                      key={`u:${file}`}
+                      path={file}
+                      variant="unstaged"
+                      selected={selected.has(file)}
+                      onToggleSelected={onToggleSelected}
+                      onOpenFile={onOpenFile}
+                      onRemoveFile={onRemoveFile}
+                    />
+                  ))
+                ) : (
+                  <SandboxTreeGroup
+                    files={group.unstaged}
+                    variant="unstaged"
+                    selected={selected}
+                    onToggleSelected={onToggleSelected}
+                    onOpenFile={onOpenFile}
+                    onRemoveFile={onRemoveFile}
+                  />
+                )}
+              </div>
+            )}
+          </section>
         </>
       )}
-    </div>
+    </section>
   );
 }
 
@@ -872,13 +891,21 @@ function SandboxTreeNode({
   return (
     <>
       <div
-        className="group flex items-center gap-1.5 py-1 pr-4 hover:bg-bg-hover cursor-pointer"
-        style={{ paddingLeft: `${24 + depth * 16}px` }}
+        className="rmg-sandbox-folder"
+        style={{ paddingLeft: `${4 + depth * 16}px` }}
+        role="button"
+        tabIndex={0}
         onClick={() => setExpanded((v) => !v)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setExpanded((v) => !v);
+          }
+        }}
       >
-        <Chevron className="w-3 h-3 text-text-faint shrink-0" />
-        <Folder className="w-3 h-3 text-text-faint shrink-0" />
-        <span className="flex-1 text-xs font-mono text-text-muted truncate">{node.name}</span>
+        <Chevron />
+        <Folder />
+        <span className="rmg-sandbox-folder__name">{node.name}</span>
       </div>
       {expanded &&
         node.children.map((child) => (

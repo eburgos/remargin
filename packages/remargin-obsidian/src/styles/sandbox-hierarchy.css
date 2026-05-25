@@ -1,0 +1,555 @@
+/* ========================================================================
+ * Remargin — Sandbox hierarchy (defensive, Obsidian-proof)
+ * ------------------------------------------------------------------------
+ * Every rule is scoped under `.remargin-container .rmg-*` (or
+ * `.remargin-container .remargin-sandbox`) so Obsidian's app.css can't
+ * casually win the cascade. Specificity here is intentionally a notch
+ * above typical Obsidian selectors.
+ *
+ * `!important` is used ONLY where Obsidian sets a property on a generic
+ * element selector (e.g. button { background }, button { cursor }) that
+ * our class can't outrank without it. Layout / typography on our own
+ * .rmg-* classes is left without !important so designers can override.
+ *
+ * Color strategy:
+ *   - Brand purple + accent amber + semantic red/green = OUR tokens.
+ *   - Surface / text fall back to Obsidian theme vars
+ *     (--background-primary, --text-normal, --text-faint, etc.) so the
+ *     panel still feels native when the user flips light/dark themes.
+ * ====================================================================== */
+
+.remargin-container .remargin-sandbox {
+  /* Brand */
+  --rmg-brand: #7f6df2;
+  --rmg-brand-strong: #6f5be8;
+  --rmg-brand-soft: #a89af7;
+  --rmg-brand-bg: rgba(127, 109, 242, 0.1);
+  --rmg-brand-border: rgba(127, 109, 242, 0.35);
+
+  /* Accent — protocol-identifier amber */
+  --rmg-amber: #d4a017;
+  --rmg-amber-bg: rgba(212, 160, 23, 0.1);
+  --rmg-amber-border: rgba(212, 160, 23, 0.32);
+
+  /* Semantic */
+  --rmg-success: #34d399;
+  --rmg-danger: #f87171;
+
+  /* Type stacks */
+  --rmg-mono: "IBM Plex Mono", "Geist Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --rmg-sans: "Inter", var(--font-interface), system-ui, sans-serif;
+
+  /* Layout */
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.remargin-container .remargin-sandbox__error {
+  padding: 8px 12px;
+  font-family: var(--rmg-mono);
+  font-size: 10px;
+  color: var(--rmg-danger);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ========================================================================
+ * L1 — Sandbox body. Brand-purple rail runs the height of every child.
+ * Collapsing the Sandbox SectionHeader hides this whole block.
+ * ====================================================================== */
+
+.remargin-container .rmg-l1-body {
+  position: relative;
+  padding: 6px 0 10px 16px;
+  background: linear-gradient(to right, var(--rmg-brand-bg) 0, transparent 80px);
+}
+.remargin-container .rmg-l1-body::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: 6px;
+  bottom: 10px;
+  width: 2px;
+  background: var(--rmg-brand);
+  border-radius: 1px;
+  opacity: 0.5;
+}
+
+/* ========================================================================
+ * L2 — Sandbox group (e.g. "Alterna Academy"). Amber rail nested inside
+ * the brand rail.
+ * ====================================================================== */
+
+.remargin-container .rmg-l2 {
+  position: relative;
+  padding: 4px 0 4px 14px;
+}
+.remargin-container .rmg-l2 + .rmg-l2 {
+  margin-top: 8px;
+}
+.remargin-container .rmg-l2::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 20px;
+  bottom: 6px;
+  width: 2px;
+  background: var(--rmg-amber);
+  border-radius: 1px;
+  opacity: 0.6;
+}
+
+/* L2 header row */
+.remargin-container .rmg-l2__head {
+  display: grid;
+  grid-template-columns: 14px 1fr auto;
+  align-items: center;
+  column-gap: 8px;
+  padding: 4px 8px 4px 0;
+  cursor: pointer;
+  user-select: none;
+  border-radius: 4px;
+}
+.remargin-container .rmg-l2__head:hover {
+  background: var(--background-modifier-hover);
+}
+.remargin-container .rmg-l2__chev {
+  width: 13px;
+  height: 13px;
+  color: var(--text-muted);
+  transition: transform 150ms ease;
+  flex-shrink: 0;
+}
+.remargin-container .rmg-l2__head[data-open="false"] .rmg-l2__chev {
+  transform: rotate(-90deg);
+}
+.remargin-container .rmg-l2__title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.remargin-container .rmg-l2__icon {
+  width: 13px;
+  height: 13px;
+  color: var(--rmg-amber);
+  flex-shrink: 0;
+}
+.remargin-container .rmg-l2__title {
+  font-family: var(--rmg-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-normal);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: -0.005em;
+  line-height: 1.3;
+}
+.remargin-container .rmg-l2__count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 16px;
+  padding: 0 5px;
+  font-family: var(--rmg-mono);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--rmg-amber);
+  background: var(--rmg-amber-bg);
+  border: 1px solid var(--rmg-amber-border);
+  border-radius: 999px;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  line-height: 1;
+}
+.remargin-container .rmg-l2__status {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.remargin-container .rmg-l2__status svg {
+  width: 12px;
+  height: 12px;
+}
+.remargin-container .rmg-l2__status--ok {
+  color: var(--rmg-success);
+}
+.remargin-container .rmg-l2__status--fail {
+  color: var(--rmg-danger);
+}
+.remargin-container .rmg-l2__status--pending {
+  color: var(--text-muted);
+}
+
+.remargin-container .rmg-l2__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.remargin-container button.rmg-l2__configure {
+  display: inline-flex !important;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px !important;
+  background: transparent !important;
+  border: 1px dashed var(--background-modifier-border) !important;
+  border-radius: 3px !important;
+  color: var(--text-muted);
+  font-family: var(--rmg-mono) !important;
+  font-size: 10px !important;
+  font-weight: 500 !important;
+  cursor: pointer !important;
+  box-shadow: none !important;
+  white-space: nowrap;
+  transition:
+    color 120ms ease,
+    border-color 120ms ease,
+    background 120ms ease;
+}
+.remargin-container button.rmg-l2__configure:hover {
+  color: var(--text-normal) !important;
+  border-color: var(--text-faint) !important;
+  background: var(--background-modifier-hover) !important;
+}
+.remargin-container .rmg-l2__path {
+  display: block;
+  padding: 2px 8px 0 22px;
+  font-family: var(--rmg-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.4;
+}
+
+/* L2-level action row (e.g. "Submit all") */
+.remargin-container .rmg-l2__action {
+  margin-top: 10px;
+  padding: 8px 8px 0 22px;
+  border-top: 1px dashed var(--background-modifier-border);
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* L1-level action row — sits below all L2 groups, inside the brand rail
+ * so it visually reads as "applies to the whole Sandbox". */
+.remargin-container .rmg-l1__action {
+  margin-top: 14px;
+  padding: 10px 8px 0 14px;
+  border-top: 1px dashed var(--background-modifier-border);
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* ========================================================================
+ * L3 — Section (Staged / Unstaged). Tracked-uppercase eyebrow, no rail.
+ * Sits inside the amber column, so the L2 rail visually "owns" it.
+ * ====================================================================== */
+
+.remargin-container .rmg-l3 {
+  margin-top: 10px;
+  padding-left: 14px;
+}
+.remargin-container .rmg-l3:first-of-type {
+  margin-top: 8px;
+}
+
+.remargin-container .rmg-l3__head {
+  display: grid;
+  grid-template-columns: 12px auto auto 1fr auto;
+  align-items: center;
+  column-gap: 8px;
+  padding: 3px 6px 3px 0;
+  cursor: pointer;
+  user-select: none;
+  border-radius: 4px;
+  background: transparent;
+}
+.remargin-container .rmg-l3__head:hover {
+  background: var(--background-modifier-hover);
+}
+.remargin-container .rmg-l3__chev {
+  width: 10px;
+  height: 10px;
+  color: var(--text-faint);
+  transition: transform 150ms ease;
+  flex-shrink: 0;
+}
+.remargin-container .rmg-l3__head[data-open="false"] .rmg-l3__chev {
+  transform: rotate(-90deg);
+}
+.remargin-container .rmg-l3__label {
+  font-family: var(--rmg-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  line-height: 1.2;
+}
+.remargin-container .rmg-l3--staged .rmg-l3__label {
+  color: var(--rmg-brand-soft);
+}
+.remargin-container .rmg-l3__head:hover .rmg-l3__label {
+  color: var(--text-normal);
+}
+.remargin-container .rmg-l3--staged .rmg-l3__head:hover .rmg-l3__label {
+  color: var(--rmg-brand-soft);
+}
+.remargin-container .rmg-l3__count {
+  font-family: var(--rmg-mono);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  margin-left: -2px;
+}
+.remargin-container .rmg-l3__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0.65;
+  transition: opacity 120ms ease;
+}
+.remargin-container .rmg-l3__head:hover .rmg-l3__actions {
+  opacity: 1;
+}
+.remargin-container .rmg-l3__body {
+  padding-left: 14px;
+  padding-top: 2px;
+}
+.remargin-container .rmg-l3__action {
+  display: flex;
+  justify-content: flex-end;
+  padding: 6px 6px 0 14px;
+}
+
+/* ========================================================================
+ * Icon button — defensive reset. Obsidian sets background, cursor and
+ * font on every <button>. We use !important on those properties only.
+ * ====================================================================== */
+
+.remargin-container button.rmg-icon-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 22px;
+  height: 22px;
+  padding: 0 !important;
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer !important;
+  box-shadow: none !important;
+  font: inherit !important;
+  transition:
+    background 120ms ease,
+    color 120ms ease,
+    border-color 120ms ease;
+}
+.remargin-container button.rmg-icon-btn:hover:not(:disabled) {
+  background: var(--background-modifier-hover) !important;
+  color: var(--text-normal);
+}
+.remargin-container button.rmg-icon-btn:disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+.remargin-container button.rmg-icon-btn svg {
+  width: 12px;
+  height: 12px;
+}
+.remargin-container button.rmg-icon-btn--sm {
+  width: 18px;
+  height: 18px;
+}
+.remargin-container button.rmg-icon-btn--sm svg {
+  width: 11px;
+  height: 11px;
+}
+
+/* ========================================================================
+ * Submit buttons. We don't use the shadcn <Button> here because Obsidian
+ * routinely overrides shadcn's defaults; a plain <button> + our class is
+ * predictable and easier to defend.
+ * ====================================================================== */
+
+.remargin-container button.rmg-btn-submit {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--rmg-mono) !important;
+  font-size: 11.5px !important;
+  font-weight: 500 !important;
+  padding: 5px 11px !important;
+  background: var(--background-secondary) !important;
+  color: var(--text-normal) !important;
+  border: 1px solid var(--background-modifier-border) !important;
+  border-radius: 6px !important;
+  cursor: pointer !important;
+  box-shadow: none !important;
+  line-height: 1.1 !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease,
+    opacity 120ms ease;
+}
+.remargin-container button.rmg-btn-submit:hover:not(:disabled) {
+  background: var(--background-modifier-hover) !important;
+  border-color: var(--text-faint) !important;
+}
+.remargin-container button.rmg-btn-submit:disabled {
+  opacity: 0.5 !important;
+  cursor: not-allowed !important;
+}
+.remargin-container button.rmg-btn-submit svg {
+  width: 11px;
+  height: 11px;
+  color: var(--rmg-brand-soft);
+  flex-shrink: 0;
+}
+.remargin-container button.rmg-btn-submit .rmg-btn-submit__num {
+  font-family: var(--rmg-mono);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--rmg-brand-soft);
+  background: var(--rmg-brand-bg);
+  border: 1px solid var(--rmg-brand-border);
+  padding: 0 5px;
+  border-radius: 999px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+  margin-left: 2px;
+}
+
+/* Primary variant — Submit all */
+.remargin-container button.rmg-btn-submit--primary {
+  background: var(--rmg-brand) !important;
+  color: #0e0d14 !important;
+  border-color: var(--rmg-brand) !important;
+  font-weight: 600 !important;
+}
+.remargin-container button.rmg-btn-submit--primary:hover:not(:disabled) {
+  background: var(--rmg-brand-soft) !important;
+  border-color: var(--rmg-brand-soft) !important;
+}
+.remargin-container button.rmg-btn-submit--primary svg {
+  color: #0e0d14;
+}
+.remargin-container button.rmg-btn-submit--primary .rmg-btn-submit__num {
+  color: #0e0d14;
+  background: rgba(14, 13, 20, 0.18);
+  border-color: rgba(14, 13, 20, 0.25);
+}
+
+/* ========================================================================
+ * Sandbox rows. We don't restyle the shadcn Checkbox — just remove the
+ * file icon (per user) and tighten the layout.
+ * ====================================================================== */
+
+.remargin-container .rmg-sandbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 8px 3px 4px;
+  border-radius: 4px;
+  min-width: 0;
+}
+.remargin-container .rmg-sandbox-row:hover {
+  background: var(--background-modifier-hover);
+}
+.remargin-container .rmg-sandbox-row__name {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--rmg-mono) !important;
+  font-size: 12px !important;
+  font-weight: 400 !important;
+  color: var(--text-normal) !important;
+  background: transparent !important;
+  border: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  box-shadow: none !important;
+  text-align: left !important;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer !important;
+  line-height: 1.4;
+}
+.remargin-container .rmg-sandbox-row__name:hover {
+  color: var(--rmg-brand-soft) !important;
+}
+.remargin-container .rmg-sandbox-row__remove {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 18px;
+  height: 18px;
+  padding: 0 !important;
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 3px !important;
+  color: var(--text-faint);
+  cursor: pointer !important;
+  box-shadow: none !important;
+  opacity: 0;
+  transition:
+    opacity 120ms ease,
+    color 120ms ease,
+    background 120ms ease;
+  flex-shrink: 0;
+}
+.remargin-container .rmg-sandbox-row:hover .rmg-sandbox-row__remove {
+  opacity: 1;
+}
+.remargin-container .rmg-sandbox-row__remove:hover {
+  color: var(--rmg-danger) !important;
+  background: rgba(248, 113, 113, 0.1) !important;
+}
+.remargin-container .rmg-sandbox-row__remove svg {
+  width: 11px;
+  height: 11px;
+}
+
+/* Tree-view folder row (used by SandboxTreeNode) */
+.remargin-container .rmg-sandbox-folder {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  user-select: none;
+  font-family: var(--rmg-mono);
+  font-size: 11.5px;
+  color: var(--text-muted);
+  min-width: 0;
+}
+.remargin-container .rmg-sandbox-folder:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+.remargin-container .rmg-sandbox-folder svg {
+  width: 11px;
+  height: 11px;
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+.remargin-container .rmg-sandbox-folder__name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}

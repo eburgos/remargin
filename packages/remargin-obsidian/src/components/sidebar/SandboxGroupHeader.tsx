@@ -1,51 +1,60 @@
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import { useCallback } from "react";
 import { ObsidianIcon } from "@/components/ui/ObsidianIcon";
 
-export type SandboxGroupBulkIcon = "check-check" | "minus" | "plus";
+/**
+ * Lucide icon names we use for the Staged / Unstaged bulk actions.
+ * Kept as a string union so callers get autocomplete; ObsidianIcon
+ * accepts any Lucide name so extend the union as needed.
+ */
+export type SandboxGroupBulkIcon =
+  | "square-check"
+  | "arrow-up-to-line"
+  | "arrow-down-to-line"
+  | "chevrons-up"
+  | "chevrons-down"
+  // Legacy names — retained so older callers / tests still compile.
+  | "check-check"
+  | "minus"
+  | "plus";
 
 export interface SandboxGroupHeaderProps {
-  /** Group label shown to the right of the chevron. */
+  /** Group label shown to the right of the chevron — "Staged" / "Unstaged". */
   label: string;
-  /** Number of files currently in this group; shown as a pill badge. */
+  /** Number of files currently in this group; shown as a small inline count. */
   count: number;
   /** Whether the group is currently expanded. */
   open: boolean;
   /** Toggle the group open/closed. */
   onToggleOpen: () => void;
   /**
-   * Left bulk-action icon. The exact semantics depend on the group:
-   *   - Staged: "check-check" = toggle select-all across staged rows
-   *   - Unstaged: "plus" = stage the current selection (or everything)
+   * Left bulk-action icon. Semantics by group:
+   *   - Staged:   "square-check"        → select all staged rows
+   *   - Unstaged: "arrow-up-to-line"    → stage the current selection
    */
-  leftBulkIcon: "check-check" | "plus";
-  /** Tooltip for the left bulk-action button. */
+  leftBulkIcon: SandboxGroupBulkIcon;
   leftBulkTitle: string;
-  /** Invoked when the user clicks the left bulk-action button. */
   onLeftBulk: () => void;
   /**
-   * Right bulk-action icon.
-   *   - Staged: "minus" = unstage selected (or all) staged rows
-   *   - Unstaged: "check-check" = stage everything in the unstaged group
+   * Right bulk-action icon. Semantics by group:
+   *   - Staged:   "arrow-down-to-line"  → unstage selected (or all)
+   *   - Unstaged: "chevrons-up"         → stage everything unstaged
    */
-  rightBulkIcon: "minus" | "check-check";
-  /** Tooltip for the right bulk-action button. */
+  rightBulkIcon: SandboxGroupBulkIcon;
   rightBulkTitle: string;
-  /** Invoked when the user clicks the right bulk-action button. */
   onRightBulk: () => void;
   /** Disable bulk actions when the group is empty. */
   disabled?: boolean;
 }
 
-function BulkIcon({ name }: { name: SandboxGroupBulkIcon }) {
-  return <ObsidianIcon icon={name} size={12} />;
-}
-
 /**
- * Header row for a Sandbox sub-group (Staged / Unstaged). Renders a chevron,
- * a label, a count badge, and two bulk-action icon buttons. The bulk-action
- * semantics are delegated to the parent via callbacks; this component is
- * presentational and only dispatches clicks.
+ * L3 header row for a Sandbox sub-group (Staged / Unstaged). Head-only —
+ * the surrounding `<section class="rmg-l3">` wrapper and the L3 body are
+ * owned by the parent (`PromptGroupSection`).
+ *
+ * Renders as a tracked-uppercase eyebrow label with a chevron + inline
+ * count + two bulk-action icon buttons. Presentational only; bulk
+ * semantics live in the parent.
  */
 export function SandboxGroupHeader({
   label,
@@ -60,8 +69,6 @@ export function SandboxGroupHeader({
   onRightBulk,
   disabled,
 }: SandboxGroupHeaderProps) {
-  const Chevron = open ? ChevronDown : ChevronRight;
-
   const stopAndRun = useCallback(
     (fn: () => void) => (e: React.MouseEvent) => {
       e.stopPropagation();
@@ -72,36 +79,44 @@ export function SandboxGroupHeader({
 
   return (
     <div
-      className="flex items-center justify-between px-4 py-1 bg-bg-hover cursor-pointer select-none"
+      className="rmg-l3__head"
+      data-open={open ? "true" : "false"}
+      role="button"
+      tabIndex={0}
       onClick={onToggleOpen}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onToggleOpen();
+        }
+      }}
     >
-      <div className="flex items-center gap-1.5">
-        <Chevron className="w-2.5 h-2.5 text-text-faint" />
-        <span className="text-[11px] font-semibold text-text-muted">{label}</span>
-        <span className="inline-flex items-center justify-center min-w-4 h-4 px-1.5 text-[9px] text-text-muted bg-bg-border rounded-full">
-          {count}
-        </span>
-      </div>
-      <div className="flex items-center gap-0.5">
+      <ChevronDown className="rmg-l3__chev" />
+      <span className="rmg-l3__label">{label}</span>
+      <span className="rmg-l3__count">{count}</span>
+      <span /> {/* flex spacer */}
+      <span className="rmg-l3__actions">
         <button
           type="button"
-          className="flex items-center justify-center w-5 h-5 rounded-sm text-text-faint hover:text-text-normal hover:bg-bg-border disabled:opacity-40 disabled:pointer-events-none"
+          className="rmg-icon-btn rmg-icon-btn--sm"
           title={leftBulkTitle}
+          aria-label={leftBulkTitle}
           onClick={stopAndRun(onLeftBulk)}
           disabled={disabled}
         >
-          <BulkIcon name={leftBulkIcon} />
+          <ObsidianIcon icon={leftBulkIcon} size={11} />
         </button>
         <button
           type="button"
-          className="flex items-center justify-center w-5 h-5 rounded-sm text-text-faint hover:text-text-normal hover:bg-bg-border disabled:opacity-40 disabled:pointer-events-none"
+          className="rmg-icon-btn rmg-icon-btn--sm"
           title={rightBulkTitle}
+          aria-label={rightBulkTitle}
           onClick={stopAndRun(onRightBulk)}
           disabled={disabled}
         >
-          <BulkIcon name={rightBulkIcon} />
+          <ObsidianIcon icon={rightBulkIcon} size={11} />
         </button>
-      </div>
+      </span>
     </div>
   );
 }

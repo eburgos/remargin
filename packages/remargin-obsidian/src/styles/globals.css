@@ -1,6 +1,11 @@
 @import "tailwindcss";
 @config "../../tailwind.config.ts";
 
+/* Sandbox panel — scoped, defensive hierarchy styles. Loaded after
+ * Tailwind so the .rmg-* compound selectors win over generated utilities
+ * when both target the same element. */
+@import "./sandbox-hierarchy.css";
+
 /* Scoped styles for markdown rendered inside sidebar comment content. */
 .remargin-markdown-content {
   font-size: 12px;
