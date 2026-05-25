@@ -1,14 +1,4 @@
-//! Image sampling and cropping for inline inspection.
-//!
-//! Reads a raster image (PNG / JPEG / GIF / WebP) from the managed tree,
-//! optionally crops a sub-region, downscales to fit a max dimension budget,
-//! and re-encodes to a target byte budget. The result is a fresh in-memory
-//! image bytes payload the caller can return as base64 — small enough to fit
-//! inside an MCP tool-result envelope without tripping token limits.
-//!
-//! Non-image binaries (PDF, audio, video) are rejected with a clear error
-//! pointing the caller back to `get --binary` (or the appropriate viewer).
-//! Markdown is rejected by the underlying `read_binary` call.
+//! Read a raster image, optionally cropped, downscaled to fit a byte budget.
 
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
@@ -23,7 +13,7 @@ use serde_json::{Value, json};
 
 use crate::document::{self, mime};
 
-/// Default upper bound on width/height for the sampled output.
+/// Default upper bound on width/height for the output.
 const DEFAULT_MAX_DIMENSION: u32 = 1024;
 
 /// Default target ceiling on the encoded output byte size.
@@ -45,7 +35,7 @@ const JPEG_QUALITY_FLOOR: u8 = 30;
 /// dimension cap drops below this floor (output gets useless smaller).
 const DIMENSION_RETRY_FLOOR: u32 = 64;
 
-/// Output encoding for the sampled image.
+/// Output encoding for the returned image.
 ///
 /// PNG preserves transparency and gives lossless thumbnails for source
 /// PNGs; JPEG gives a tunable byte budget for photographic content.
@@ -121,15 +111,15 @@ impl CropRegion {
 /// chosen to keep output well under typical MCP tool-result token caps.
 #[derive(Clone, Copy, Debug, Default)]
 #[non_exhaustive]
-pub struct SampleOptions {
+pub struct GetImageOptions {
     pub crop: Option<CropRegion>,
     pub format: Option<OutputFormat>,
     pub max_bytes: Option<u64>,
     pub max_dimension: Option<u32>,
 }
 
-impl SampleOptions {
-    /// Build a `SampleOptions` from the four CLI-flag shapes
+impl GetImageOptions {
+    /// Build a `GetImageOptions` from the four CLI-flag shapes
     /// (`--crop X,Y,W,H`, `--format jpeg|png`, `--max-bytes N`,
     /// `--max-dimension N`). Each `Option` is the parsed CLI value or
     /// `None` when the user omitted the flag.
@@ -200,12 +190,12 @@ impl SampleOptions {
     }
 }
 
-/// Output of [`sample_image`]. `bytes` holds the re-encoded image; the
+/// Output of [`get_image`]. `bytes` holds the re-encoded image; the
 /// other fields describe what was actually produced so the caller can
 /// surface it without re-decoding.
 #[derive(Debug, Serialize)]
 #[non_exhaustive]
-pub struct SampleResult {
+pub struct GetImageResult {
     pub bytes: Vec<u8>,
     pub format: &'static str,
     pub height: u32,
@@ -218,7 +208,7 @@ pub struct SampleResult {
     pub width: u32,
 }
 
-impl SampleResult {
+impl GetImageResult {
     /// JSON shape returned to MCP callers. `content` is base64-encoded
     /// by the adapter so this stays adapter-agnostic.
     #[must_use]
@@ -240,7 +230,7 @@ impl SampleResult {
     }
 }
 
-/// Sample (and optionally crop) an image attachment to fit a byte budget.
+/// Read (and optionally crop) an image attachment, downscaled to fit a byte budget.
 ///
 /// Steps:
 /// 1. Read bytes through the sandboxed [`document::read_binary`] surface.
@@ -254,14 +244,14 @@ impl SampleResult {
 /// Returns an error if the path is invalid, the file is not a raster
 /// image, decoding fails, the crop is out of bounds, or the byte budget
 /// cannot be met even at the dimension/quality floor.
-pub fn sample_image(
+pub fn get_image(
     system: &dyn System,
     base_dir: &Path,
     path: &Path,
     unrestricted: bool,
     trusted_roots: &[PathBuf],
-    options: &SampleOptions,
-) -> Result<SampleResult> {
+    options: &GetImageOptions,
+) -> Result<GetImageResult> {
     let max_bytes = options.max_bytes.unwrap_or(DEFAULT_MAX_BYTES);
     if max_bytes < MIN_MAX_BYTES {
         bail!(
@@ -274,13 +264,13 @@ pub fn sample_image(
     let source_mime = payload.mime;
     if !source_mime.starts_with("image/") || source_mime == "image/svg+xml" {
         bail!(
-            "sample only supports raster images (PNG, JPEG, GIF, WebP); got {source_mime}. For \
-             other binaries use `get --binary`."
+            "get_image only supports raster images (PNG, JPEG, GIF, WebP); got {source_mime}. \
+             For other binaries use `get --binary`."
         );
     }
 
     let source_format = detect_source_format(source_mime)
-        .with_context(|| format!("unsupported source format for sample: {source_mime}"))?;
+        .with_context(|| format!("unsupported source format for get_image: {source_mime}"))?;
 
     let image = image::load_from_memory_with_format(&payload.bytes, source_format)
         .context("decoding source image")?;
@@ -299,7 +289,7 @@ pub fn sample_image(
     let (encoded, final_image) = encode_to_budget(scaled, format, max_bytes, dimension_cap)?;
     let (out_width, out_height) = final_image.dimensions();
 
-    Ok(SampleResult {
+    Ok(GetImageResult {
         bytes: encoded,
         format: format_label(format),
         height: out_height,
@@ -418,7 +408,7 @@ fn encode_to_budget(
         let next_cap = dim_cap / 2;
         if next_cap < DIMENSION_RETRY_FLOOR {
             bail!(
-                "cannot fit sample within {max_bytes} bytes even at {DIMENSION_RETRY_FLOOR}px / \
+                "cannot fit output within {max_bytes} bytes even at {DIMENSION_RETRY_FLOOR}px / \
                  quality floor; raise max_bytes or pick a tighter crop"
             );
         }
@@ -463,7 +453,7 @@ fn encode_png(image: &DynamicImage) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CropRegion, DEFAULT_MAX_BYTES, MIN_MAX_BYTES, OutputFormat, SampleOptions, sample_image,
+        CropRegion, DEFAULT_MAX_BYTES, GetImageOptions, MIN_MAX_BYTES, OutputFormat, get_image,
     };
     use image::codecs::jpeg::JpegEncoder;
     use image::{ImageBuffer, ImageFormat, Rgb, RgbImage};
@@ -529,7 +519,7 @@ mod tests {
     }
 
     #[test]
-    fn sample_downscales_png() {
+    fn downscales_png() {
         let png = write_png(2048, 1024);
         let system = MockSystem::new()
             .with_current_dir("/project")
@@ -537,15 +527,15 @@ mod tests {
             .with_file(Path::new("/project/pic.png"), &png)
             .unwrap();
 
-        let result = sample_image(
+        let result = get_image(
             &system,
             Path::new("/project"),
             Path::new("pic.png"),
             false,
             &[],
-            &SampleOptions {
+            &GetImageOptions {
                 max_dimension: Some(512),
-                ..SampleOptions::default()
+                ..GetImageOptions::default()
             },
         )
         .unwrap();
@@ -557,7 +547,7 @@ mod tests {
     }
 
     #[test]
-    fn sample_crops_then_scales() {
+    fn crops_then_scales() {
         let png = write_png(1000, 1000);
         let system = MockSystem::new()
             .with_current_dir("/project")
@@ -565,13 +555,13 @@ mod tests {
             .with_file(Path::new("/project/pic.png"), &png)
             .unwrap();
 
-        let result = sample_image(
+        let result = get_image(
             &system,
             Path::new("/project"),
             Path::new("pic.png"),
             false,
             &[],
-            &SampleOptions {
+            &GetImageOptions {
                 crop: Some(CropRegion {
                     x: 100,
                     y: 100,
@@ -579,7 +569,7 @@ mod tests {
                     height: 400,
                 }),
                 max_dimension: Some(200),
-                ..SampleOptions::default()
+                ..GetImageOptions::default()
             },
         )
         .unwrap();
@@ -589,7 +579,7 @@ mod tests {
     }
 
     #[test]
-    fn sample_clamps_crop_to_bounds() {
+    fn clamps_crop_to_bounds() {
         let png = write_png(100, 100);
         let system = MockSystem::new()
             .with_current_dir("/project")
@@ -597,20 +587,20 @@ mod tests {
             .with_file(Path::new("/project/pic.png"), &png)
             .unwrap();
 
-        let result = sample_image(
+        let result = get_image(
             &system,
             Path::new("/project"),
             Path::new("pic.png"),
             false,
             &[],
-            &SampleOptions {
+            &GetImageOptions {
                 crop: Some(CropRegion {
                     x: 50,
                     y: 50,
                     width: 500,
                     height: 500,
                 }),
-                ..SampleOptions::default()
+                ..GetImageOptions::default()
             },
         )
         .unwrap();
@@ -620,7 +610,7 @@ mod tests {
     }
 
     #[test]
-    fn sample_rejects_crop_outside_image() {
+    fn rejects_crop_outside_image() {
         let png = write_png(100, 100);
         let system = MockSystem::new()
             .with_current_dir("/project")
@@ -628,20 +618,20 @@ mod tests {
             .with_file(Path::new("/project/pic.png"), &png)
             .unwrap();
 
-        let err = sample_image(
+        let err = get_image(
             &system,
             Path::new("/project"),
             Path::new("pic.png"),
             false,
             &[],
-            &SampleOptions {
+            &GetImageOptions {
                 crop: Some(CropRegion {
                     x: 500,
                     y: 500,
                     width: 10,
                     height: 10,
                 }),
-                ..SampleOptions::default()
+                ..GetImageOptions::default()
             },
         )
         .unwrap_err();
@@ -649,7 +639,7 @@ mod tests {
     }
 
     #[test]
-    fn sample_jpeg_respects_byte_budget() {
+    fn jpeg_respects_byte_budget() {
         let jpeg = write_jpeg(1500, 1500);
         let system = MockSystem::new()
             .with_current_dir("/project")
@@ -657,15 +647,15 @@ mod tests {
             .with_file(Path::new("/project/photo.jpg"), &jpeg)
             .unwrap();
 
-        let result = sample_image(
+        let result = get_image(
             &system,
             Path::new("/project"),
             Path::new("photo.jpg"),
             false,
             &[],
-            &SampleOptions {
+            &GetImageOptions {
                 max_bytes: Some(64 * 1024),
-                ..SampleOptions::default()
+                ..GetImageOptions::default()
             },
         )
         .unwrap();
@@ -679,7 +669,7 @@ mod tests {
     }
 
     #[test]
-    fn sample_rejects_max_bytes_below_floor() {
+    fn rejects_max_bytes_below_floor() {
         let png = write_png(50, 50);
         let system = MockSystem::new()
             .with_current_dir("/project")
@@ -687,15 +677,15 @@ mod tests {
             .with_file(Path::new("/project/pic.png"), &png)
             .unwrap();
 
-        let err = sample_image(
+        let err = get_image(
             &system,
             Path::new("/project"),
             Path::new("pic.png"),
             false,
             &[],
-            &SampleOptions {
+            &GetImageOptions {
                 max_bytes: Some(MIN_MAX_BYTES - 1),
-                ..SampleOptions::default()
+                ..GetImageOptions::default()
             },
         )
         .unwrap_err();
@@ -703,66 +693,66 @@ mod tests {
     }
 
     #[test]
-    fn sample_rejects_non_image_mime() {
+    fn rejects_non_image_mime() {
         let system = MockSystem::new()
             .with_current_dir("/project")
             .unwrap()
             .with_file(Path::new("/project/doc.pdf"), b"%PDF-1.4\n")
             .unwrap();
 
-        let err = sample_image(
+        let err = get_image(
             &system,
             Path::new("/project"),
             Path::new("doc.pdf"),
             false,
             &[],
-            &SampleOptions::default(),
+            &GetImageOptions::default(),
         )
         .unwrap_err();
         assert!(format!("{err}").contains("raster images"));
     }
 
     #[test]
-    fn sample_rejects_svg() {
+    fn rejects_svg() {
         let system = MockSystem::new()
             .with_current_dir("/project")
             .unwrap()
             .with_file(Path::new("/project/icon.svg"), b"<svg/>")
             .unwrap();
 
-        let err = sample_image(
+        let err = get_image(
             &system,
             Path::new("/project"),
             Path::new("icon.svg"),
             false,
             &[],
-            &SampleOptions::default(),
+            &GetImageOptions::default(),
         )
         .unwrap_err();
         assert!(format!("{err}").contains("raster images"));
     }
 
     #[test]
-    fn sample_rejects_markdown_via_read_binary() {
+    fn rejects_markdown_via_read_binary() {
         let system = MockSystem::new()
             .with_current_dir("/project")
             .unwrap()
             .with_file(Path::new("/project/notes.md"), b"# hi")
             .unwrap();
 
-        sample_image(
+        get_image(
             &system,
             Path::new("/project"),
             Path::new("notes.md"),
             false,
             &[],
-            &SampleOptions::default(),
+            &GetImageOptions::default(),
         )
         .unwrap_err();
     }
 
     #[test]
-    fn sample_defaults_keep_small_image_intact() {
+    fn defaults_keep_small_image_intact() {
         let png = write_png(200, 100);
         let system = MockSystem::new()
             .with_current_dir("/project")
@@ -770,13 +760,13 @@ mod tests {
             .with_file(Path::new("/project/small.png"), &png)
             .unwrap();
 
-        let result = sample_image(
+        let result = get_image(
             &system,
             Path::new("/project"),
             Path::new("small.png"),
             false,
             &[],
-            &SampleOptions::default(),
+            &GetImageOptions::default(),
         )
         .unwrap();
         assert_eq!(result.width, 200);

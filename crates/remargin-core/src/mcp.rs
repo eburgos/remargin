@@ -23,7 +23,7 @@ use crate::config::system_prompt::resolve_system_prompt;
 use crate::config::{ResolvedConfig, parse_author_type};
 use crate::display;
 use crate::document;
-use crate::document::sample as sample_ops;
+use crate::document::get_image as image_ops;
 use crate::kind::matches_kind_filter;
 use crate::linter;
 use crate::operations;
@@ -750,10 +750,9 @@ fn desc_rm() -> ToolDesc {
     }
 }
 
-/// Build the sample tool descriptor.
-fn desc_sample() -> ToolDesc {
+fn desc_get_image() -> ToolDesc {
     ToolDesc {
-        name: "sample",
+        name: "get_image",
         description: "Return a downscaled / cropped raster image sized to fit \
              the MCP token budget. Use this when `get --binary` would exceed \
              the inline limit. Accepts PNG / JPEG / GIF / WebP; rejects SVG, \
@@ -996,6 +995,7 @@ fn tool_descriptors() -> Vec<ToolDesc> {
         desc_delete(),
         desc_edit(),
         desc_get(),
+        desc_get_image(),
         desc_identity_create(),
         desc_lint(),
         desc_ls(),
@@ -1013,7 +1013,6 @@ fn tool_descriptors() -> Vec<ToolDesc> {
         desc_react(),
         desc_reply(),
         desc_rm(),
-        desc_sample(),
         desc_sandbox_add(),
         desc_sandbox_list(),
         desc_sandbox_remove(),
@@ -1374,6 +1373,7 @@ fn dispatch_tool(
         "delete" => handle_delete(system, base_dir, config, p),
         "edit" => handle_edit(system, base_dir, config, p),
         "get" => handle_get(system, base_dir, config, p),
+        "get_image" => handle_get_image(system, base_dir, config, p),
         "identity_create" => handle_identity_create(p),
         "lint" => handle_lint(system, base_dir, p),
         "ls" => handle_ls(system, base_dir, config, p),
@@ -1403,7 +1403,6 @@ fn dispatch_tool(
             );
         }
         "rm" => handle_rm(system, base_dir, config, p),
-        "sample" => handle_sample(system, base_dir, config, p),
         "sandbox_add" => handle_sandbox_add(system, base_dir, config, p),
         "sandbox_list" => handle_sandbox_list(system, base_dir, config, p),
         "sandbox_remove" => handle_sandbox_remove(system, base_dir, config, p),
@@ -2232,8 +2231,7 @@ fn handle_mv(
     Ok(outcome.to_json())
 }
 
-/// Handle the `sample` tool: return a downscaled / cropped image inline.
-fn handle_sample(
+fn handle_get_image(
     system: &dyn System,
     base_dir: &Path,
     config: &ResolvedConfig,
@@ -2250,9 +2248,9 @@ fn handle_sample(
         .and_then(Value::as_u64)
         .map(|v| u32::try_from(v).unwrap_or(u32::MAX));
     let options =
-        sample_ops::SampleOptions::from_optionals(crop, format, max_bytes, max_dimension)?;
+        image_ops::GetImageOptions::from_optionals(crop, format, max_bytes, max_dimension)?;
 
-    let result = sample_ops::sample_image(
+    let result = image_ops::get_image(
         system,
         base_dir,
         target,

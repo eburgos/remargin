@@ -4,8 +4,8 @@
 //! and dotfile hiding.
 
 pub mod allowlist;
+pub mod get_image;
 pub mod mime;
-pub mod sample;
 
 #[cfg(test)]
 mod tests;
