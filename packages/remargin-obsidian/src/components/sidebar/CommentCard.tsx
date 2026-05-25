@@ -175,6 +175,18 @@ export function CommentCard({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void navigator.clipboard.writeText(comment.content).catch((err) => {
+                    console.error("Copy contents failed:", err);
+                  });
+                }}
+              >
+                <ObsidianIcon icon="copy" size={12} className="mr-1.5" />
+                Copy contents
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
               {affordance.kebab === "unack" && (
                 <>
                   <DropdownMenuItem
