@@ -119,6 +119,7 @@ stop at the first match:
 
     Don't over-decorate plain prose — a one-line answer stays a one-line answer. The bar is readability for a human scanning a thread, not styling for its own sake.
 16. **Prefer partial writes over rewriting the whole file.** `write` accepts `start_line` / `end_line` (1-indexed, inclusive) to replace just a line range while leaving the rest of the file untouched. Use this whenever you're changing a few lines, fixing a section, or updating one paragraph in a large doc. Rewriting the whole file forces you to carry the entire body in your context (slow, expensive, and one typo can corrupt the rest). Comment preservation, frontmatter handling, and the verify gate all run identically on partial writes. Reserve whole-file `write` for new files (`create=true`) or genuine wholesale rewrites.
+17. **Comments must be self-contained.** Write every comment so it stands on its own to a human scanning the thread later. Spell names and terms out in full — no acronyms or invented shorthand (write "Module 1", not "M1"; write the person's full name, not an initial). Never refer to another comment by its ID (e.g. "see 3pd", "as in ow6") — IDs are opaque to a reader and meaningless out of context. Instead quote or paraphrase what that comment said, and point at the relevant file or section if needed. A reader should never have to expand an acronym or go look up a comment ID to understand what you wrote.
 
 ---
 
