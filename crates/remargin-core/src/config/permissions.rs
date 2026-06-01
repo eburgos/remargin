@@ -37,7 +37,10 @@ pub struct DenyOpsItemFull {
 }
 
 impl<'de> Deserialize<'de> for DenyOpsItem {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
         let value = serde_yaml::Value::deserialize(deserializer)?;
         if value.is_string() {
             let op = OpName::deserialize(value).map_err(D::Error::custom)?;
@@ -52,10 +55,10 @@ impl<'de> Deserialize<'de> for DenyOpsItem {
         ))
     }
 
-    fn deserialize_in_place<D: Deserializer<'de>>(
-        deserializer: D,
-        place: &mut Self,
-    ) -> Result<(), D::Error> {
+    fn deserialize_in_place<D>(deserializer: D, place: &mut Self) -> Result<(), D::Error>
+    where
+        D: Deserializer<'de>,
+    {
         *place = Self::deserialize(deserializer)?;
         Ok(())
     }

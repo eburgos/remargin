@@ -1,15 +1,6 @@
 //! Checksum (SHA-256) and signature (Ed25519) operations.
 
-mod hex {
-    pub fn encode<T: AsRef<[u8]>>(bytes: T) -> String {
-        use core::fmt::Write as _;
-        let mut out = String::with_capacity(bytes.as_ref().len() * 2);
-        for byte in bytes.as_ref() {
-            let _ = write!(out, "{byte:02x}");
-        }
-        out
-    }
-}
+mod hex;
 
 #[cfg(test)]
 mod tests;
