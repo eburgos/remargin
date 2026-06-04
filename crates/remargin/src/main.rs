@@ -5,6 +5,7 @@ mod obsidian;
 
 mod io;
 mod params;
+mod render;
 
 use std::env;
 use std::io::{Read as _, stderr as stderr_handle, stdin as stdin_handle, stdout as stdout_handle};
@@ -31,9 +32,7 @@ use crate::params::{
     ReplaceParams, RestrictParams, SearchParams, SignParams, WriteParams,
 };
 use remargin_core::activity;
-use remargin_core::config::identity::{IdentityFlags, IdentityReport, resolve_identity_report};
-use remargin_core::config::registry;
-use remargin_core::config::system_prompt;
+use remargin_core::config::identity::{IdentityFlags, resolve_identity_report};
 use remargin_core::config::{self, ResolvedConfig};
 use remargin_core::display;
 use remargin_core::document;
@@ -3510,7 +3509,7 @@ fn cmd_identity_show(
 ) -> Result<()> {
     let (flags, _assets_dir) = build_identity_flags(system, identity_args, None)?;
     let report = resolve_identity_report(system, cwd, &flags)?;
-    render_identity_report(sinks, &report, json_mode)
+    render::render_identity_report(sinks, &report, json_mode)
 }
 
 /// Print a ready-to-use identity YAML block to stdout.
@@ -3550,31 +3549,6 @@ fn cmd_identity_create(
         let _ = writeln!(out_str, "key: {k}");
     }
     out_raw(sinks, &out_str)
-}
-
-fn render_identity_report(
-    sinks: &mut IoSinks<'_>,
-    report: &IdentityReport,
-    json_mode: bool,
-) -> Result<()> {
-    if !report.found {
-        if json_mode {
-            return print_output(sinks, true, &json!({ "found": false }));
-        }
-        writeln!(sinks.stderr, "No identity config found.").context("writing to stderr")?;
-        return Ok(());
-    }
-
-    if json_mode {
-        return print_output(
-            sinks,
-            true,
-            &serde_json::to_value(report).context("serializing identity report")?,
-        );
-    }
-
-    write!(sinks.stderr, "{}", display::render_identity_report(report))
-        .context("writing identity report to stderr")
 }
 
 /// Dispatch `remargin permissions <show|check>`.
@@ -3635,17 +3609,12 @@ fn cmd_activity(
     let result = activity::gather_activity(system, &resolved_path, cutoff, caller)?;
 
     if p.pretty {
-        emit_activity_pretty(sinks, &result)?;
+        render::emit_activity_pretty(sinks, &result)?;
     } else {
         let value = serde_json::to_value(&result).context("serializing activity result")?;
         print_output(sinks, true, &value)?;
     }
     Ok(())
-}
-
-fn emit_activity_pretty(sinks: &mut IoSinks<'_>, result: &activity::ActivityResult) -> Result<()> {
-    write!(sinks.stderr, "{}", display::render_activity_pretty(result))
-        .context("writing activity to stderr")
 }
 
 fn cmd_doctor(
@@ -3671,26 +3640,13 @@ fn cmd_doctor(
         let value = serde_json::to_value(&report).context("serializing doctor report")?;
         print_output(sinks, true, &value)?;
     } else {
-        emit_doctor_text(sinks, &report, output_args.verbose)?;
+        render::emit_doctor_text(sinks, &report, output_args.verbose)?;
     }
     // Exit non-zero when findings are present.
     if !report.is_clean() {
         bail!("doctor found {} finding(s)", report.findings.len());
     }
     Ok(())
-}
-
-fn emit_doctor_text(
-    sinks: &mut IoSinks<'_>,
-    report: &permissions_doctor::DoctorReport,
-    verbose: bool,
-) -> Result<()> {
-    write!(
-        sinks.stdout,
-        "{}",
-        permissions_doctor::render_doctor_text(report, verbose)
-    )
-    .context("writing doctor output")
 }
 
 fn cmd_permissions(
@@ -3707,7 +3663,7 @@ fn cmd_permissions(
                     serde_json::to_value(&report).context("serializing permissions show output")?;
                 print_output(sinks, true, &value)?;
             } else {
-                emit_permissions_show_text(sinks, cwd, &report)?;
+                render::emit_permissions_show_text(sinks, cwd, &report)?;
             }
             Ok(())
         }
@@ -3728,7 +3684,7 @@ fn cmd_permissions(
                     .context("serializing permissions check output")?;
                 print_output(sinks, true, &value)?;
             } else {
-                emit_permissions_check_text(sinks, &report, *why)?;
+                render::emit_permissions_check_text(sinks, &report, *why)?;
             }
             // Gitignore-style exit code: 0 when restricted, 1 otherwise.
             // We have already printed our payload, so signal "miss" with
@@ -3742,32 +3698,6 @@ fn cmd_permissions(
             }
         }
     }
-}
-
-fn emit_permissions_show_text(
-    sinks: &mut IoSinks<'_>,
-    cwd: &Path,
-    report: &permissions_inspect::ShowOutput,
-) -> Result<()> {
-    write!(
-        sinks.stderr,
-        "{}",
-        permissions_inspect::render_show_text(cwd, report)
-    )
-    .context("writing permissions show to stderr")
-}
-
-fn emit_permissions_check_text(
-    sinks: &mut IoSinks<'_>,
-    report: &permissions_inspect::CheckOutput,
-    why: bool,
-) -> Result<()> {
-    write!(
-        sinks.stderr,
-        "{}",
-        permissions_inspect::render_check_text(report, why)
-    )
-    .context("writing permissions check to stderr")
 }
 
 /// Wire the CLI `restrict` subcommand to the
@@ -3811,21 +3741,9 @@ fn cmd_restrict(
         });
         print_output(sinks, true, &value)?;
     } else {
-        emit_restrict_summary(sinks, &outcome)?;
+        render::emit_restrict_summary(sinks, &outcome)?;
     }
     Ok(())
-}
-
-fn emit_restrict_summary(
-    sinks: &mut IoSinks<'_>,
-    outcome: &permissions_restrict::RestrictOutcome,
-) -> Result<()> {
-    write!(
-        sinks.stderr,
-        "{}",
-        permissions_restrict::render_restrict_summary(outcome)
-    )
-    .context("writing restrict summary to stderr")
 }
 
 /// Wire the CLI `unprotect` subcommand to the
@@ -3863,21 +3781,9 @@ fn cmd_unprotect(
         });
         print_output(sinks, true, &value)?;
     } else {
-        emit_unprotect_summary(sinks, &outcome)?;
+        render::emit_unprotect_summary(sinks, &outcome)?;
     }
     Ok(())
-}
-
-fn emit_unprotect_summary(
-    sinks: &mut IoSinks<'_>,
-    outcome: &permissions_unprotect::UnprotectOutcome,
-) -> Result<()> {
-    write!(
-        sinks.stderr,
-        "{}",
-        permissions_unprotect::render_unprotect_summary(outcome)
-    )
-    .context("writing unprotect summary to stderr")
 }
 
 fn cmd_prompt_resolve(
@@ -3898,20 +3804,7 @@ fn cmd_prompt_resolve(
         let value = serde_json::to_value(&resolved).context("serializing prompt_resolve output")?;
         return print_output(sinks, true, &value);
     }
-    write_prompt_resolve_text(sinks, &absolute, &resolved)
-}
-
-fn write_prompt_resolve_text(
-    sinks: &mut IoSinks<'_>,
-    target: &Path,
-    resolved: &config::system_prompt::ResolvedSystemPrompt,
-) -> Result<()> {
-    write!(
-        sinks.stderr,
-        "{}",
-        system_prompt::render_resolved_prompt(target, resolved)
-    )
-    .context("writing prompt resolve to stderr")
+    render::write_prompt_resolve_text(sinks, &absolute, &resolved)
 }
 
 fn cmd_prompt_set(
@@ -4241,10 +4134,10 @@ fn cmd_plan(
     // full PlanReport payload.
     if !json_mode {
         if report.config_diff.is_some() {
-            return emit_plan_restrict_text(sinks, &report);
+            return render::emit_plan_restrict_text(sinks, &report);
         }
         if report.unprotect_diff.is_some() {
-            return emit_plan_unprotect_text(sinks, &report);
+            return render::emit_plan_unprotect_text(sinks, &report);
         }
     }
 
@@ -4573,14 +4466,6 @@ fn build_plan_write<'cmd>(
 /// section per touched file, then conflicts. Emitted on stdout via
 /// the standard `out` helper so existing pipe-friendly behaviour is
 /// preserved.
-fn emit_plan_restrict_text(sinks: &mut IoSinks<'_>, report: &plan_ops::PlanReport) -> Result<()> {
-    out_raw(sinks, &plan_ops::render_plan_restrict_text(report))
-}
-
-fn emit_plan_unprotect_text(sinks: &mut IoSinks<'_>, report: &plan_ops::PlanReport) -> Result<()> {
-    out_raw(sinks, &plan_ops::render_plan_unprotect_text(report))
-}
-
 /// Read a JSON file (or stdin when `path == "-"`) into a vector of
 /// [`projections::ProjectBatchOp`] values for `plan batch`.
 fn read_plan_batch_ops(
@@ -4645,7 +4530,7 @@ fn cmd_query(
     let target = cwd.join(expand_cli_path(system, params.path)?);
     let filter = build_query_filter(config, params)?;
     let results = query::query(system, &target, &filter)?;
-    render_query_output(sinks, &results, params, filter.pending_label())
+    render::render_query_output(sinks, &results, params, filter.pending_label())
 }
 
 fn build_query_filter(
@@ -4678,31 +4563,6 @@ fn build_query_filter(
         filter = filter.with_content_regex(pattern, params.ignore_case)?;
     }
     Ok(filter)
-}
-
-fn render_query_output(
-    sinks: &mut IoSinks<'_>,
-    results: &[query::QueryResult],
-    params: &QueryParams<'_>,
-    pending_label: Option<&str>,
-) -> Result<()> {
-    match params.output {
-        QueryOutputMode::Json => {
-            return print_output(
-                sinks,
-                true,
-                &json!({
-                    "base_path": format!("{}/", params.path.trim_end_matches('/')),
-                    "results": results,
-                }),
-            );
-        }
-        QueryOutputMode::Pretty => {
-            return out_raw(sinks, &display::format_query_pretty(results, pending_label));
-        }
-        QueryOutputMode::Plain | QueryOutputMode::Summary => {}
-    }
-    out_raw(sinks, &query::render_query_plain(results))
 }
 
 fn cmd_search(
@@ -4855,16 +4715,6 @@ fn registry_participant_json(
     })
 }
 
-/// Render a single registry participant as a one-line string for
-/// `remargin registry show`. When a display name is set, the prefix
-/// is `"Display Name" (id)`; otherwise it's the bare id.
-fn registry_participant_pretty(
-    name: &str,
-    participant: &config::registry::RegistryParticipant,
-) -> String {
-    registry::render_registry_participant(name, participant)
-}
-
 fn cmd_registry(
     sinks: &mut IoSinks<'_>,
     system: &dyn System,
@@ -4885,7 +4735,10 @@ fn cmd_registry(
                 print_output(sinks, true, &json!({ "participants": participants }))
             } else {
                 for (name, participant) in &registry.participants {
-                    out(sinks, &registry_participant_pretty(name, participant))?;
+                    out(
+                        sinks,
+                        &render::registry_participant_pretty(name, participant),
+                    )?;
                 }
                 Ok(())
             }
@@ -4920,7 +4773,7 @@ fn cmd_sandbox(
                 })
                 .collect::<Result<_>>()?;
             let result = sandbox_ops::add_to_files(system, &absolute, identity, config)?;
-            emit_sandbox_bulk_result(sinks, &result, cwd, "added", json_mode)?;
+            render::emit_sandbox_bulk_result(sinks, &result, cwd, "added", json_mode)?;
             if result.failed.is_empty() {
                 Ok(())
             } else {
@@ -4940,7 +4793,7 @@ fn cmd_sandbox(
                 })
                 .collect::<Result<_>>()?;
             let result = sandbox_ops::remove_from_files(system, &absolute, identity, config)?;
-            emit_sandbox_bulk_result(sinks, &result, cwd, "removed", json_mode)?;
+            render::emit_sandbox_bulk_result(sinks, &result, cwd, "removed", json_mode)?;
             if result.failed.is_empty() {
                 Ok(())
             } else {
@@ -4993,27 +4846,6 @@ fn cmd_sandbox(
     }
 }
 
-fn emit_sandbox_bulk_result(
-    sinks: &mut IoSinks<'_>,
-    result: &sandbox_ops::SandboxBulkResult,
-    cwd: &Path,
-    changed_key: &str,
-    json_mode: bool,
-) -> Result<()> {
-    if json_mode {
-        out_json(sinks, &result.to_json(cwd, changed_key))?;
-    } else {
-        // Text output: write to stderr (changed + failed paths).
-        write!(
-            sinks.stderr,
-            "{}",
-            sandbox_ops::render_sandbox_bulk_result(result, cwd, changed_key)
-        )
-        .context("writing sandbox result to stderr")?;
-    }
-    Ok(())
-}
-
 fn cmd_cp(
     sinks: &mut IoSinks<'_>,
     system: &dyn System,
@@ -5030,12 +4862,11 @@ fn cmd_cp(
     if params.json_mode {
         out_json(sinks, &serde_json::to_value(&outcome)?)
     } else {
-        out(sinks, &cp_outcome_pretty(params.src, params.dst, &outcome))
+        out(
+            sinks,
+            &render::cp_outcome_pretty(params.src, params.dst, &outcome),
+        )
     }
-}
-
-fn cp_outcome_pretty(src: &str, dst: &str, outcome: &cp_op::CpOutcome) -> String {
-    cp_op::render_cp_outcome(src, dst, outcome)
 }
 
 fn cmd_mv(
@@ -5054,12 +4885,11 @@ fn cmd_mv(
     if params.json_mode {
         out_json(sinks, &outcome.to_json())
     } else {
-        out(sinks, &mv_outcome_pretty(params.src, params.dst, &outcome))
+        out(
+            sinks,
+            &render::mv_outcome_pretty(params.src, params.dst, &outcome),
+        )
     }
-}
-
-fn mv_outcome_pretty(src: &str, dst: &str, outcome: &mv_op::MvOutcome) -> String {
-    mv_op::render_mv_outcome(src, dst, outcome)
 }
 
 fn cmd_rm(
@@ -5104,35 +4934,7 @@ fn cmd_get_image(
         &config.trusted_roots,
         &options,
     )?;
-    render_get_image_result(sinks, system, &result, sp.out, sp.json_mode)
-}
-
-fn render_get_image_result(
-    sinks: &mut IoSinks<'_>,
-    system: &dyn System,
-    result: &image_ops::GetImageResult,
-    out_path: Option<&Path>,
-    json_mode: bool,
-) -> Result<()> {
-    if let Some(dest) = out_path {
-        system
-            .write(dest, &result.bytes)
-            .with_context(|| format!("writing {}", dest.display()))?;
-        let mut summary = result.to_json_without_content();
-        summary["out"] = json!(dest);
-        return print_output(sinks, json_mode, &summary);
-    }
-    if json_mode {
-        let mut payload = result.to_json_without_content();
-        payload["binary"] = Value::Bool(true);
-        payload["content"] = Value::String(BASE64_STANDARD.encode(&result.bytes));
-        payload["path"] = json!(result.source_path);
-        return print_output(sinks, true, &payload);
-    }
-    sinks
-        .stdout
-        .write_all(&result.bytes)
-        .context("writing image bytes to stdout")
+    render::render_get_image_result(sinks, system, &result, sp.out, sp.json_mode)
 }
 
 /// Expand an optional `--vault-path` for the obsidian subcommand.
@@ -5239,7 +5041,7 @@ fn cmd_sign(
     if json_mode {
         print_output(sinks, true, &result.to_json())
     } else {
-        render_sign_result_text(sinks, &result)
+        render::render_sign_result_text(sinks, &result)
     }
 }
 
@@ -5252,13 +5054,6 @@ fn build_sign_selection(all_mine: bool, ids: &[String]) -> Result<operations::si
     } else {
         operations::sign::SignSelection::Ids(ids.to_vec())
     })
-}
-
-fn render_sign_result_text(
-    sinks: &mut IoSinks<'_>,
-    result: &operations::sign::SignResult,
-) -> Result<()> {
-    out_raw(sinks, &operations::sign::render_sign_result_text(result))
 }
 
 fn plugin_is_installed() -> Result<bool> {
