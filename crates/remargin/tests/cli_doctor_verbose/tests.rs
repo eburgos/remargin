@@ -220,9 +220,17 @@ fn json_output_unaffected_by_verbose() {
     assert_status(&plain_json, 0);
     assert_status(&verbose_json, 0);
 
-    // Both must be valid JSON.
-    let plain_val: serde_json::Value = serde_json::from_str(stdout_of(&plain_json)).unwrap();
-    let verbose_val: serde_json::Value = serde_json::from_str(stdout_of(&verbose_json)).unwrap();
+    // Both must be valid JSON. Strip elapsed_ms before comparing — it is a
+    // wall-clock measurement that differs between two separate process runs.
+    let mut plain_val: serde_json::Value = serde_json::from_str(stdout_of(&plain_json)).unwrap();
+    let mut verbose_val: serde_json::Value =
+        serde_json::from_str(stdout_of(&verbose_json)).unwrap();
+    if let Some(obj) = plain_val.as_object_mut() {
+        obj.remove("elapsed_ms");
+    }
+    if let Some(obj) = verbose_val.as_object_mut() {
+        obj.remove("elapsed_ms");
+    }
 
     assert_eq!(
         plain_val, verbose_val,
