@@ -4154,7 +4154,7 @@ fn cmd_doctor(
         let value = serde_json::to_value(&report).context("serializing doctor report")?;
         print_output(sinks, true, &value)?;
     } else {
-        emit_doctor_text(sinks, &report)?;
+        emit_doctor_text(sinks, &report, output_args.verbose)?;
     }
     // Exit non-zero when findings are present.
     if !report.is_clean() {
@@ -4166,20 +4166,44 @@ fn cmd_doctor(
 fn emit_doctor_text(
     sinks: &mut IoSinks<'_>,
     report: &permissions_doctor::DoctorReport,
+    verbose: bool,
 ) -> Result<()> {
     if report.is_clean() {
         writeln!(sinks.stdout, "doctor: all checks passed").context("writing doctor output")?;
-        return Ok(());
+    } else {
+        for finding in &report.findings {
+            let label = match finding.severity {
+                permissions_doctor::Severity::Critical => "CRITICAL",
+                permissions_doctor::Severity::Warning => "WARNING",
+                _ => "UNKNOWN",
+            };
+            writeln!(sinks.stdout, "[{label}] {}", finding.message)
+                .context("writing doctor finding")?;
+            writeln!(sinks.stdout, "  Remedy: {}", finding.remedy)
+                .context("writing doctor remedy")?;
+        }
     }
-    for finding in &report.findings {
-        let label = match finding.severity {
-            permissions_doctor::Severity::Critical => "CRITICAL",
-            permissions_doctor::Severity::Warning => "WARNING",
-            _ => "UNKNOWN",
+    if verbose {
+        let hook_verdict = if report.hook_installed {
+            "ok"
+        } else {
+            "missing"
         };
-        writeln!(sinks.stdout, "[{label}] {}", finding.message)
-            .context("writing doctor finding")?;
-        writeln!(sinks.stdout, "  Remedy: {}", finding.remedy).context("writing doctor remedy")?;
+        writeln!(sinks.stdout, "Checks:").context("writing doctor verbose header")?;
+        writeln!(sinks.stdout, "  hook-installed: {hook_verdict}")
+            .context("writing doctor verbose hook")?;
+        writeln!(
+            sinks.stdout,
+            "  user-settings: {}",
+            report.user_settings_file.display()
+        )
+        .context("writing doctor verbose user-settings")?;
+        writeln!(
+            sinks.stdout,
+            "  project-settings: {}",
+            report.project_settings_file.display()
+        )
+        .context("writing doctor verbose project-settings")?;
     }
     Ok(())
 }
