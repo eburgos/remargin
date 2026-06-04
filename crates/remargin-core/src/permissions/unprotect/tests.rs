@@ -73,10 +73,14 @@ fn clean_reverse_restores_state() {
     let sc = sidecar::load(&system, &anchor).unwrap();
     assert!(sc.entries.is_empty());
 
-    // Project-scope settings file no longer carries the projected
-    // rule (the coarse `Bash(remargin *)` deny when
-    // `cli_allowed = false`).
+    // Project-scope settings file no longer carries any of the
+    // projected path-deny rules. `Bash(remargin *)` is NOT projected
+    // (CLI denial is hook-enforced); editor-tool denies are removed.
     let settings_body = system.read_to_string(&files[0]).unwrap();
+    assert!(
+        !settings_body.contains("src/secret"),
+        "settings should no longer reference src/secret after unprotect: {settings_body}"
+    );
     assert!(!settings_body.contains("Bash(remargin *)"));
 }
 
@@ -135,11 +139,14 @@ fn yaml_present_sidecar_absent_removes_yaml_only() {
         outcome.warnings
     );
 
-    // Settings still carry the rule because we couldn't know which
-    // ones to scrub without the sidecar. the projected
-    // rule is the coarse `Bash(remargin *)` deny.
+    // Settings still carry the projected rules because we couldn't
+    // know which ones to scrub without the sidecar. Verify an
+    // editor-tool deny is still present.
     let body = system.read_to_string(&files[0]).unwrap();
-    assert!(body.contains("Bash(remargin *)"));
+    assert!(
+        body.contains("Edit(") && body.contains("src/secret"),
+        "settings should still carry the Edit deny (sidecar absent, rules not scrubbed): {body}"
+    );
 }
 
 /// Scenario 4: YAML missing, sidecar present (inverse hand-edit).
@@ -167,9 +174,13 @@ fn yaml_missing_sidecar_present_reverts_settings_only() {
     );
 
     // Settings WERE scrubbed because the sidecar told us which
-    // rules to remove. the projected rule is the
-    // coarse `Bash(remargin *)` deny.
+    // rules to remove. The projected editor-tool deny is gone.
+    // `Bash(remargin *)` is NOT projected (CLI denial is hook-enforced).
     let body = system.read_to_string(&files[0]).unwrap();
+    assert!(
+        !body.contains("src/secret"),
+        "settings should no longer reference src/secret after sidecar-guided revert: {body}"
+    );
     assert!(!body.contains("Bash(remargin *)"));
 }
 
@@ -182,14 +193,25 @@ fn manual_rule_deletion_surfaces_warning() {
     let files = settings_files(&anchor);
     restrict::restrict(&system, &anchor, &restrict_args("src/secret"), &files).unwrap();
 
-    // Hand-delete the projected rule from the project-scope file.
-    // the projection is the coarse `Bash(remargin *)`
-    // deny when `cli_allowed = false` and there are no extras.
+    // Hand-delete one of the projected editor-tool deny rules from
+    // the project-scope file, mirroring what a user does when they
+    // manually edit settings. `Bash(remargin *)` is NOT projected
+    // (CLI denial is hook-enforced), so we use an Edit deny.
     let local = files[0].clone();
     let body = system.read_to_string(&local).unwrap();
     let mut value: serde_json::Value = serde_json::from_str(&body).unwrap();
     let deny = value["permissions"]["deny"].as_array_mut().unwrap();
-    deny.retain(|v| v.as_str() != Some("Bash(remargin *)"));
+    // Find an Edit deny for src/secret and remove it.
+    let edit_rule = deny
+        .iter()
+        .find(|v| {
+            v.as_str()
+                .is_some_and(|s| s.starts_with("Edit(") && s.contains("src/secret"))
+        })
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .unwrap();
+    deny.retain(|v| v.as_str() != Some(edit_rule.as_str()));
     let updated = serde_json::to_string_pretty(&value).unwrap();
     system.write(&local, updated.as_bytes()).unwrap();
 
@@ -203,8 +225,8 @@ fn manual_rule_deletion_surfaces_warning() {
         outcome
             .warnings
             .iter()
-            .any(|w| w.contains("Bash(remargin *)") && w.contains("manually removed")),
-        "expected manual-removal warning, got: {:#?}",
+            .any(|w| w.contains(edit_rule.as_str()) && w.contains("manually removed")),
+        "expected manual-removal warning for {edit_rule:?}, got: {:#?}",
         outcome.warnings
     );
 }

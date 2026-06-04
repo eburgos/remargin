@@ -624,3 +624,133 @@ fn resolve_trusted_roots_for_cwd_locked_returns_empty() {
     let resolved = resolve_trusted_roots_for_cwd(&system, Path::new("/realm")).unwrap();
     assert!(resolved.is_empty());
 }
+
+// ---------------------------------------------------------------------
+// cli_allowed: folder-level CLI policy — nearest-wins resolver tests
+// ---------------------------------------------------------------------
+
+/// T1: no `cli_allowed` anywhere in walk → effective = true (default allow).
+#[test]
+fn cli_allowed_default_allow_when_absent() {
+    let system = MockSystem::new()
+        .with_dir(Path::new("/realm"))
+        .unwrap()
+        .with_file(Path::new("/realm/.remargin.yaml"), b"identity: alice\n")
+        .unwrap();
+    let resolved = resolve_permissions(&system, Path::new("/realm")).unwrap();
+    assert!(
+        resolved.cli_allowed.is_none(),
+        "expected None (not declared)"
+    );
+    assert!(resolved.cli_allowed(), "effective default must be true");
+}
+
+/// T2: nearest-wins deny — root + A absent, A.A declares deny.
+/// Deny in A.A subtree; allow elsewhere.
+#[test]
+fn cli_allowed_nearest_wins_deny() {
+    let root_yaml = "identity: alice\n";
+    let mid_yaml = "identity: alice\n"; // no cli_allowed
+    let deep_yaml = "permissions:\n  cli_allowed: false\n";
+    let system = MockSystem::new()
+        .with_dir(Path::new("/realm/a/aa"))
+        .unwrap()
+        .with_file(Path::new("/realm/.remargin.yaml"), root_yaml.as_bytes())
+        .unwrap()
+        .with_file(Path::new("/realm/a/.remargin.yaml"), mid_yaml.as_bytes())
+        .unwrap()
+        .with_file(
+            Path::new("/realm/a/aa/.remargin.yaml"),
+            deep_yaml.as_bytes(),
+        )
+        .unwrap();
+
+    // Walk from A.A: deepest declaration wins → deny.
+    let from_aa = resolve_permissions(&system, Path::new("/realm/a/aa")).unwrap();
+    assert_eq!(from_aa.cli_allowed, Some(false));
+    assert!(!from_aa.cli_allowed());
+
+    // Walk from A: no declaration in A or root → default allow.
+    let from_a = resolve_permissions(&system, Path::new("/realm/a")).unwrap();
+    assert!(from_a.cli_allowed.is_none());
+    assert!(from_a.cli_allowed());
+
+    // Walk from root: no declaration → default allow.
+    let from_root = resolve_permissions(&system, Path::new("/realm")).unwrap();
+    assert!(from_root.cli_allowed.is_none());
+    assert!(from_root.cli_allowed());
+}
+
+/// T3: root declares `allow` — inherited everywhere below (no override).
+#[test]
+fn cli_allowed_root_allow_inherited() {
+    let root_yaml = "permissions:\n  cli_allowed: true\n";
+    let system = MockSystem::new()
+        .with_dir(Path::new("/realm/sub"))
+        .unwrap()
+        .with_file(Path::new("/realm/.remargin.yaml"), root_yaml.as_bytes())
+        .unwrap();
+
+    // From /realm: declared allow.
+    let from_root = resolve_permissions(&system, Path::new("/realm")).unwrap();
+    assert_eq!(from_root.cli_allowed, Some(true));
+    assert!(from_root.cli_allowed());
+
+    // From /realm/sub: no sub-declaration → walks up, finds root allow.
+    let from_sub = resolve_permissions(&system, Path::new("/realm/sub")).unwrap();
+    assert_eq!(from_sub.cli_allowed, Some(true));
+    assert!(from_sub.cli_allowed());
+}
+
+/// T4: deeper override re-allows — root allow, A deny, A.A allow.
+/// Deny in A subtree except A.A subtree.
+#[test]
+fn cli_allowed_deeper_override_re_allows() {
+    let root_yaml = "permissions:\n  cli_allowed: true\n";
+    let mid_yaml = "permissions:\n  cli_allowed: false\n";
+    let deep_yaml = "permissions:\n  cli_allowed: true\n";
+    let system = MockSystem::new()
+        .with_dir(Path::new("/realm/a/aa"))
+        .unwrap()
+        .with_file(Path::new("/realm/.remargin.yaml"), root_yaml.as_bytes())
+        .unwrap()
+        .with_file(Path::new("/realm/a/.remargin.yaml"), mid_yaml.as_bytes())
+        .unwrap()
+        .with_file(
+            Path::new("/realm/a/aa/.remargin.yaml"),
+            deep_yaml.as_bytes(),
+        )
+        .unwrap();
+
+    // Root: allow.
+    let from_root = resolve_permissions(&system, Path::new("/realm")).unwrap();
+    assert_eq!(from_root.cli_allowed, Some(true));
+    assert!(from_root.cli_allowed());
+
+    // A: deny (nearest declaration).
+    let from_a = resolve_permissions(&system, Path::new("/realm/a")).unwrap();
+    assert_eq!(from_a.cli_allowed, Some(false));
+    assert!(!from_a.cli_allowed());
+
+    // A.A: allow (nearest declaration overrides A's deny).
+    let from_aa = resolve_permissions(&system, Path::new("/realm/a/aa")).unwrap();
+    assert_eq!(from_aa.cli_allowed, Some(true));
+    assert!(from_aa.cli_allowed());
+}
+
+/// T1b: `permissions:` block parses `cli_allowed` correctly.
+#[test]
+fn permissions_block_parses_cli_allowed() {
+    let yaml_allow = "permissions:\n  cli_allowed: true\n";
+    let yaml_deny = "permissions:\n  cli_allowed: false\n";
+    let yaml_absent = "permissions:\n  allow_dot_folders: ['.git']\n";
+
+    let cfg_allow: Config = serde_yaml::from_str(yaml_allow).unwrap();
+    assert_eq!(cfg_allow.permissions.cli_allowed, Some(true));
+
+    let cfg_deny: Config = serde_yaml::from_str(yaml_deny).unwrap();
+    assert_eq!(cfg_deny.permissions.cli_allowed, Some(false));
+
+    let cfg_absent: Config = serde_yaml::from_str(yaml_absent).unwrap();
+    assert!(cfg_absent.permissions.cli_allowed.is_none());
+}

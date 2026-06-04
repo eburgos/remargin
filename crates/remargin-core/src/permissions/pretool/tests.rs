@@ -596,3 +596,95 @@ fn bash_rtk_wrapped_sed_shows_sed_guidance() {
         &["mcp__remargin__get", "mcp__remargin__write"],
     );
 }
+
+// ---------------------------------------------------------------------
+// cli_allowed: folder-level CLI policy hook enforcement
+// ---------------------------------------------------------------------
+
+fn cli_deny_yaml() -> &'static str {
+    "permissions:\n  cli_allowed: false\n"
+}
+
+fn cli_allow_yaml() -> &'static str {
+    "permissions:\n  cli_allowed: true\n"
+}
+
+/// T5: policy deny + `remargin write x` → Deny with `cli_allowed` message.
+#[test]
+fn bash_cli_denied_blocks_remargin_verb() {
+    let system = mock_with(&[("/r/.remargin.yaml", cli_deny_yaml())]);
+    let stdin = event_json("Bash", "/r", &json!({ "command": "remargin write x" }));
+    let decision = expect_deny(pretool(&system, &stdin));
+    let reason = deny_reason(&decision);
+    assert!(reason.contains("cli_allowed: false"), "reason: {reason}");
+    assert!(reason.contains("mcp__remargin__"), "reason: {reason}");
+}
+
+/// T6: policy allow + `remargin write x` → `SilentAllow`.
+#[test]
+fn bash_cli_allowed_permits_remargin_verb() {
+    let system = mock_with(&[("/r/.remargin.yaml", cli_allow_yaml())]);
+    let stdin = event_json("Bash", "/r", &json!({ "command": "remargin write x" }));
+    assert_eq!(pretool(&system, &stdin), PretoolOutcome::SilentAllow);
+}
+
+/// T6b: no `cli_allowed` declared (default = allow) + `remargin ls` → `SilentAllow`.
+#[test]
+fn bash_cli_default_allow_permits_remargin_verb() {
+    // No .remargin.yaml present → unconstrained → default allow.
+    let system = mock_with(&[]);
+    let stdin = event_json("Bash", "/r", &json!({ "command": "remargin ls" }));
+    assert_eq!(pretool(&system, &stdin), PretoolOutcome::SilentAllow);
+}
+
+/// T7: policy deny + `FOO=bar rtk proxy remargin ls` → Deny (env + wrapper stripped).
+#[test]
+fn bash_cli_denied_with_env_prefix_and_rtk_proxy_wrapper() {
+    let system = mock_with(&[("/r/.remargin.yaml", cli_deny_yaml())]);
+    let stdin = event_json(
+        "Bash",
+        "/r",
+        &json!({ "command": "FOO=bar rtk proxy remargin ls" }),
+    );
+    let decision = expect_deny(pretool(&system, &stdin));
+    assert!(deny_reason(&decision).contains("cli_allowed: false"));
+}
+
+/// T8: policy deny + `ls` (non-remargin verb) → `SilentAllow`.
+#[test]
+fn bash_cli_denied_non_remargin_verb_unaffected() {
+    let system = mock_with(&[("/r/.remargin.yaml", cli_deny_yaml())]);
+    let stdin = event_json("Bash", "/r", &json!({ "command": "ls /r" }));
+    assert_eq!(pretool(&system, &stdin), PretoolOutcome::SilentAllow);
+}
+
+/// T5b: policy deny + bare `remargin` with no args → Deny.
+#[test]
+fn bash_cli_denied_bare_remargin_no_args() {
+    let system = mock_with(&[("/r/.remargin.yaml", cli_deny_yaml())]);
+    let stdin = event_json("Bash", "/r", &json!({ "command": "remargin" }));
+    let decision = expect_deny(pretool(&system, &stdin));
+    assert!(deny_reason(&decision).contains("cli_allowed: false"));
+}
+
+/// T5c: policy deny in a child, cwd in that child → Deny.
+#[test]
+fn bash_cli_denied_child_policy_applies_to_cwd_in_child() {
+    let system = mock_with(&[("/r/sub/.remargin.yaml", cli_deny_yaml())])
+        .with_dir(Path::new("/r/sub"))
+        .unwrap();
+    let stdin = event_json("Bash", "/r/sub", &json!({ "command": "remargin write x" }));
+    let decision = expect_deny(pretool(&system, &stdin));
+    assert!(deny_reason(&decision).contains("cli_allowed: false"));
+}
+
+/// T5d: policy deny in child but cwd is the parent (above the deny) → `SilentAllow`.
+#[test]
+fn bash_cli_denied_child_policy_does_not_affect_parent_cwd() {
+    let system = mock_with(&[("/r/sub/.remargin.yaml", cli_deny_yaml())])
+        .with_dir(Path::new("/r/sub"))
+        .unwrap();
+    // cwd = /r (parent, no cli_allowed declared there) → default allow.
+    let stdin = event_json("Bash", "/r", &json!({ "command": "remargin write x" }));
+    assert_eq!(pretool(&system, &stdin), PretoolOutcome::SilentAllow);
+}

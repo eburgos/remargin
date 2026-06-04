@@ -170,6 +170,7 @@ fn scenario_10_allow_dot_folders_unblocks_named_dot_folder() {
 fn scenario_11_remargin_folder_special_cased_by_dot_folder_check() {
     let resolved = ResolvedPermissions {
         allow_dot_folders: Vec::new(),
+        cli_allowed: None,
         deny_ops: Vec::new(),
         trusted_roots: vec![ResolvedTrustedRoot {
             also_deny_bash: Vec::new(),
@@ -284,6 +285,7 @@ fn is_mutating_op_recognises_full_set() {
 fn dot_folder_denial_active_for_read_ops() {
     let resolved = ResolvedPermissions {
         allow_dot_folders: Vec::new(),
+        cli_allowed: None,
         deny_ops: Vec::new(),
         trusted_roots: vec![ResolvedTrustedRoot {
             also_deny_bash: Vec::new(),
@@ -476,6 +478,7 @@ fn caller(name: &str, author_type: AuthorType, mode: Mode) -> CallerInfo {
 fn exceptions_bare_blanket_refuses() {
     let resolved = ResolvedPermissions {
         allow_dot_folders: Vec::new(),
+        cli_allowed: None,
         deny_ops: deny_ops_items(vec![bare(OpName::Purge)], "/r/secret"),
         trusted_roots: Vec::new(),
         trusted_roots_lock: None,
@@ -500,6 +503,7 @@ fn exceptions_bare_blanket_refuses() {
 fn exceptions_bare_unrelated_op_allowed() {
     let resolved = ResolvedPermissions {
         allow_dot_folders: Vec::new(),
+        cli_allowed: None,
         deny_ops: deny_ops_items(vec![bare(OpName::Purge)], "/r/secret"),
         trusted_roots: Vec::new(),
         trusted_roots_lock: None,
@@ -520,6 +524,7 @@ fn exceptions_bare_unrelated_op_allowed() {
 fn exceptions_match_allows_caller() {
     let resolved = ResolvedPermissions {
         allow_dot_folders: Vec::new(),
+        cli_allowed: None,
         deny_ops: deny_ops_items(
             vec![with_exceptions(OpName::Purge, &["eduardo-burgos"])],
             "/r/secret",
@@ -543,6 +548,7 @@ fn exceptions_match_allows_caller() {
 fn exceptions_miss_refuses_caller() {
     let resolved = ResolvedPermissions {
         allow_dot_folders: Vec::new(),
+        cli_allowed: None,
         deny_ops: deny_ops_items(
             vec![with_exceptions(OpName::Purge, &["eduardo-burgos"])],
             "/r/secret",
@@ -572,6 +578,7 @@ fn exceptions_miss_refuses_caller() {
 fn exceptions_two_entries_first_matches() {
     let resolved = ResolvedPermissions {
         allow_dot_folders: Vec::new(),
+        cli_allowed: None,
         deny_ops: deny_ops_items(
             vec![with_exceptions(
                 OpName::Write,
@@ -598,6 +605,7 @@ fn exceptions_two_entries_first_matches() {
 fn exceptions_two_entries_second_matches() {
     let resolved = ResolvedPermissions {
         allow_dot_folders: Vec::new(),
+        cli_allowed: None,
         deny_ops: deny_ops_items(
             vec![with_exceptions(
                 OpName::Write,
@@ -624,6 +632,7 @@ fn exceptions_two_entries_second_matches() {
 fn exceptions_empty_list_acts_as_blanket() {
     let resolved = ResolvedPermissions {
         allow_dot_folders: Vec::new(),
+        cli_allowed: None,
         deny_ops: deny_ops_items(vec![with_exceptions(OpName::Purge, &[])], "/r/secret"),
         trusted_roots: Vec::new(),
         trusted_roots_lock: None,
@@ -648,6 +657,7 @@ fn exceptions_empty_list_acts_as_blanket() {
 fn exceptions_mixed_bare_and_full_list() {
     let resolved = ResolvedPermissions {
         allow_dot_folders: Vec::new(),
+        cli_allowed: None,
         deny_ops: deny_ops_items(
             vec![
                 bare(OpName::Sign),
@@ -702,6 +712,7 @@ fn exceptions_mixed_bare_and_full_list() {
 fn exceptions_union_semantics_bare_wins_over_full() {
     let resolved = ResolvedPermissions {
         allow_dot_folders: Vec::new(),
+        cli_allowed: None,
         deny_ops: vec![
             ResolvedDenyOps {
                 ops: vec![bare(OpName::Purge)],
@@ -737,6 +748,7 @@ fn exceptions_union_semantics_bare_wins_over_full() {
 fn exceptions_honored_in_open_mode() {
     let resolved = ResolvedPermissions {
         allow_dot_folders: Vec::new(),
+        cli_allowed: None,
         deny_ops: deny_ops_items(
             vec![with_exceptions(OpName::Purge, &["eduardo-burgos"])],
             "/r/secret",
@@ -760,6 +772,7 @@ fn exceptions_honored_in_open_mode() {
 fn exceptions_honored_in_registered_mode() {
     let resolved = ResolvedPermissions {
         allow_dot_folders: Vec::new(),
+        cli_allowed: None,
         deny_ops: deny_ops_items(
             vec![with_exceptions(OpName::Purge, &["eduardo-burgos"])],
             "/r/secret",
@@ -783,6 +796,7 @@ fn exceptions_honored_in_registered_mode() {
 fn exceptions_honored_in_strict_mode() {
     let resolved = ResolvedPermissions {
         allow_dot_folders: Vec::new(),
+        cli_allowed: None,
         deny_ops: deny_ops_items(
             vec![with_exceptions(OpName::Purge, &["eduardo-burgos"])],
             "/r/secret",
@@ -806,6 +820,7 @@ fn exceptions_honored_in_strict_mode() {
 fn exceptions_entry_path_does_not_cover_target_allows() {
     let resolved = ResolvedPermissions {
         allow_dot_folders: Vec::new(),
+        cli_allowed: None,
         deny_ops: deny_ops_items(vec![bare(OpName::Purge)], "/r/scratch"),
         trusted_roots: Vec::new(),
         trusted_roots_lock: None,
@@ -826,6 +841,7 @@ fn exceptions_entry_path_does_not_cover_target_allows() {
 fn exceptions_match_via_identity_id() {
     let resolved = ResolvedPermissions {
         allow_dot_folders: Vec::new(),
+        cli_allowed: None,
         deny_ops: deny_ops_items(
             vec![with_exceptions(OpName::Purge, &["alice-id"])],
             "/r/secret",
@@ -893,6 +909,7 @@ fn strict_agent_default_ssh_override_via_user_exception() {
     let system = ssh_test_system();
     let resolved = ResolvedPermissions {
         allow_dot_folders: Vec::new(),
+        cli_allowed: None,
         deny_ops: vec![ResolvedDenyOps {
             ops: vec![with_exceptions(OpName::Get, &["nimbus"])],
             path: PathBuf::from("/h/.ssh"),
@@ -994,6 +1011,7 @@ fn rem_djfx_deny_ops_wins_for_reads() {
 fn rem_djfx_remargin_dot_folder_read_parity() {
     let resolved = ResolvedPermissions {
         allow_dot_folders: Vec::new(),
+        cli_allowed: None,
         deny_ops: Vec::new(),
         trusted_roots: vec![ResolvedTrustedRoot {
             also_deny_bash: Vec::new(),

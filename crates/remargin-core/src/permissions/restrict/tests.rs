@@ -178,27 +178,37 @@ fn duplicate_path_does_not_create_second_entry() {
 /// Scenario 9: re-running after a manually-deleted Claude
 /// rule backfills the missing rule (`apply_rules` dedupes against
 /// existing entries; the second call still writes any missing strings).
-/// Uses the coarse `Bash(remargin *)` deny — the only rule the
-/// minimised projection emits when `cli_allowed = false` and there are
-/// no `also_deny_bash` extras.
+/// Uses an editor-tool deny (the Edit rule) as the test target.
+/// Note: `Bash(remargin *)` is no longer projected; CLI denial is
+/// hook-enforced via the folder-level `cli_allowed` field.
 #[test]
 fn rerun_backfills_missing_settings_rule() {
     let (system, anchor) = realm_with_claude(&[]);
     let files = settings_files(&anchor);
     restrict(&system, &anchor, &args("src/secret"), &files).unwrap();
 
-    // Manually scrub the projected rule from the project-scope
+    // Manually scrub an editor-tool deny from the project-scope
     // settings file.
     let local = files[0].clone();
-    let mut value: Value = serde_yaml::from_str(&system.read_to_string(&local).unwrap()).unwrap();
-    if let Some(deny) = value
-        .get_mut("permissions")
-        .and_then(|p| p.get_mut("deny"))
-        .and_then(|d| d.as_sequence_mut())
-    {
-        deny.retain(|v| v.as_str() != Some("Bash(remargin *)"));
-    }
-    let body = serde_json::to_string_pretty(&value).unwrap();
+    let mut json_value: serde_json::Value =
+        serde_json::from_str(&system.read_to_string(&local).unwrap()).unwrap();
+    let edit_rule = json_value["permissions"]["deny"]
+        .as_array()
+        .and_then(|arr| {
+            arr.iter()
+                .find(|v| {
+                    v.as_str()
+                        .is_some_and(|s| s.starts_with("Edit(") && s.contains("src/secret"))
+                })
+                .and_then(|v| v.as_str())
+                .map(String::from)
+        })
+        .unwrap();
+    json_value["permissions"]["deny"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|v| v.as_str() != Some(edit_rule.as_str()));
+    let body = serde_json::to_string_pretty(&json_value).unwrap();
     system.write(&local, body.as_bytes()).unwrap();
 
     // Re-running restrict re-adds the missing rule.
@@ -207,8 +217,13 @@ fn rerun_backfills_missing_settings_rule() {
         serde_json::from_str(&system.read_to_string(&local).unwrap()).unwrap();
     let deny = after["permissions"]["deny"].as_array().unwrap();
     assert!(
-        deny.iter().any(|v| v.as_str() == Some("Bash(remargin *)")),
-        "missing remargin-cli deny was not backfilled: {after:#?}"
+        deny.iter().any(|v| v.as_str() == Some(edit_rule.as_str())),
+        "missing {edit_rule:?} was not backfilled: {after:#?}"
+    );
+    // `Bash(remargin *)` is never projected.
+    assert!(
+        !deny.iter().any(|v| v.as_str() == Some("Bash(remargin *)")),
+        "Bash(remargin *) must not appear in projected settings: {after:#?}"
     );
 }
 
@@ -240,10 +255,12 @@ fn also_deny_bash_propagates_to_yaml_and_rules() {
     );
 }
 
-/// Scenario 11: `cli_allowed=true` lands on the entry AND removes
-/// the `Bash(remargin *)` deny from the rule set.
+/// Scenario 11: `cli_allowed=true` lands on the YAML entry.
+/// `Bash(remargin *)` is never projected regardless of `cli_allowed`;
+/// CLI denial is enforced by the `PreToolUse` hook via the folder-level
+/// `cli_allowed` field in `.remargin.yaml`.
 #[test]
-fn cli_allowed_true_omits_remargin_cli_deny() {
+fn cli_allowed_true_persists_in_yaml_no_remargin_cli_deny_projected() {
     let (system, anchor) = realm_with_claude(&[]);
     let mut a = args("src/secret");
     a.cli_allowed = true;
@@ -253,6 +270,7 @@ fn cli_allowed_true_omits_remargin_cli_deny() {
     let entry = &value["permissions"]["trusted_roots"][0];
     assert_eq!(entry["cli_allowed"], Value::Bool(true));
 
+    // `Bash(remargin *)` is never projected (hook-enforced).
     assert!(
         !outcome
             .rules_applied

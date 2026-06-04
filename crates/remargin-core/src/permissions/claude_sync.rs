@@ -10,10 +10,10 @@
 //! creation). When `allow_dot_folders` names specific folders, narrow
 //! re-allows override the broader deny.
 //!
-//! `Bash(remargin *)` is emitted as a path-tail-free global rule so
-//! tilde, `$HOME`, relative paths, and implicit-cwd subcommands cannot
-//! evade it. `cli_allowed: true` skips that single rule; editor-tool
-//! and Bash-mutator fences still emit.
+//! `Bash(remargin *)` is no longer emitted by this module. CLI denial
+//! is enforced by the `PreToolUse` hook (pretool.rs) via the
+//! folder-level `cli_allowed` field in `.remargin.yaml`. The
+//! projection is user-managed; the hook is the single source of truth.
 
 pub mod rule_shape;
 #[cfg(test)]
@@ -350,13 +350,16 @@ pub struct SettingsFileSim {
 ///   `Bash(mv <path>/** *)`, `Bash(mv <path>/** <path>/**)`.
 /// - `also_deny_bash` extras: `Bash(<cmd> * <path>/**)` for each
 ///   user-supplied entry.
-/// - When `cli_allowed == false`, the global `Bash(remargin *)` deny
-///   (no path tail — slice A keeper). `cli_allowed == true` skips it.
 /// - Per `allow_dot_folders` entry: per-tool re-allows that override
 ///   the dot-folder default-deny.
 ///
-/// `mcp__remargin__*` is NOT auto-emitted on the allow side
-///; the user opts in if they want silent MCP forwarding.
+/// `mcp__remargin__*` is NOT auto-emitted on the allow side;
+/// the user opts in if they want silent MCP forwarding.
+///
+/// Note: `Bash(remargin *)` is no longer emitted here. CLI denial is
+/// now enforced by the hook (pretool) via the folder-level
+/// `cli_allowed` field on `ResolvedPermissions`. The projection is
+/// user-managed and the hook is the single source of truth.
 #[must_use]
 pub fn rules_for(
     entry: &ResolvedTrustedRoot,
@@ -422,16 +425,7 @@ pub fn rules_for(
         deny.push(format!("Bash({cmd} * {glob_root}/**)"));
     }
 
-    // 5. Block remargin CLI invocations globally when `cli_allowed` is
-    // false. No path tail — the matcher cannot be dodged with tilde /
-    // `$HOME` / relative paths because there is no path on the
-    // command line to evade. `op_guard` still handles per-target
-    // enforcement.
-    if !entry.cli_allowed {
-        deny.push(String::from("Bash(remargin *)"));
-    }
-
-    // 6. Allow list. Empty by default — no implicit `mcp__remargin__*`
+    // 5. Allow list. Empty by default — no implicit `mcp__remargin__*`
     // allow, so users keep per-call oversight of remargin's MCP tools
     // under a blanket restrict. Per-dot-folder re-allows override the
     // default-deny ONLY for folders the user explicitly listed in

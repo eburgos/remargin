@@ -212,6 +212,12 @@ fn bash_decision(resolved: &ResolvedPermissions, command: &str) -> PretoolOutcom
         return PretoolOutcome::SilentAllow;
     };
 
+    // Folder-level CLI policy: deny any `remargin` CLI invocation when
+    // the effective policy is false (nearest-wins, default = allowed).
+    if !resolved.cli_allowed() && verb == "remargin" {
+        return PretoolOutcome::Deny(build_cli_denied_decision());
+    }
+
     if !verb_triggers_check(verb, &resolved.trusted_roots) {
         return PretoolOutcome::SilentAllow;
     }
@@ -303,6 +309,19 @@ fn build_decision(tool: &str, path: &Path) -> Decision {
             hook_event_name: "PreToolUse",
             permission_decision: PermissionDecision::Deny,
             permission_decision_reason: message_for(tool, path),
+        },
+    }
+}
+
+fn build_cli_denied_decision() -> Decision {
+    Decision {
+        hook_specific_output: DecisionInner {
+            hook_event_name: "PreToolUse",
+            permission_decision: PermissionDecision::Deny,
+            permission_decision_reason: String::from(
+                "The remargin CLI is denied for agents in this folder (cli_allowed: false). \
+                 Use the mcp__remargin__* tools instead.",
+            ),
         },
     }
 }

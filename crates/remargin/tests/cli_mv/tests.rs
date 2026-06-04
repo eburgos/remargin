@@ -393,9 +393,10 @@ fn restrict_projects_full_mv_deny_set() {
         );
     }
 
-    // The coarse remargin CLI deny is also present (no path tail).
+    // `Bash(remargin *)` is NOT projected — CLI denial is hook-enforced
+    // via the folder-level `cli_allowed` field in `.remargin.yaml`.
     assert!(
-        deny.iter().any(|r| r == "Bash(remargin *)"),
-        "expected `Bash(remargin *)` in deny set, got: {deny:#?}"
+        !deny.iter().any(|r| r == "Bash(remargin *)"),
+        "Bash(remargin *) must not appear in projected deny set, got: {deny:#?}"
     );
 }

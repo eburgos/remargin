@@ -89,6 +89,13 @@ pub struct Permissions {
     #[serde(default)]
     pub allow_dot_folders: Vec<String>,
 
+    /// Folder-level CLI policy. `None` = not declared at this level
+    /// (inherit from parent walk). `Some(true)` = CLI allowed.
+    /// `Some(false)` = CLI denied. Resolved with nearest-wins
+    /// semantics; effective default when absent everywhere = allowed.
+    #[serde(default)]
+    pub cli_allowed: Option<bool>,
+
     #[serde(default)]
     pub deny_ops: Vec<DenyOpsEntry>,
 

@@ -117,7 +117,9 @@ fn restrict_writes_settings_sidecar_and_gitignore() {
         v.as_str()
             .is_some_and(|s| s.starts_with("Edit(") && s.contains("src/secret"))
     }));
-    assert!(deny.iter().any(|v| v.as_str() == Some("Bash(remargin *)")));
+    // `Bash(remargin *)` is no longer projected — CLI denial is enforced
+    // by the PreToolUse hook via the folder-level `cli_allowed` field.
+    assert!(!deny.iter().any(|v| v.as_str() == Some("Bash(remargin *)")));
 
     // User-scope file landed too.
     let user_body = fs::read_to_string(&user_settings).unwrap();
@@ -534,12 +536,14 @@ fn plan_restrict_reflects_cd_pushd_defaults() {
                 sf["path"].as_str().unwrap_or("<unknown>")
             );
         }
-        // Sanity: the coarse remargin-cli deny IS also projected.
+        // `Bash(remargin *)` is no longer projected — CLI denial is
+        // enforced by the PreToolUse hook via the folder-level
+        // `cli_allowed` field in `.remargin.yaml`.
         assert!(
-            to_add
+            !to_add
                 .iter()
                 .any(|v| v.as_str() == Some("Bash(remargin *)")),
-            "plan restrict should still project the coarse remargin-cli deny, got {to_add:?}"
+            "plan restrict must NOT project the remargin-cli deny (moved to hook), got {to_add:?}"
         );
     }
 }

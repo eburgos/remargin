@@ -59,9 +59,10 @@ fn run_restrict(realm: &TempDir, path: &str) {
 }
 
 /// Scenario 12: end-to-end restrict + unprotect leaves
-/// the realm in a state that no longer carries the projected rule.
-/// Under the minimised projection the only deny `restrict` emits
-/// is `Bash(remargin *)`.
+/// the realm in a state that no longer carries the projected rules.
+/// Verifies using an editor-tool deny that is projected.
+/// Note: `Bash(remargin *)` is no longer projected; CLI denial is
+/// hook-enforced via the `cli_allowed` field.
 #[test]
 fn restrict_then_unprotect_clears_state() {
     let realm = realm_with_claude();
@@ -69,14 +70,23 @@ fn restrict_then_unprotect_clears_state() {
     run_restrict(&realm, "src/secret");
     let project_scope = realm.path().join(".claude/settings.local.json");
     let before = fs::read_to_string(&project_scope).unwrap();
-    assert!(before.contains("Bash(remargin *)"));
+    // An editor-tool deny should be present after restrict.
+    assert!(
+        before.contains("Edit(") && before.contains("src/secret"),
+        "expected Edit deny after restrict, got:\n{before}"
+    );
+    // `Bash(remargin *)` is NOT projected — CLI denial is hook-enforced.
+    assert!(
+        !before.contains("Bash(remargin *)"),
+        "Bash(remargin *) must not appear in projected settings:\n{before}"
+    );
 
     let out = run_in(realm.path(), &["claude", "unrestrict", "src/secret"]);
     assert_status(&out, 0);
 
     let after = fs::read_to_string(&project_scope).unwrap();
     assert!(
-        !after.contains("Bash(remargin *)"),
+        !after.contains("src/secret"),
         "settings still references the removed rule:\n{after}"
     );
 
@@ -250,12 +260,11 @@ fn unprotect_absent_from_mcp_surface() {
     assert!(text.contains("remargin claude unrestrict"), "got: {text}");
 }
 
-/// When the projected deny rule has been hand-deleted from BOTH
+/// When a projected deny rule has been hand-deleted from BOTH
 /// the realm-local and the user-scope settings file between
 /// `restrict` and `unprotect`, the warning emitter must surface
 /// both — one warning per file — and the rest of the unprotect
-/// work (yaml + sidecar) must complete cleanly. Under the
-/// minimised projection the only deny is `Bash(remargin *)`.
+/// work (yaml + sidecar) must complete cleanly.
 #[test]
 fn unprotect_warns_per_settings_file_when_both_have_hand_deleted_rules() {
     let realm = realm_with_claude();
@@ -265,17 +274,30 @@ fn unprotect_warns_per_settings_file_when_both_have_hand_deleted_rules() {
     let realm_local = realm.path().join(".claude/settings.local.json");
     let user_scope = user_settings_arg(&realm);
 
-    // The minimised projection emits exactly one deny —
-    // `Bash(remargin *)` — when `cli_allowed = false`. Hand-delete
-    // it from both settings files, mirroring what a user would do
-    // if they manually scrubbed entries.
-    let target_rule = "Bash(remargin *)";
+    // Read one of the projected editor-tool deny rules and hand-delete
+    // it from both settings files, mirroring what a user would do if
+    // they manually scrubbed entries.
+    let local_value: Value =
+        serde_json::from_str(&fs::read_to_string(&realm_local).unwrap()).unwrap();
+    let target_rule = local_value["permissions"]["deny"]
+        .as_array()
+        .and_then(|arr| {
+            arr.iter()
+                .find(|v| {
+                    v.as_str()
+                        .is_some_and(|s| s.starts_with("Edit(") && s.contains("src/secret"))
+                })
+                .and_then(|v| v.as_str())
+                .map(String::from)
+        })
+        .unwrap();
+
     for file in [&realm_local, &user_scope] {
         let mut value: Value = serde_json::from_str(&fs::read_to_string(file).unwrap()).unwrap();
         value["permissions"]["deny"]
             .as_array_mut()
             .unwrap()
-            .retain(|v| v.as_str() != Some(target_rule));
+            .retain(|v| v.as_str() != Some(target_rule.as_str()));
         fs::write(
             file,
             serde_json::to_string_pretty(&value).unwrap().as_bytes(),
@@ -329,7 +351,7 @@ fn unprotect_warns_per_settings_file_when_both_have_hand_deleted_rules() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|v| v.as_str() == Some(target_rule));
+            .any(|v| v.as_str() == Some(target_rule.as_str()));
         assert!(
             !any_remargin_left,
             "{file:?} still contains the remargin-cli deny after unprotect: {value:#?}"

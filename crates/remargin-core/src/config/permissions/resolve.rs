@@ -101,6 +101,12 @@ pub struct ResolvedDenyOpsItem {
 pub struct ResolvedPermissions {
     pub allow_dot_folders: Vec<ResolvedAllowDotFolders>,
 
+    /// Effective folder-level CLI policy resolved by nearest-wins
+    /// parent-walk. `None` means no `.remargin.yaml` in the walk
+    /// declared `cli_allowed`; callers treat `None` as allowed
+    /// (effective default = true).
+    pub cli_allowed: Option<bool>,
+
     pub deny_ops: Vec<ResolvedDenyOps>,
 
     /// Walk order, deepest first.
@@ -119,6 +125,16 @@ impl ResolvedPermissions {
             .iter()
             .flat_map(|entry| entry.names.iter().cloned())
             .collect()
+    }
+
+    /// Effective CLI policy: `true` = CLI allowed (default when absent).
+    /// Nearest-wins declaration in the parent walk wins; absent = allowed.
+    #[must_use]
+    pub const fn cli_allowed(&self) -> bool {
+        match self.cli_allowed {
+            Some(v) => v,
+            None => true,
+        }
     }
 
     /// No opinion stated: every walked file was silent and nothing
@@ -164,6 +180,13 @@ fn extend_resolved(
     source_file: &Path,
 ) {
     let source_dir = source_file.parent().unwrap_or(source_file);
+
+    // Nearest-wins: only record the first declaration found (deepest,
+    // since walk is deepest-first). Shallower files are skipped when
+    // a deeper one already set the policy.
+    if acc.cli_allowed.is_none() && block.cli_allowed.is_some() {
+        acc.cli_allowed = block.cli_allowed;
+    }
 
     if let Some(entries) = block.trusted_roots.as_ref() {
         // First observed lock = deepest, since walk is deepest-first.

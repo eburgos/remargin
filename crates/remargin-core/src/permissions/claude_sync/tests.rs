@@ -5,10 +5,13 @@
 //!
 //! `restrict` projects the full native-tool fence (editor-tool denies,
 //! dot-folder defaults, `BASH_MUTATORS` list, mv source/dest patterns)
-//! plus the global `Bash(remargin *)` CLI deny plus
-//! `also_deny_bash` extras. `op_guard` enforces per-target ops inside
-//! the binary; the Claude-side projection covers the native-tool side
-//! that doesn't go through remargin.
+//! plus `also_deny_bash` extras. `op_guard` enforces per-target ops
+//! inside the binary; the Claude-side projection covers the native-tool
+//! side that doesn't go through remargin.
+//!
+//! Note: `Bash(remargin *)` is NOT emitted by the projection. CLI
+//! denial is enforced by the `PreToolUse` hook via the folder-level
+//! `cli_allowed` field in `.remargin.yaml`.
 
 use core::slice::from_ref;
 use std::path::{Path, PathBuf};
@@ -46,9 +49,9 @@ fn restrict_wildcard(realm: &str, cli_allowed: bool) -> ResolvedTrustedRoot {
     }
 }
 
-/// Scenario 1 — subpath, no extras, `cli_allowed = false`. Full
-/// native-tool fence + Bash-mutator list + mv source/dest patterns +
-/// the global `Bash(remargin *)` deny are emitted.
+/// Scenario 1 — subpath, no extras. Full native-tool fence +
+/// Bash-mutator list + mv source/dest patterns are emitted.
+/// `Bash(remargin *)` is NOT emitted; CLI denial is hook-enforced.
 #[test]
 fn subpath_no_extras_emits_full_default_set() {
     let entry = restrict_subpath("/a/b", &[], false);
@@ -56,8 +59,9 @@ fn subpath_no_extras_emits_full_default_set() {
 
     // deny: 4 editor-tool path denies + 4 dot-folder wildcards +
     // BASH_MUTATORS.len() bash mutators + 3 source-side mv shapes
-    // + 3 source-side cp shapes + 1 global remargin-cli deny.
-    let expected = 4 + 4 + BASH_MUTATORS.len() + 3 + 3 + 1;
+    // + 3 source-side cp shapes. No global remargin-cli deny —
+    // that is now hook-enforced via cli_allowed.
+    let expected = 4 + 4 + BASH_MUTATORS.len() + 3 + 3;
     assert_eq!(rules.deny.len(), expected, "{:#?}", rules.deny);
 
     // Editor-tool denies in spec order.
@@ -206,9 +210,12 @@ fn subpath_no_extras_emits_full_default_set() {
         );
     }
 
-    // Global `Bash(remargin *)` deny (no path tail) lands last when
-    // `cli_allowed = false`.
-    assert_eq!(rules.deny[expected - 1], "Bash(remargin *)");
+    // `Bash(remargin *)` is NOT projected — CLI denial is hook-enforced.
+    assert!(
+        !rules.deny.iter().any(|r| r.starts_with("Bash(remargin")),
+        "Bash(remargin *) must not appear in projection: {:#?}",
+        rules.deny
+    );
 
     // Allow set: empty by default — no implicit `mcp__remargin__*`
     // allow, no implicit `.remargin/` editor-tool re-allow.
@@ -233,45 +240,72 @@ fn wildcard_uses_realm_root_for_glob() {
 
     assert_eq!(rules.deny[0], "Edit(/r/**)");
     assert_eq!(rules.deny[4], "Edit(/r/.*/**)");
-    // The realm root is anchored by the entry, not by the supplied
-    // anchor (see rules_for's docstring). Path-anchored denies all
-    // contain `/r/`; the global remargin-cli deny is the only
-    // exception (no path tail).
+    // All projected rules are path-anchored — they all contain `/r/`.
+    // `Bash(remargin *)` is no longer projected (CLI denial is
+    // hook-enforced), so every rule must contain `/r/`.
     assert!(
-        rules
-            .deny
-            .iter()
-            .all(|rule| rule.contains("/r/") || rule == "Bash(remargin *)")
+        rules.deny.iter().all(|rule| rule.contains("/r/")),
+        "every projected rule should be path-anchored with /r/: {:#?}",
+        rules.deny
     );
 }
 
-/// Scenario 3 — `cli_allowed = true` removes the global remargin-cli
-/// deny but keeps every native-tool / Bash-mutator / mv pattern.
+/// Scenario 3 — `cli_allowed = true` or `false` on the entry: the
+/// projection never emits `Bash(remargin *)` in either case. CLI denial
+/// is hook-enforced via the folder-level `cli_allowed` field.
 #[test]
-fn cli_allowed_skips_remargin_cli_deny() {
-    let entry = restrict_subpath("/a/b", &[], true);
-    let rules = rules_for(&entry, Path::new("/a"), &[]);
+fn projection_never_emits_remargin_cli_deny_regardless_of_cli_allowed() {
+    for cli_allowed in [true, false] {
+        let entry = restrict_subpath("/a/b", &[], cli_allowed);
+        let rules = rules_for(&entry, Path::new("/a"), &[]);
 
-    assert!(
-        !rules
-            .deny
-            .iter()
-            .any(|rule| rule.starts_with("Bash(remargin")),
-        "cli_allowed=true must omit Bash(remargin *) deny, got: {:#?}",
-        rules.deny
-    );
-    // 4 editor + 4 dot-folder + BASH_MUTATORS.len() + 3 source-side
-    // mv shapes + 3 source-side cp shapes. One fewer than when
-    // cli_allowed=false: the `Bash(remargin *)` deny is dropped.
-    let expected = 4 + 4 + BASH_MUTATORS.len() + 3 + 3;
-    assert_eq!(rules.deny.len(), expected);
+        assert!(
+            !rules
+                .deny
+                .iter()
+                .any(|rule| rule.starts_with("Bash(remargin")),
+            "cli_allowed={cli_allowed}: Bash(remargin *) must never be projected, got: {:#?}",
+            rules.deny
+        );
+        // 4 editor + 4 dot-folder + BASH_MUTATORS.len() + 3 source-side
+        // mv shapes + 3 source-side cp shapes.
+        let expected = 4 + 4 + BASH_MUTATORS.len() + 3 + 3;
+        assert_eq!(rules.deny.len(), expected, "cli_allowed={cli_allowed}");
+    }
+}
+
+/// T9 — `Bash(remargin *)` is never emitted by `rules_for` regardless of
+/// the `cli_allowed` flag value on the entry. CLI denial is hook-enforced.
+#[test]
+fn no_remargin_cli_deny_emitted_in_any_configuration() {
+    for cli_allowed in [true, false] {
+        for also_deny_bash in [&[] as &[&str], &["curl", "nc"]] {
+            let entry = restrict_subpath("/a/b", also_deny_bash, cli_allowed);
+            let rules = rules_for(&entry, Path::new("/a"), &[]);
+            assert!(
+                !rules.deny.iter().any(|r| r.starts_with("Bash(remargin")),
+                "cli_allowed={cli_allowed}, also_deny_bash={also_deny_bash:?}: \
+                 Bash(remargin *) must never appear in the projected deny set: {:#?}",
+                rules.deny
+            );
+        }
+    }
+    // Wildcard entry also never emits it.
+    for cli_allowed in [true, false] {
+        let entry = restrict_wildcard("/r", cli_allowed);
+        let rules = rules_for(&entry, Path::new("/r"), &[]);
+        assert!(
+            !rules.deny.iter().any(|r| r.starts_with("Bash(remargin")),
+            "wildcard cli_allowed={cli_allowed}: Bash(remargin *) must not appear: {:#?}",
+            rules.deny
+        );
+    }
 }
 
 /// Scenario 4 — `also_deny_bash` adds extra Bash denies right after
 /// the standard mutators. Uses commands NOT in the default
 /// [`BASH_MUTATORS`] list so the test exercises the extras path even
-/// expanded the defaults to cover most common
-/// file-modifying commands.
+/// when the defaults cover most common file-modifying commands.
 #[test]
 fn also_deny_bash_extras_appended() {
     // `aria2c` (download tool) and `nc` (netcat) are not in the
@@ -280,27 +314,21 @@ fn also_deny_bash_extras_appended() {
     let entry = restrict_subpath("/a/b", &["aria2c", "nc"], false);
     let rules = rules_for(&entry, Path::new("/a"), &[]);
 
-    let aria_idx = rules
-        .deny
-        .iter()
-        .position(|r| r == "Bash(aria2c * /a/b/**)")
-        .unwrap();
-    let nc_idx = rules
-        .deny
-        .iter()
-        .position(|r| r == "Bash(nc * /a/b/**)")
-        .unwrap();
-    // Extras appear before the cli deny so the surface stays human-
-    // readable: standard mutators, callers' extras, then the
-    // remargin-cli last-line defense.
-    let cli_idx = rules
-        .deny
-        .iter()
-        .position(|r| r.starts_with("Bash(remargin"))
-        .unwrap();
     assert!(
-        aria_idx < cli_idx && nc_idx < cli_idx,
-        "extras should land before the remargin-cli deny: aria2c={aria_idx}, nc={nc_idx}, cli={cli_idx}"
+        rules.deny.iter().any(|r| r == "Bash(aria2c * /a/b/**)"),
+        "aria2c extra deny missing from: {:#?}",
+        rules.deny
+    );
+    assert!(
+        rules.deny.iter().any(|r| r == "Bash(nc * /a/b/**)"),
+        "nc extra deny missing from: {:#?}",
+        rules.deny
+    );
+    // `Bash(remargin *)` is NOT projected — CLI denial is hook-enforced.
+    assert!(
+        !rules.deny.iter().any(|r| r.starts_with("Bash(remargin")),
+        "Bash(remargin *) must not appear in projection: {:#?}",
+        rules.deny
     );
 }
 
