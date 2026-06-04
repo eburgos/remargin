@@ -6,10 +6,9 @@ use remargin_core::config::registry::Registry;
 use remargin_core::display::render_activity_cutoff_header;
 use serde_json::json;
 
-use super::{
-    parse_line_range, registry_participant_json, registry_participant_pretty,
-    resolve_comment_content,
-};
+use crate::io::{parse_line_range, resolve_comment_content};
+
+use super::{registry_participant_json, registry_participant_pretty};
 
 fn ts(s: &str) -> chrono::DateTime<chrono::FixedOffset> {
     chrono::DateTime::parse_from_rfc3339(s).unwrap()

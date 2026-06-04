@@ -3,11 +3,13 @@
 #[cfg(feature = "obsidian")]
 mod obsidian;
 
+mod io;
+mod params;
+
 use std::env;
-use std::io::{self, Read as _, Write};
+use std::io::{Read as _, stderr as stderr_handle, stdin as stdin_handle, stdout as stdout_handle};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::sync::OnceLock;
 use std::time::Instant;
 
 use anyhow::{Context as _, Result, bail};
@@ -18,6 +20,16 @@ use os_shim::System;
 use os_shim::real::RealSystem;
 use serde_json::{Value, json};
 
+use crate::io::{
+    IoSinks, expand_cli_path, expand_cli_pathbuf, inject_elapsed_ms, out, out_json, out_raw,
+    parse_line_range, print_output, read_stdin, resolve_comment_content, resolve_doc_path,
+    resolve_purge_path, truncate_content,
+};
+use crate::params::{
+    AckParams, ActivityParams, CommentParams, CpParams, EditParams, GetImageParams, GetParams,
+    MvParams, PromptSetParams, QueryOutputMode, QueryParams, QueryPendingFilters, ReactParams,
+    ReplaceParams, RestrictParams, SearchParams, SignParams, WriteParams,
+};
 use remargin_core::activity;
 use remargin_core::config::identity::{IdentityFlags, IdentityReport, resolve_identity_report};
 use remargin_core::config::registry;
@@ -41,7 +53,6 @@ use remargin_core::operations::replace;
 use remargin_core::operations::sandbox as sandbox_ops;
 use remargin_core::operations::search;
 use remargin_core::parser;
-use remargin_core::path::expand_path;
 use remargin_core::permissions::doctor as permissions_doctor;
 use remargin_core::permissions::inspect as permissions_inspect;
 use remargin_core::permissions::pretool::{PretoolOutcome, pretool};
@@ -89,8 +100,6 @@ const DEFAULT_USER_SETTINGS: &str = "~/.claude/settings.json";
 const PLUGIN_MARKETPLACE_SOURCE: &str = "tixena/remargin";
 const PLUGIN_MARKETPLACE_NAME: &str = "remargin-marketplace";
 const PLUGIN_REF: &str = "remargin@remargin-marketplace";
-
-static START_TIME: OnceLock<Instant> = OnceLock::new();
 
 #[derive(Parser)]
 #[command(
@@ -1505,385 +1514,8 @@ enum ObsidianAction {
     },
 }
 
-struct CommentParams<'cmd> {
-    after_comment: Option<&'cmd str>,
-    after_heading: Option<&'cmd str>,
-    after_line: Option<usize>,
-    attachments: &'cmd [PathBuf],
-    auto_ack: Option<bool>,
-    content: &'cmd str,
-    file: &'cmd str,
-    json_mode: bool,
-    remargin_kind: &'cmd [String],
-    reply_to: Option<&'cmd str>,
-    sandbox: bool,
-    to: &'cmd [String],
-}
-
-struct GetParams<'cmd> {
-    binary: bool,
-    end: Option<usize>,
-    json_mode: bool,
-    line_numbers: bool,
-    out: Option<&'cmd Path>,
-    path: &'cmd str,
-    start: Option<usize>,
-}
-
-struct EditParams<'cmd> {
-    content: &'cmd str,
-    file: &'cmd str,
-    id: &'cmd str,
-    json_mode: bool,
-    remargin_kind: Option<&'cmd [String]>,
-}
-
-struct ActivityParams<'cmd> {
-    explicit_path: Option<&'cmd Path>,
-    identity_args: &'cmd IdentityArgs,
-    json_mode: bool,
-    pretty: bool,
-    since: Option<&'cmd str>,
-}
-
-struct RestrictParams<'cmd> {
-    also_deny_bash: &'cmd [String],
-    cli_allowed: bool,
-    json_mode: bool,
-    path: &'cmd str,
-    user_settings_explicit: Option<&'cmd Path>,
-}
-
-/// How `query` results are rendered. Mutually-exclusive successor to the
-/// previous `json_mode` / `pretty` / `summary` bool triple.
-enum QueryOutputMode {
-    Json,
-    Plain,
-    Pretty,
-    Summary,
-}
-
-/// Pending-filter knobs for `query`. These compose as a UNION at the
-/// filter layer (e.g. `--pending-for-me` AND `--pending-broadcast` both
-/// apply, returning the union of matching comments). Grouped into one
-/// substruct so the parent [`QueryParams`] stays under clippy's
-/// bool-density threshold without changing CLI semantics.
-struct QueryPendingFilters<'cmd> {
-    /// `true` when `--pending` was passed: filter to comments without
-    /// any ack.
-    any: bool,
-    /// `true` when `--pending-broadcast` was passed: include
-    /// broadcast-pending comments.
-    broadcast: bool,
-    /// `true` when `--pending-for-me` was passed: include comments
-    /// addressed to the resolved caller identity.
-    for_me: bool,
-    /// `Some(user)` when `--pending-for <user>` was passed: include
-    /// comments whose `to:` list contains `user` and which are still
-    /// pending.
-    for_user: Option<&'cmd str>,
-}
-
-struct PromptSetParams<'params> {
-    config: &'params ResolvedConfig,
-    cwd: &'params Path,
-    folder: &'params str,
-    json_mode: bool,
-    name: &'params str,
-    prompt_flag: Option<&'params str>,
-}
-
-struct QueryParams<'cmd> {
-    author: Option<&'cmd str>,
-    comment_id: Option<&'cmd str>,
-    content_regex: Option<&'cmd str>,
-    expanded: bool,
-    ignore_case: bool,
-    output: QueryOutputMode,
-    path: &'cmd str,
-    pending: QueryPendingFilters<'cmd>,
-    remargin_kind: &'cmd [String],
-    since: Option<&'cmd str>,
-}
-
-struct SearchParams<'cmd> {
-    context: usize,
-    ignore_case: bool,
-    json_mode: bool,
-    path: &'cmd str,
-    pattern: &'cmd str,
-    regex: bool,
-    scope: &'cmd str,
-}
-
-struct SignParams<'cmd> {
-    all_mine: bool,
-    file: &'cmd str,
-    ids: &'cmd [String],
-    json_mode: bool,
-    repair_checksum: bool,
-}
-
-struct AckParams<'cmd> {
-    file: Option<&'cmd str>,
-    ids: &'cmd [String],
-    json_mode: bool,
-    remove: bool,
-    search_path: &'cmd str,
-}
-
-struct ReactParams<'cmd> {
-    emoji: &'cmd str,
-    file: &'cmd str,
-    id: &'cmd str,
-    json_mode: bool,
-    remove: bool,
-}
-
-struct ReplaceParams<'cmd> {
-    json_mode: bool,
-    options: replace::ReplaceOptions,
-    path: &'cmd str,
-}
-
-struct WriteParams<'cmd> {
-    content: Option<&'cmd str>,
-    json_mode: bool,
-    opts: document::WriteOptions,
-    path: &'cmd str,
-}
-
-/// Bundled CLI inputs for the [`cmd_cp`] handler.
-struct CpParams<'cmd> {
-    dst: &'cmd str,
-    force: bool,
-    json_mode: bool,
-    src: &'cmd str,
-}
-
-/// Bundled CLI inputs for the [`cmd_mv`] handler.
-struct MvParams<'cmd> {
-    dst: &'cmd str,
-    force: bool,
-    json_mode: bool,
-    src: &'cmd str,
-}
-
-struct GetImageParams<'cli> {
-    crop: Option<&'cli str>,
-    format: Option<&'cli str>,
-    json_mode: bool,
-    max_bytes: Option<u64>,
-    max_dimension: Option<u32>,
-    out: Option<&'cli Path>,
-    path: &'cli str,
-}
-
-/// Bundle of writers for the CLI's stdout / stderr streams.
-///
-/// Allows the `cmd_*` functions and `run()` to be exercised in-process by
-/// tests with captured `Vec<u8>` buffers instead of writing to the real
-/// process streams.
-#[non_exhaustive]
-pub struct IoSinks<'sinks> {
-    pub stderr: &'sinks mut dyn Write,
-    pub stdout: &'sinks mut dyn Write,
-}
-
-impl<'sinks> IoSinks<'sinks> {
-    pub fn new(stdout: &'sinks mut dyn Write, stderr: &'sinks mut dyn Write) -> Self {
-        Self { stderr, stdout }
-    }
-}
-
-fn out(sinks: &mut IoSinks<'_>, msg: &str) -> Result<()> {
-    writeln!(sinks.stdout, "{msg}").context("writing to stdout")
-}
-
-fn out_raw(sinks: &mut IoSinks<'_>, msg: &str) -> Result<()> {
-    write!(sinks.stdout, "{msg}").context("writing to stdout")
-}
-
-/// Decorates object payloads with an `elapsed_ms` field so every `--json`
-/// response carries timing info.
-fn out_json(sinks: &mut IoSinks<'_>, value: &Value) -> Result<()> {
-    let decorated = inject_elapsed_ms(value);
-    out(
-        sinks,
-        &serde_json::to_string_pretty(&decorated).unwrap_or_default(),
-    )
-}
-
-fn elapsed_ms() -> u64 {
-    START_TIME.get().map_or(0, |t| {
-        u64::try_from(t.elapsed().as_millis()).unwrap_or(u64::MAX)
-    })
-}
-
-/// Non-object values pass through unchanged so future non-object top-level
-/// outputs are not silently corrupted.
-fn inject_elapsed_ms(value: &Value) -> Value {
-    if let Value::Object(map) = value {
-        let mut new_map = map.clone();
-        new_map.insert(String::from("elapsed_ms"), json!(elapsed_ms()));
-        return Value::Object(new_map);
-    }
-    value.clone()
-}
-
-fn print_output(sinks: &mut IoSinks<'_>, json_mode: bool, value: &Value) -> Result<()> {
-    if json_mode {
-        out_json(sinks, value)
-    } else {
-        print_text_output(sinks, value)
-    }
-}
-
-fn print_text_output(sinks: &mut IoSinks<'_>, value: &Value) -> Result<()> {
-    match value {
-        Value::String(s) => out(sinks, s),
-        Value::Object(map) => {
-            for (key, val) in map {
-                if let Value::Array(arr) = val {
-                    out(sinks, &format!("{key}:"))?;
-                    for item in arr {
-                        out(sinks, &format!("  {item}"))?;
-                    }
-                } else {
-                    out(sinks, &format!("{key}: {val}"))?;
-                }
-            }
-            Ok(())
-        }
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) => {
-            out(sinks, &value.to_string())
-        }
-    }
-}
-
-fn read_stdin() -> Result<String> {
-    let mut buf = String::new();
-    io::stdin()
-        .read_to_string(&mut buf)
-        .context("reading from stdin")?;
-    Ok(buf)
-}
-
-/// Exactly one of `content` or `comment_file` must be provided. When
-/// `comment_file` is `"-"`, the body is read from stdin.
-fn resolve_comment_content(
-    system: &dyn System,
-    cwd: &Path,
-    content: Option<&String>,
-    comment_file: Option<&PathBuf>,
-) -> Result<String> {
-    match (content, comment_file) {
-        (Some(text), None) => Ok(text.clone()),
-        (None, Some(path)) => {
-            let path_str = path.to_string_lossy();
-            if path_str == "-" {
-                read_stdin().context("reading comment body from stdin")
-            } else {
-                system
-                    .read_to_string(&cwd.join(path))
-                    .with_context(|| format!("reading comment body from {path_str}"))
-            }
-        }
-        (None, None) => {
-            anyhow::bail!("comment body required: provide as argument or via --comment-file")
-        }
-        (Some(_), Some(_)) => {
-            anyhow::bail!("cannot use both positional content and --comment-file")
-        }
-    }
-}
-
-fn resolve_doc_path(system: &dyn System, cwd: &Path, file: &str) -> Result<PathBuf> {
-    if file == "-" {
-        let input = read_stdin()?;
-        let temp_root = system
-            .env_var("TMPDIR")
-            .unwrap_or_else(|_err| String::from("/tmp"));
-        let temp_path = PathBuf::from(temp_root).join("remargin-stdin.md");
-        system
-            .write(&temp_path, input.as_bytes())
-            .context("writing stdin to temp file")?;
-        Ok(temp_path)
-    } else {
-        let expanded = expand_cli_path(system, file)?;
-        Ok(cwd.join(expanded))
-    }
-}
-
-/// Expand a string-typed CLI path argument through [`expand_path`] and
-/// surface a clear error naming the offending input. Downstream callers
-/// layer their own path semantics (joining against `cwd`, validating that
-/// the file exists, etc.) on top of the expanded `PathBuf`.
-fn expand_cli_path(system: &dyn System, raw: &str) -> Result<PathBuf> {
-    expand_path(system, raw).with_context(|| format!("expanding path argument {raw:?}"))
-}
-
-/// Resolve a path argument for the `purge` subcommand. In single-file
-/// mode this funnels through [`resolve_doc_path`] (which honours stdin
-/// `-`); in `--recursive` mode the path is treated as a directory, so
-/// stdin redirection makes no sense and we just expand `~` / `$VAR`
-/// before joining onto `cwd`.
-fn resolve_purge_path(
-    system: &dyn System,
-    cwd: &Path,
-    raw: &str,
-    recursive: bool,
-) -> Result<PathBuf> {
-    if recursive {
-        let expanded = expand_cli_path(system, raw)?;
-        Ok(if expanded.is_absolute() {
-            expanded
-        } else {
-            cwd.join(expanded)
-        })
-    } else {
-        resolve_doc_path(system, cwd, raw)
-    }
-}
-
-/// Same as [`expand_cli_path`] but for a `&Path`. Used by flags that clap
-/// already parsed as [`PathBuf`] — we round-trip through `to_string_lossy`
-/// so `~`, `$VAR`, etc. in the original arg still get expanded.
-fn expand_cli_pathbuf(system: &dyn System, raw: &Path) -> Result<PathBuf> {
-    let raw_str = raw.to_string_lossy();
-    expand_cli_path(system, raw_str.as_ref())
-}
-
 const fn author_type_str(at: &parser::AuthorType) -> &'static str {
     at.as_str()
-}
-
-fn truncate_content(content: &str, max_len: usize) -> String {
-    let first_line = content.lines().next().unwrap_or("");
-    if first_line.len() > max_len {
-        format!("{}...", &first_line[..max_len])
-    } else {
-        String::from(first_line)
-    }
-}
-
-/// Parse the `--lines START-END` argument used by `remargin write`.
-///
-/// Accepts `START-END` with 1-indexed inclusive bounds, both required.
-/// Returns `(start, end)`; further validation (start <= end, start >= 1)
-/// happens in `document::write` so CLI and MCP callers hit the same
-/// diagnostics.
-fn parse_line_range(raw: &str) -> Result<(usize, usize)> {
-    let (start_str, end_str) = raw
-        .split_once('-')
-        .with_context(|| format!("--lines expects START-END, got {raw:?}"))?;
-    let start: usize = start_str
-        .parse()
-        .with_context(|| format!("--lines: invalid start value {start_str:?}"))?;
-    let end: usize = end_str
-        .parse()
-        .with_context(|| format!("--lines: invalid end value {end_str:?}"))?;
-    Ok((start, end))
 }
 
 /// Pull the subcommand's [`OutputArgs`] reference for the top-level
@@ -1986,7 +1618,7 @@ const fn plan_action_output(action: &PlanAction) -> &OutputArgs {
 fn main() -> ExitCode {
     // Capture the start time before parsing so `elapsed_ms` includes clap's
     // argument-parsing overhead.
-    let _: Result<_, _> = START_TIME.set(Instant::now());
+    let _: Result<_, _> = io::START_TIME.set(Instant::now());
 
     let cli = Cli::parse();
 
@@ -2000,7 +1632,7 @@ fn main() -> ExitCode {
             .unwrap_or_else(|_err| tracing_subscriber::EnvFilter::new(""));
         tracing_subscriber::fmt()
             .with_env_filter(base_filter.add_directive(tracing::Level::DEBUG.into()))
-            .with_writer(io::stderr)
+            .with_writer(stderr_handle)
             .init();
     }
 
@@ -2012,8 +1644,8 @@ fn main() -> ExitCode {
         }
     };
 
-    let mut stdout = io::stdout().lock();
-    let mut stderr = io::stderr().lock();
+    let mut stdout = stdout_handle().lock();
+    let mut stderr = stderr_handle().lock();
     let mut sinks = IoSinks::new(&mut stdout, &mut stderr);
 
     // Non-JSON mode does not emit a timing footer on any stream:
@@ -2657,7 +2289,7 @@ fn handle_claude_pretool_action(
 /// status (mapped to Claude Code's blocking semantics).
 fn handle_claude_pretool_dispatch(sinks: &mut IoSinks<'_>, system: &dyn System) -> Result<()> {
     let mut buf = Vec::new();
-    io::stdin()
+    stdin_handle()
         .read_to_end(&mut buf)
         .context("reading stdin for claude pretool")?;
     match pretool(system, &buf) {
@@ -4400,7 +4032,7 @@ fn absolute_folder(system: &dyn System, cwd: &Path, folder: &str) -> Result<Path
 
 fn read_prompt_from_stdin() -> Result<String> {
     use std::io::IsTerminal as _;
-    let stdin = io::stdin();
+    let stdin = stdin_handle();
     if stdin.is_terminal() {
         return Ok(String::new());
     }
