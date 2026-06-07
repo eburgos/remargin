@@ -1,8 +1,81 @@
 //! Tests for the structural markdown linter.
 
-use crate::linter::{lint, lint_or_fail};
+use std::path::Path;
 
-/// Lint content and collect error messages.
+use os_shim::mock::MockSystem;
+
+use crate::linter::{lint, lint_doc, lint_or_fail};
+
+const DOC_WITH_UNKNOWN_RECIPIENT: &str = "\
+---
+title: Test
+---
+
+```remargin
+---
+id: abc
+author: alice
+type: human
+ts: 2026-04-06T12:00:00-04:00
+to: [eduardo_burgos]
+checksum: sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+---
+hello
+```
+";
+
+const DOC_WITH_ACTIVE_RECIPIENT: &str = "\
+---
+title: Test
+---
+
+```remargin
+---
+id: abc
+author: alice
+type: human
+ts: 2026-04-06T12:00:00-04:00
+to: [eduardo-burgos]
+checksum: sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+---
+hello
+```
+";
+
+const DOC_WITH_REVOKED_RECIPIENT: &str = "\
+---
+title: Test
+---
+
+```remargin
+---
+id: abc
+author: alice
+type: human
+ts: 2026-04-06T12:00:00-04:00
+to: [bob]
+checksum: sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+---
+hello
+```
+";
+
+const LINT_REGISTRY_YAML: &str = "\
+participants:
+  alice:
+    type: human
+    status: active
+    pubkeys: []
+  bob:
+    type: human
+    status: revoked
+    pubkeys: []
+  eduardo-burgos:
+    type: human
+    status: active
+    pubkeys: []
+";
+
 fn lint_messages(content: &str) -> Vec<String> {
     lint(content)
         .unwrap()
@@ -286,6 +359,8 @@ Content.
     assert!(errors.iter().any(|e| e.contains("checksum")));
 }
 
+// Recipient registry lint via `lint_doc`.
+
 #[test]
 fn error_line_numbers_correct() {
     let doc = "\
@@ -297,4 +372,151 @@ line 4
     let errors = lint_pairs(doc);
     assert_eq!(errors.len(), 1);
     assert_eq!(errors[0].0, 3, "unclosed fence should be on line 3");
+}
+
+fn build_lint_system(doc_content: &str, realm_yaml: &str) -> MockSystem {
+    MockSystem::new()
+        .with_file(Path::new("/vault/doc.md"), doc_content.as_bytes())
+        .unwrap()
+        .with_file(Path::new("/vault/.remargin.yaml"), realm_yaml.as_bytes())
+        .unwrap()
+        .with_file(
+            Path::new("/vault/.remargin-registry.yaml"),
+            LINT_REGISTRY_YAML.as_bytes(),
+        )
+        .unwrap()
+}
+
+/// Scenario 12: strict realm, `to: eduardo_burgos` (unknown) → recipient finding.
+#[test]
+fn lint_doc_strict_unknown_recipient_finding() {
+    let system = build_lint_system(DOC_WITH_UNKNOWN_RECIPIENT, "mode: strict\n");
+    let report = lint_doc(&system, Path::new("/vault/doc.md")).unwrap();
+    assert!(
+        !report.recipients.is_empty(),
+        "expected recipient findings, got none"
+    );
+    assert!(!report.is_clean(), "report should not be clean");
+    let finding = &report.recipients[0];
+    assert!(
+        finding.message.contains("eduardo_burgos"),
+        "finding should name the bad recipient: {:?}",
+        finding.message
+    );
+    assert!(
+        finding
+            .message
+            .contains("not an active registry participant"),
+        "finding should explain why: {:?}",
+        finding.message
+    );
+}
+
+/// Scenario 13: open mode — same doc has no recipient findings.
+#[test]
+fn lint_doc_open_mode_no_recipient_findings() {
+    let system = MockSystem::new()
+        .with_file(
+            Path::new("/vault/doc.md"),
+            DOC_WITH_UNKNOWN_RECIPIENT.as_bytes(),
+        )
+        .unwrap();
+    let report = lint_doc(&system, Path::new("/vault/doc.md")).unwrap();
+    assert!(
+        report.recipients.is_empty(),
+        "open mode should produce no recipient findings"
+    );
+}
+
+/// Scenario 14: all recipients active → no recipient findings.
+#[test]
+fn lint_doc_all_recipients_active_no_findings() {
+    let system = build_lint_system(DOC_WITH_ACTIVE_RECIPIENT, "mode: strict\n");
+    let report = lint_doc(&system, Path::new("/vault/doc.md")).unwrap();
+    assert!(
+        report.recipients.is_empty(),
+        "active recipient should produce no findings"
+    );
+}
+
+/// Scenario 15: revoked recipient in registered mode → recipient finding.
+#[test]
+fn lint_doc_registered_mode_revoked_recipient_finding() {
+    let system = build_lint_system(DOC_WITH_REVOKED_RECIPIENT, "mode: registered\n");
+    let report = lint_doc(&system, Path::new("/vault/doc.md")).unwrap();
+    assert!(
+        !report.recipients.is_empty(),
+        "revoked recipient should produce a finding"
+    );
+    assert!(!report.is_clean());
+}
+
+/// Scenario 16: no registry present in registered mode → silently skipped.
+#[test]
+fn lint_doc_missing_registry_skipped() {
+    let system = MockSystem::new()
+        .with_file(
+            Path::new("/vault/doc.md"),
+            DOC_WITH_UNKNOWN_RECIPIENT.as_bytes(),
+        )
+        .unwrap()
+        .with_file(Path::new("/vault/.remargin.yaml"), b"mode: registered\n")
+        .unwrap();
+    // No registry file — load_registry returns None.
+    let report = lint_doc(&system, Path::new("/vault/doc.md")).unwrap();
+    assert!(
+        report.recipients.is_empty(),
+        "missing registry should produce no recipient findings"
+    );
+    // Structural lint is unaffected.
+    assert!(report.errors.is_empty());
+}
+
+/// Scenario 17: `lint(content)` is unaffected — pure structural check only.
+#[test]
+fn lint_content_pure_no_recipient_checking() {
+    // Even with an unknown recipient embedded, `lint()` sees only structure.
+    let errors = lint(DOC_WITH_UNKNOWN_RECIPIENT).unwrap();
+    assert!(
+        errors.is_empty(),
+        "lint(content) must not check recipients: {errors:?}"
+    );
+}
+
+/// JSON serialization includes `recipients` field.
+#[test]
+fn lint_report_to_json_includes_recipients_field() {
+    let system = build_lint_system(DOC_WITH_UNKNOWN_RECIPIENT, "mode: registered\n");
+    let report = lint_doc(&system, Path::new("/vault/doc.md")).unwrap();
+    let json = report.to_json();
+    assert!(
+        json.get("recipients").is_some(),
+        "to_json must include a 'recipients' key"
+    );
+    let recipients_arr = json["recipients"].as_array().unwrap();
+    assert!(
+        !recipients_arr.is_empty(),
+        "recipients array should be non-empty"
+    );
+    assert_eq!(
+        json["ok"].as_bool(),
+        Some(false),
+        "ok should be false when recipients are bad"
+    );
+}
+
+/// `format_text` includes recipient findings.
+#[test]
+fn lint_report_format_text_includes_recipients() {
+    let system = build_lint_system(DOC_WITH_UNKNOWN_RECIPIENT, "mode: registered\n");
+    let report = lint_doc(&system, Path::new("/vault/doc.md")).unwrap();
+    let text = report.format_text();
+    assert!(
+        text.contains("recipients:"),
+        "format_text should include recipient findings: {text}"
+    );
+    assert!(
+        text.contains("eduardo_burgos"),
+        "format_text should name the bad recipient: {text}"
+    );
 }

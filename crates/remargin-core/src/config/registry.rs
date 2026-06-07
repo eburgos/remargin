@@ -59,6 +59,19 @@ pub enum RegistryParticipantStatus {
     Revoked,
 }
 
+impl Registry {
+    /// Return `true` iff `id` is present in the registry **and** active.
+    ///
+    /// Unknown ids and revoked ids both return `false`, matching the
+    /// author gate in [`crate::config::ResolvedConfig::can_post`].
+    #[must_use]
+    pub fn is_active(&self, id: &str) -> bool {
+        self.participants
+            .get(id)
+            .is_some_and(|p| p.status == RegistryParticipantStatus::Active)
+    }
+}
+
 const fn default_status() -> RegistryParticipantStatus {
     RegistryParticipantStatus::Active
 }

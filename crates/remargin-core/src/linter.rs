@@ -15,6 +15,7 @@ use os_shim::System;
 use serde::Serialize;
 
 use crate::config::permissions::resolve::lint_permissions_in_parents;
+use crate::config::{Mode, load_registry, resolve_mode};
 
 /// Required fields in every remargin block's YAML header.
 const REQUIRED_REMARGIN_FIELDS: &[&str] = &["id", "author", "type", "ts", "checksum"];
@@ -57,6 +58,11 @@ pub struct LintReport {
     /// `permissions.deny_ops.ops`) discovered in any `.remargin.yaml`
     /// on the parent walk from the doc's directory.
     pub permissions: Vec<PermissionsLintErrorView>,
+
+    /// Recipient registry violations found in registered/strict mode:
+    /// any `to:` entry that names a participant who is absent or revoked.
+    /// Empty in open mode and when no registry is present.
+    pub recipients: Vec<LintErrorView>,
 }
 
 /// Per-config serialised view of a [`crate::config::permissions::resolve::PermissionsLintError`].
@@ -100,13 +106,16 @@ impl LintReport {
             };
             let _ = writeln!(buf, "permissions: {location}: {}", finding.message);
         }
+        for err in &self.recipients {
+            let _ = writeln!(buf, "line {}: recipients: {}", err.line, err.message);
+        }
         buf
     }
 
-    /// `true` when neither structural nor permissions findings exist.
+    /// `true` when neither structural, permissions, nor recipient findings exist.
     #[must_use]
     pub const fn is_clean(&self) -> bool {
-        self.errors.is_empty() && self.permissions.is_empty()
+        self.errors.is_empty() && self.permissions.is_empty() && self.recipients.is_empty()
     }
 
     /// Render the report as the canonical `lint` JSON payload.
@@ -116,6 +125,7 @@ impl LintReport {
             "errors": self.errors,
             "ok": self.is_clean(),
             "permissions": self.permissions,
+            "recipients": self.recipients,
         })
     }
 }
@@ -140,12 +150,15 @@ pub fn lint(content: &str) -> Result<Vec<LintError>> {
 /// Run the full lint pipeline for `doc_path`.
 ///
 /// Structural lint over the file content + permissions-config lint over
-/// every `.remargin.yaml` from the doc's directory up to `/`.
+/// every `.remargin.yaml` from the doc's directory up to `/`, plus
+/// recipient registry validation for registered/strict mode realms.
 ///
 /// # Errors
 ///
 /// I/O failure reading the doc or walking the parent chain.
 pub fn lint_doc(system: &dyn System, doc_path: &Path) -> Result<LintReport> {
+    use crate::parser;
+
     let content = system
         .read_to_string(doc_path)
         .with_context(|| format!("reading {}", doc_path.display()))?;
@@ -154,6 +167,33 @@ pub fn lint_doc(system: &dyn System, doc_path: &Path) -> Result<LintReport> {
         .parent()
         .map_or_else(|| doc_path.to_path_buf(), Path::to_path_buf);
     let permissions = lint_permissions_in_parents(system, &walk_anchor)?;
+
+    // Recipient registry lint: only in registered/strict mode when a
+    // registry is available. open mode is unchecked; missing registry
+    // is silently skipped (no findings, structural lint unaffected).
+    // Config errors (e.g. unknown op names) are also silently skipped
+    // so this pass does not mask the permissions lint findings that
+    // already surface those errors via `lint_permissions_in_parents`.
+    let mut recipient_findings: Vec<LintErrorView> = Vec::new();
+    if let Ok(resolved_mode) = resolve_mode(system, &walk_anchor)
+        && matches!(resolved_mode.mode, Mode::Registered | Mode::Strict)
+        && let Ok(Some(registry)) = load_registry(system, &walk_anchor)
+    {
+        let doc = parser::parse(&content)?;
+        for cm in doc.comments() {
+            for recipient in &cm.to {
+                if !registry.is_active(recipient) {
+                    recipient_findings.push(LintErrorView {
+                        line: cm.line,
+                        message: format!(
+                            "recipient {recipient:?} is not an active registry participant"
+                        ),
+                    });
+                }
+            }
+        }
+    }
+
     Ok(LintReport {
         errors: structural
             .into_iter()
@@ -171,6 +211,7 @@ pub fn lint_doc(system: &dyn System, doc_path: &Path) -> Result<LintReport> {
                 source_file: finding.source_file,
             })
             .collect(),
+        recipients: recipient_findings,
     })
 }
 

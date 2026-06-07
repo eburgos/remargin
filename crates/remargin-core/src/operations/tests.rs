@@ -41,7 +41,28 @@ AAAEAk2Tz65AVfgL3ddyz72e8OkjFsl+pyRUGWLQkHBKtYx7VfufIVR1+wwXvHwYjjSVOO
 -----END OPENSSH PRIVATE KEY-----
 ";
 
-/// A document with one existing comment.
+const RECIPIENT_REGISTRY_YAML: &str = "\
+participants:
+  alice:
+    type: human
+    status: active
+    pubkeys: []
+  bob:
+    type: human
+    status: revoked
+    pubkeys: []
+  eduardo-burgos:
+    type: human
+    status: active
+    pubkeys: []
+";
+
+const STRICT_REALM_YAML: &str = "\
+identity: eduardo-burgos
+type: human
+mode: registered
+";
+
 fn doc_with_comment() -> String {
     String::from(
         "\
@@ -3610,6 +3631,8 @@ fn write_refused_when_deny_ops_lists_write() {
     assert_deny_ops_refusal(&err);
 }
 
+// Recipient registry gate — create_comment.
+
 /// Scenario 16: read-side ops bypass `restrict`. Comments / verify /
 /// query / get / metadata / lint / search / ls all run unaffected when
 /// only `restrict` (no `deny_ops`) is declared. We exercise the simplest
@@ -3628,4 +3651,314 @@ fn read_ops_unaffected_by_restrict() {
     // The parser is a pure read; it must not be guarded either.
     let parsed = parser::parse(&content).unwrap();
     assert!(!parsed.comments().is_empty());
+}
+
+fn strict_recipient_system(doc: &str) -> MockSystem {
+    MockSystem::new()
+        .with_file(Path::new("/docs/test.md"), doc.as_bytes())
+        .unwrap()
+        .with_file(
+            Path::new("/docs/.remargin.yaml"),
+            STRICT_REALM_YAML.as_bytes(),
+        )
+        .unwrap()
+        .with_file(
+            Path::new("/docs/.remargin-registry.yaml"),
+            RECIPIENT_REGISTRY_YAML.as_bytes(),
+        )
+        .unwrap()
+}
+
+/// `ResolvedConfig` for a caller with identity `eduardo-burgos` in an
+/// open-mode context. `escalate_for_doc` will swap in the strict realm's
+/// mode + registry from disk.
+fn caller_config_for_recipient_tests() -> ResolvedConfig {
+    ResolvedConfig {
+        assets_dir: String::from("assets"),
+        author_type: Some(AuthorType::Human),
+        identity: Some(String::from("eduardo-burgos")),
+        ignore: Vec::new(),
+        key_path: None,
+        mode: Mode::Open,
+        registry: None,
+        source_path: None,
+        trusted_roots: Vec::new(),
+        unrestricted: false,
+    }
+}
+
+/// Scenario 1: known active recipient → comment created.
+#[test]
+fn recipient_gate_active_recipient_allowed_in_registered() {
+    let system = strict_recipient_system(MINIMAL_DOC);
+    let config = caller_config_for_recipient_tests();
+    let position = InsertPosition::Append;
+
+    let result = create_comment(
+        &system,
+        Path::new("/docs/test.md"),
+        &config,
+        &CreateCommentParams {
+            to: &[String::from("alice")],
+            content: "hello",
+            position: &position,
+            ..CreateCommentParams::new("hello", &position)
+        },
+    );
+    assert!(
+        result.is_ok(),
+        "active recipient should be allowed: {result:?}"
+    );
+}
+
+/// Scenario 2: unknown recipient (`eduardo_burgos` — underscore, not in registry) → rejected.
+#[test]
+fn recipient_gate_unknown_recipient_rejected_in_registered() {
+    let system = strict_recipient_system(MINIMAL_DOC);
+    let config = caller_config_for_recipient_tests();
+    let position = InsertPosition::Append;
+
+    let err = create_comment(
+        &system,
+        Path::new("/docs/test.md"),
+        &config,
+        &CreateCommentParams {
+            to: &[String::from("eduardo_burgos")],
+            content: "hello",
+            position: &position,
+            ..CreateCommentParams::new("hello", &position)
+        },
+    )
+    .unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("eduardo_burgos"),
+        "error should name the bad recipient: {msg}"
+    );
+    assert!(
+        msg.contains("not an active registry participant"),
+        "error should explain why: {msg}"
+    );
+}
+
+/// Scenario 3: revoked recipient (`bob`) → rejected.
+#[test]
+fn recipient_gate_revoked_recipient_rejected_in_registered() {
+    let system = strict_recipient_system(MINIMAL_DOC);
+    let config = caller_config_for_recipient_tests();
+    let position = InsertPosition::Append;
+
+    let err = create_comment(
+        &system,
+        Path::new("/docs/test.md"),
+        &config,
+        &CreateCommentParams {
+            to: &[String::from("bob")],
+            content: "hello",
+            position: &position,
+            ..CreateCommentParams::new("hello", &position)
+        },
+    )
+    .unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("bob") && msg.contains("not an active registry participant"),
+        "revoked recipient should be rejected: {msg}"
+    );
+}
+
+/// Scenario 4: scenario 2 was registered mode; add a variant exercising
+/// the error text to confirm it names the recipient in all cases.
+/// (`STRICT_REALM_YAML` now uses `registered` — this test verifies the
+/// same path with an explicit `registered`-only realm yaml.)
+#[test]
+fn recipient_gate_unknown_rejected_names_recipient() {
+    let system = strict_recipient_system(MINIMAL_DOC);
+    let config = caller_config_for_recipient_tests();
+    let position = InsertPosition::Append;
+
+    // `bob` is revoked, so this tests both "not-in-registry" (absent) and
+    // "revoked" branches share the same error message surface.
+    let err = create_comment(
+        &system,
+        Path::new("/docs/test.md"),
+        &config,
+        &CreateCommentParams {
+            to: &[String::from("nobody")],
+            content: "hello",
+            position: &position,
+            ..CreateCommentParams::new("hello", &position)
+        },
+    )
+    .unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("nobody"),
+        "error must name the unknown recipient: {msg}"
+    );
+    assert!(
+        msg.contains("not an active registry participant"),
+        "error must explain the rejection: {msg}"
+    );
+}
+
+/// Scenario 5: open mode — any to: value is accepted.
+#[test]
+fn recipient_gate_open_mode_any_to_accepted() {
+    // Open-mode system: no .remargin.yaml, no registry.
+    let system = system_with_doc(MINIMAL_DOC);
+    let config = open_config();
+    let position = InsertPosition::Append;
+
+    let result = create_comment(
+        &system,
+        Path::new("/docs/test.md"),
+        &config,
+        &CreateCommentParams {
+            to: &[String::from("eduardo_burgos")],
+            content: "hello",
+            position: &position,
+            ..CreateCommentParams::new("hello", &position)
+        },
+    );
+    assert!(
+        result.is_ok(),
+        "open mode: any to: value should be accepted: {result:?}"
+    );
+}
+
+/// Scenario 6: broadcast (empty to:) is accepted in registered.
+#[test]
+fn recipient_gate_broadcast_accepted_in_registered() {
+    let system = strict_recipient_system(MINIMAL_DOC);
+    let config = caller_config_for_recipient_tests();
+    let position = InsertPosition::Append;
+
+    let result = create_comment(
+        &system,
+        Path::new("/docs/test.md"),
+        &config,
+        &CreateCommentParams {
+            to: &[],
+            content: "hello",
+            position: &position,
+            ..CreateCommentParams::new("hello", &position)
+        },
+    );
+    assert!(
+        result.is_ok(),
+        "broadcast (empty to:) should be accepted: {result:?}"
+    );
+}
+
+/// Scenario 7: mixed good+bad recipients → rejected.
+#[test]
+fn recipient_gate_mixed_good_bad_rejected_in_registered() {
+    let system = strict_recipient_system(MINIMAL_DOC);
+    let config = caller_config_for_recipient_tests();
+    let position = InsertPosition::Append;
+
+    let err = create_comment(
+        &system,
+        Path::new("/docs/test.md"),
+        &config,
+        &CreateCommentParams {
+            to: &[String::from("alice"), String::from("eduardo_burgos")],
+            content: "hello",
+            position: &position,
+            ..CreateCommentParams::new("hello", &position)
+        },
+    )
+    .unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("not an active registry participant"),
+        "mixed good+bad should be rejected: {msg}"
+    );
+}
+
+/// Scenario 8: reply to a known active parent author → prepended to: validated and accepted.
+#[test]
+fn recipient_gate_reply_to_active_parent_allowed() {
+    // Seed a doc where `alice` (active) wrote a comment.
+    let doc = "\
+---
+title: Test
+---
+
+```remargin
+---
+id: abc
+author: alice
+type: human
+ts: 2026-04-06T12:00:00-04:00
+checksum: sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+---
+hello
+```
+";
+    let system = strict_recipient_system(doc);
+    let config = caller_config_for_recipient_tests();
+    let position = InsertPosition::Append;
+
+    let result = create_comment(
+        &system,
+        Path::new("/docs/test.md"),
+        &config,
+        &CreateCommentParams {
+            reply_to: Some("abc"),
+            to: &[],
+            content: "reply",
+            position: &position,
+            ..CreateCommentParams::new("reply", &position)
+        },
+    );
+    assert!(
+        result.is_ok(),
+        "reply to active parent should be accepted: {result:?}"
+    );
+}
+
+/// Scenario 9: reply whose prepended parent author is revoked → rejected.
+#[test]
+fn recipient_gate_reply_to_revoked_parent_rejected() {
+    // Seed a doc where `bob` (revoked) wrote a comment.
+    let doc = "\
+---
+title: Test
+---
+
+```remargin
+---
+id: abc
+author: bob
+type: human
+ts: 2026-04-06T12:00:00-04:00
+checksum: sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+---
+hello
+```
+";
+    let system = strict_recipient_system(doc);
+    let config = caller_config_for_recipient_tests();
+    let position = InsertPosition::Append;
+
+    let err = create_comment(
+        &system,
+        Path::new("/docs/test.md"),
+        &config,
+        &CreateCommentParams {
+            reply_to: Some("abc"),
+            to: &[],
+            content: "reply",
+            position: &position,
+            ..CreateCommentParams::new("reply", &position)
+        },
+    )
+    .unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("not an active registry participant"),
+        "reply to revoked parent should be rejected: {msg}"
+    );
 }

@@ -141,6 +141,34 @@ impl ResolvedConfig {
         }
     }
 
+    /// Check if a recipient is allowed to receive comments in the current
+    /// mode (registered/strict: must be an active participant; open: always ok).
+    ///
+    /// Mirrors [`Self::can_post`] on the recipient side. Empty `to:` lists
+    /// (broadcast) are never passed here — callers iterate and call per-id.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the mode is `Registered` or `Strict` and the
+    /// recipient is not an active registry participant (absent or revoked).
+    pub(crate) fn can_address(&self, recipient: &str) -> Result<()> {
+        match self.mode {
+            Mode::Open => Ok(()),
+            Mode::Registered | Mode::Strict => {
+                let Some(reg) = &self.registry else {
+                    bail!("mode is {:?} but no registry found", self.mode);
+                };
+                if !reg.is_active(recipient) {
+                    bail!(
+                        "recipient {recipient:?} is not an active registry participant (mode: {:?})",
+                        self.mode
+                    );
+                }
+                Ok(())
+            }
+        }
+    }
+
     /// Check if a participant is allowed to post (mode + registry enforcement).
     ///
     /// Kept as a crate-private helper used by [`Self::resolve`] as a

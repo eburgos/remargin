@@ -17,8 +17,8 @@ use crate::config::{Mode, ResolvedConfig};
 use crate::crypto;
 use crate::operations::batch::{BatchCommentOp, batch_comment};
 use crate::operations::verify::{
-    Anomaly, AnomalyKind, RowStatus, SignatureStatus, SubsetGateFailure, VerifyFailure,
-    anomalies_for_doc, commit_with_verify, verify_and_refresh, verify_document,
+    Anomaly, AnomalyKind, RecipientStatus, RowStatus, SignatureStatus, SubsetGateFailure,
+    VerifyFailure, anomalies_for_doc, commit_with_verify, verify_and_refresh, verify_document,
 };
 use crate::operations::{
     CreateCommentParams, ack_comments, create_comment, delete_comments, edit_comment, react,
@@ -82,6 +82,22 @@ participants:
     pubkeys:
       - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAtestalicekey
   bob:
+    type: human
+    status: active
+    pubkeys: []
+";
+
+const RECIPIENT_VERIFY_REGISTRY: &str = "\
+participants:
+  alice:
+    type: human
+    status: active
+    pubkeys: []
+  bob:
+    type: human
+    status: revoked
+    pubkeys: []
+  eduardo-burgos:
     type: human
     status: active
     pubkeys: []
@@ -1560,6 +1576,8 @@ fn subset_gate_allows_op_when_pre_file_missing_and_post_is_clean() {
     commit_with_verify(&system, &doc, &cfg, Path::new("/d/new.md"), |_| Ok(())).unwrap();
 }
 
+// Recipient status in verify.
+
 #[test]
 fn anomaly_kind_pair_distinguishes_checksum_from_signature() {
     // Same id, different kind = different anomaly identity.
@@ -1576,4 +1594,184 @@ fn anomaly_kind_pair_distinguishes_checksum_from_signature() {
         id: String::from("a"),
         kind: AnomalyKind::SignatureMissing,
     }));
+}
+
+fn make_comment_with_to(id: &str, author: &str, content: &str, to: Vec<String>) -> Comment {
+    let mut cm = make_comment(id, author, content);
+    cm.to = to;
+    cm
+}
+
+fn recipient_verify_registry() -> Registry {
+    registry_with(RECIPIENT_VERIFY_REGISTRY)
+}
+
+/// Scenario 18: unknown recipient in strict → row bad, report.ok = false.
+#[test]
+fn verify_unknown_recipient_strict_row_bad() {
+    let reg = recipient_verify_registry();
+    let cm = make_comment_with_to("a", "alice", "hi", vec![String::from("eduardo_burgos")]);
+    let doc = doc_with(vec![cm]);
+    let cfg = make_config(Mode::Strict, Some(reg));
+    let report = verify_document(&doc, &cfg);
+    assert!(
+        !report.ok,
+        "unknown recipient in strict should make ok=false"
+    );
+    assert_eq!(
+        report.results[0].recipients,
+        RecipientStatus::Unknown,
+        "row recipients should be Unknown"
+    );
+}
+
+/// Scenario 19: unknown recipient in registered → row bad.
+#[test]
+fn verify_unknown_recipient_registered_row_bad() {
+    let reg = recipient_verify_registry();
+    let cm = make_comment_with_to("a", "alice", "hi", vec![String::from("eduardo_burgos")]);
+    let doc = doc_with(vec![cm]);
+    let cfg = make_config(Mode::Registered, Some(reg));
+    let report = verify_document(&doc, &cfg);
+    assert!(
+        !report.ok,
+        "unknown recipient in registered should make ok=false"
+    );
+    assert_eq!(report.results[0].recipients, RecipientStatus::Unknown);
+}
+
+/// Scenario 20: unknown recipient in open → row neutral (ok=true).
+#[test]
+fn verify_unknown_recipient_open_row_neutral() {
+    let reg = recipient_verify_registry();
+    let cm = make_comment_with_to("a", "alice", "hi", vec![String::from("eduardo_burgos")]);
+    let doc = doc_with(vec![cm]);
+    let cfg = make_config(Mode::Open, Some(reg));
+    let report = verify_document(&doc, &cfg);
+    // Open mode: unknown recipient is neutral (not bad unless checksum/sig fails).
+    // alice has no keys so signature is Missing, and Missing is neutral in Open.
+    assert!(report.ok, "open mode: unknown recipient is neutral");
+    assert_eq!(
+        report.results[0].recipients,
+        RecipientStatus::Unknown,
+        "recipient status is still Unknown even in open mode"
+    );
+}
+
+/// Scenario 21: revoked recipient in strict → row bad.
+#[test]
+fn verify_revoked_recipient_strict_row_bad() {
+    let reg = recipient_verify_registry();
+    let cm = make_comment_with_to("a", "alice", "hi", vec![String::from("bob")]);
+    let doc = doc_with(vec![cm]);
+    let cfg = make_config(Mode::Strict, Some(reg));
+    let report = verify_document(&doc, &cfg);
+    assert!(
+        !report.ok,
+        "revoked recipient in strict should make ok=false"
+    );
+    assert_eq!(report.results[0].recipients, RecipientStatus::Unknown);
+}
+
+/// Scenario 22: empty to: in strict → row ok.
+#[test]
+fn verify_empty_to_strict_row_ok() {
+    let reg = recipient_verify_registry();
+    let cm = make_comment("a", "alice", "hi"); // to: Vec::new() by default
+    let doc = doc_with(vec![cm]);
+    let cfg = make_config(Mode::Strict, Some(reg));
+    let report = verify_document(&doc, &cfg);
+    // Broadcast — no recipients to check, recipients = Ok.
+    assert_eq!(report.results[0].recipients, RecipientStatus::Ok);
+}
+
+/// Scenario 23: `commit_with_verify` allows write that fixes a bad recipient
+/// (Q ⊂ P: removes the bad recipient anomaly from the pre-state).
+#[test]
+fn commit_with_verify_repair_removes_bad_recipient_succeeds() {
+    let reg_yaml = RECIPIENT_VERIFY_REGISTRY;
+    let pre_doc = doc_with(vec![make_comment_with_to(
+        "a",
+        "alice",
+        "hi",
+        vec![String::from("eduardo_burgos")],
+    )]);
+    let pre_md = pre_doc.to_markdown().unwrap();
+
+    let system = MockSystem::new()
+        .with_file(Path::new("/d/a.md"), pre_md.as_bytes())
+        .unwrap()
+        .with_file(Path::new("/d/.remargin.yaml"), b"mode: registered\n")
+        .unwrap()
+        .with_file(Path::new("/d/.remargin-registry.yaml"), reg_yaml.as_bytes())
+        .unwrap();
+
+    let cfg = make_config(Mode::Registered, Some(registry_with(reg_yaml)));
+
+    // Post-state: same comment but with a valid recipient.
+    let post_doc = doc_with(vec![make_comment_with_to(
+        "a",
+        "alice",
+        "hi",
+        vec![String::from("eduardo-burgos")],
+    )]);
+
+    // Repair: P has RecipientUnknown for "a"; Q does not → Q ⊆ P.
+    commit_with_verify(&system, &post_doc, &cfg, Path::new("/d/a.md"), |_| Ok(())).unwrap();
+}
+
+/// Scenario 24: `commit_with_verify` blocks write that introduces a bad recipient.
+#[test]
+fn commit_with_verify_introducing_bad_recipient_blocked() {
+    let reg_yaml = RECIPIENT_VERIFY_REGISTRY;
+    let system = MockSystem::new()
+        .with_file(Path::new("/d/a.md"), b"---\ntitle: Test\n---\n\n# Hello\n")
+        .unwrap()
+        .with_file(Path::new("/d/.remargin.yaml"), b"mode: registered\n")
+        .unwrap()
+        .with_file(Path::new("/d/.remargin-registry.yaml"), reg_yaml.as_bytes())
+        .unwrap();
+
+    let cfg = make_config(Mode::Registered, Some(registry_with(reg_yaml)));
+
+    // Post-state: comment with unknown recipient — introduces RecipientUnknown.
+    let post_doc = doc_with(vec![make_comment_with_to(
+        "a",
+        "alice",
+        "hi",
+        vec![String::from("eduardo_burgos")],
+    )]);
+
+    let err =
+        commit_with_verify(&system, &post_doc, &cfg, Path::new("/d/a.md"), |_| Ok(())).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("recipient_unknown") || msg.contains("anomaly"),
+        "gate should refuse write introducing bad recipient: {msg}"
+    );
+}
+
+/// `RecipientStatus::as_str` renders correctly.
+#[test]
+fn recipient_status_as_str() {
+    assert_eq!(RecipientStatus::Ok.as_str(), "ok");
+    assert_eq!(RecipientStatus::Unknown.as_str(), "unknown");
+}
+
+/// `AnomalyKind::RecipientUnknown` is present in the anomaly set for a doc
+/// with an unknown recipient in registered mode.
+#[test]
+fn anomaly_kind_recipient_unknown_in_anomaly_set() {
+    let reg = recipient_verify_registry();
+    let cm = make_comment_with_to("a", "alice", "hi", vec![String::from("nobody")]);
+    let doc = doc_with(vec![cm]);
+    let cfg = make_config(Mode::Registered, Some(reg));
+    let anomalies = anomalies_for_doc(&doc, &cfg);
+    assert!(
+        anomalies.contains(&Anomaly {
+            id: String::from("a"),
+            kind: AnomalyKind::RecipientUnknown,
+        }),
+        "anomaly set should include RecipientUnknown: {anomalies:?}"
+    );
 }

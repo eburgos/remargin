@@ -50,6 +50,33 @@ use crate::writer;
 
 const SUMMARY_LINE_LIMIT: usize = 5;
 
+/// Per-comment recipient registry status. Produced by [`verify_document`]
+/// and carried in [`RowStatus`].
+///
+/// `Ok` when all `to:` entries are active registry participants (or the
+/// `to:` list is empty — broadcast is always ok). `Unknown` when any
+/// entry is absent from or revoked in the registry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RecipientStatus {
+    /// All `to:` recipients are active, or `to:` is empty.
+    Ok,
+    /// At least one `to:` recipient is absent from or revoked in the
+    /// registry.
+    Unknown,
+}
+
+impl RecipientStatus {
+    /// Canonical lowercase name, matching the JSON / text output.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
 /// Per-comment signature resolution status. Produced by
 /// [`verify_document`] and rendered verbatim in the `signature` column of
 /// `remargin verify` / the MCP `verify` tool.
@@ -93,6 +120,9 @@ pub struct RowStatus {
     pub checksum_ok: bool,
     /// Comment ID.
     pub id: String,
+    /// Per-recipient registry resolution. `Unknown` when any `to:` entry
+    /// is absent from or revoked in the registry.
+    pub recipients: RecipientStatus,
     /// Per-author-identity signature resolution.
     pub signature: SignatureStatus,
 }
@@ -120,6 +150,7 @@ impl VerifyReport {
                 json!({
                     "id": row.id,
                     "checksum_ok": row.checksum_ok,
+                    "recipients": row.recipients.as_str(),
                     "signature": row.signature.as_str(),
                 })
             })
@@ -160,7 +191,13 @@ impl VerifyFailure {
         let mut failures: Vec<RowStatus> = Vec::new();
         for (row, cm) in report.results.iter().zip(comments.iter()) {
             let registered_active = is_registered_active(cm, cfg.registry.as_ref());
-            if row_is_bad(&cfg.mode, row.checksum_ok, row.signature, registered_active) {
+            if row_is_bad(
+                &cfg.mode,
+                row.checksum_ok,
+                row.signature,
+                registered_active,
+                row.recipients,
+            ) {
                 failures.push(row.clone());
             }
         }
@@ -218,10 +255,11 @@ impl VerifyFailure {
             let chk = if row.checksum_ok { "ok" } else { "FAIL" };
             let _ = writeln!(
                 out,
-                "  {}: checksum={} signature={}",
+                "  {}: checksum={} signature={} recipients={}",
                 row.id,
                 chk,
-                row.signature.as_str()
+                row.signature.as_str(),
+                row.recipients.as_str(),
             );
         }
         out
@@ -276,6 +314,7 @@ impl VerifyFailure {
                 json!({
                     "checksum_ok": row.checksum_ok,
                     "id": row.id,
+                    "recipients": row.recipients.as_str(),
                     "signature": row.signature.as_str(),
                 })
             })
@@ -312,6 +351,9 @@ pub struct Anomaly {
 pub enum AnomalyKind {
     /// Recomputed content checksum did not match the stored one.
     ChecksumInvalid,
+    /// At least one `to:` recipient is absent from or revoked in the
+    /// registry.
+    RecipientUnknown,
     /// Signature block present but did not match any active pubkey.
     SignatureInvalid,
     /// No signature block.
@@ -326,6 +368,7 @@ impl AnomalyKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ChecksumInvalid => "checksum_invalid",
+            Self::RecipientUnknown => "recipient_unknown",
             Self::SignatureInvalid => "signature_invalid",
             Self::SignatureMissing => "signature_missing",
             Self::SignatureUnknownAuthor => "signature_unknown_author",
@@ -421,12 +464,14 @@ pub fn verify_document(doc: &ParsedDocument, cfg: &ResolvedConfig) -> VerifyRepo
     for cm in &doc.comments() {
         let checksum_ok = crypto::verify_checksum(cm);
         let signature = resolve_signature(cm, cfg.registry.as_ref());
+        let recipients = resolve_recipients(cm, cfg.registry.as_ref());
 
         if row_is_bad(
             &cfg.mode,
             checksum_ok,
             signature,
             is_registered_active(cm, cfg.registry.as_ref()),
+            recipients,
         ) {
             ok = false;
         }
@@ -434,6 +479,7 @@ pub fn verify_document(doc: &ParsedDocument, cfg: &ResolvedConfig) -> VerifyRepo
         results.push(RowStatus {
             id: cm.id.clone(),
             checksum_ok,
+            recipients,
             signature,
         });
     }
@@ -453,7 +499,13 @@ pub fn anomalies_for_doc(doc: &ParsedDocument, cfg: &ResolvedConfig) -> HashSet<
     let report = verify_document(doc, cfg);
     for (row, cm) in report.results.iter().zip(doc.comments().iter()) {
         let registered_active = is_registered_active(cm, cfg.registry.as_ref());
-        if !row_is_bad(&cfg.mode, row.checksum_ok, row.signature, registered_active) {
+        if !row_is_bad(
+            &cfg.mode,
+            row.checksum_ok,
+            row.signature,
+            registered_active,
+            row.recipients,
+        ) {
             continue;
         }
         if !row.checksum_ok {
@@ -486,6 +538,14 @@ pub fn anomalies_for_doc(doc: &ParsedDocument, cfg: &ResolvedConfig) -> HashSet<
                 }
             }
             SignatureStatus::Valid => {}
+        }
+        if matches!(row.recipients, RecipientStatus::Unknown)
+            && matches!(cfg.mode, Mode::Registered | Mode::Strict)
+        {
+            out.insert(Anomaly {
+                id: row.id.clone(),
+                kind: AnomalyKind::RecipientUnknown,
+            });
         }
     }
     out
@@ -534,10 +594,11 @@ pub fn format_report_diagnostic(report: &VerifyReport, mode: &Mode) -> String {
         let chk = if row.checksum_ok { "ok" } else { "FAIL" };
         let _ = writeln!(
             out,
-            "  {}: checksum={} signature={}",
+            "  {}: checksum={} signature={} recipients={}",
             row.id,
             chk,
-            row.signature.as_str()
+            row.signature.as_str(),
+            row.recipients.as_str(),
         );
     }
     out
@@ -602,11 +663,19 @@ fn row_is_bad(
     checksum_ok: bool,
     signature: SignatureStatus,
     registered_active: bool,
+    recipients: RecipientStatus,
 ) -> bool {
     if !checksum_ok {
         return true;
     }
     if signature == SignatureStatus::Invalid {
+        return true;
+    }
+    // Unknown recipients are bad in registered/strict, neutral in open —
+    // same column as UnknownAuthor in the severity table.
+    if matches!(recipients, RecipientStatus::Unknown)
+        && matches!(mode, Mode::Registered | Mode::Strict)
+    {
         return true;
     }
     match mode {
@@ -667,6 +736,29 @@ fn resolve_signature(cm: &Comment, registry: Option<&Registry>) -> SignatureStat
         }
     }
     SignatureStatus::Invalid
+}
+
+/// Resolve the recipient registry status for a single comment.
+///
+/// Returns [`RecipientStatus::Ok`] when `cm.to` is empty (broadcast) or
+/// every listed recipient is an active participant in `registry`.
+/// Returns [`RecipientStatus::Unknown`] when any recipient is absent
+/// from or revoked in the registry, or when `registry` is absent and
+/// `cm.to` is non-empty (no registry → cannot validate).
+fn resolve_recipients(cm: &Comment, registry: Option<&Registry>) -> RecipientStatus {
+    if cm.to.is_empty() {
+        return RecipientStatus::Ok;
+    }
+    let Some(reg) = registry else {
+        // Non-empty to: but no registry to check against — treat as unknown.
+        return RecipientStatus::Unknown;
+    };
+    for recipient in &cm.to {
+        if !reg.is_active(recipient) {
+            return RecipientStatus::Unknown;
+        }
+    }
+    RecipientStatus::Ok
 }
 
 /// True when the comment's author is in the registry with an active

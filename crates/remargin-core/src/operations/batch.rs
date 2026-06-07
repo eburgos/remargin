@@ -245,6 +245,13 @@ pub fn batch_comment(
             op.to.clone()
         };
 
+        // Recipient registry gate: mirrors create_comment — each recipient
+        // must be an active participant in registered/strict mode.
+        for recipient in &effective_to {
+            cfg.can_address(recipient)
+                .with_context(|| format!("batch operation {idx}: to: {recipient:?}"))?;
+        }
+
         let now = Utc::now().fixed_offset();
         let mut comment = Comment {
             ack: Vec::new(),

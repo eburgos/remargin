@@ -130,6 +130,14 @@ pub fn create_comment(
         copy_attachments(system, path, cfg, params.attachments).context("copying attachments")?;
     let effective_to = build_effective_to(&doc, params.reply_to, params.to);
 
+    // Recipient registry gate: in registered/strict mode every non-empty
+    // to: entry (including the prepended parent author for replies) must
+    // resolve to an active participant. open mode is unchecked.
+    for recipient in &effective_to {
+        cfg.can_address(recipient)
+            .with_context(|| format!("comment to: {recipient:?}"))?;
+    }
+
     let now = Utc::now().fixed_offset();
     let mut comment = Comment {
         ack: Vec::new(),
