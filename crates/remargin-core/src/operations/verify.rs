@@ -66,7 +66,7 @@ pub enum RecipientStatus {
 impl RecipientStatus {
     /// Canonical lowercase name for JSON / text output.
     #[must_use]
-    pub fn as_str(&self) -> &'static str {
+    pub const fn as_str(&self) -> &'static str {
         match self {
             Self::Ok => "ok",
             Self::Unknown(_) => "unknown",

@@ -3,6 +3,7 @@ import { ChevronDown, Clock, FileText, Search, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { InboxTree } from "@/components/sidebar/InboxTree";
 import { deriveLeafState } from "@/components/sidebar/inboxLeafState";
+import { KindFilterBar } from "@/components/sidebar/KindFilterBar";
 import { MarkdownContent } from "@/components/sidebar/MarkdownContent";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,7 +18,7 @@ import type { ExpandedComment } from "@/generated";
 import { useBackend } from "@/hooks/useBackend";
 import { useParticipants } from "@/hooks/useParticipants";
 import { authorLabel } from "@/lib/authorLabel";
-import { collectKinds, matchesKindFilter } from "@/lib/kindFilter";
+import { collectKinds, matchesKindFilter, pruneKindFilter } from "@/lib/kindFilter";
 import type { ViewMode } from "@/types";
 
 /**
@@ -56,20 +57,6 @@ interface InboxSectionProps {
   refreshKey?: number;
   /** View mode owned by RemarginSidebar (persisted in plugin settings). */
   viewMode?: ViewMode;
-  /**
-   * Session-scoped `remargin_kind` filter lifted to RemarginSidebar so the
-   * same chip row applies across Inbox and Current-file. Empty array means
-   * no filter. Applied client-side after the fetch so the chip set stays
-   * in sync with the unfiltered visible data (see `onKindsDiscovered`).
-   */
-  kindFilter?: string[];
-  /**
-   * Fires whenever the loaded (pre-filter) items change, reporting the
-   * sorted, de-duplicated set of `remargin_kind` values present. The
-   * sidebar unions this with the thread section's set to drive the
-   * filter bar's chip row.
-   */
-  onKindsDiscovered?: (kinds: string[]) => void;
 }
 
 function errorMessage(err: unknown): string {
@@ -86,8 +73,6 @@ export function InboxSection({
   onOpenAtLine,
   refreshKey,
   viewMode = "tree",
-  kindFilter,
-  onKindsDiscovered,
 }: InboxSectionProps = {}) {
   const backend = useBackend();
   const [filter, setFilter] = useState<InboxFilter>("pending");
@@ -95,6 +80,7 @@ export function InboxSection({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState("");
+  const [kindFilter, setKindFilter] = useState<string[]>([]);
   // Resolve the current identity once per mount. Used by the inbox leaf
   // to decide whether a row is "directed at me" and to detect "acked by
   // me" without a second round-trip. Null while the probe is in flight —
@@ -178,14 +164,13 @@ export function InboxSection({
     [filter]
   );
 
-  // Report the set of `remargin_kind` values present in the loaded
-  // (pre-filter) items so RemarginSidebar can build the chip row. We
-  // fire this on every `items` change — the parent memoizes the union
-  // across Inbox + Current-file to avoid chip flicker.
+  const availableKinds = useMemo(() => collectKinds(items.map((i) => i.comment)), [items]);
+
+  // Drop any selected kinds that are no longer present in the visible
+  // set (e.g. after switching from All to Pending).
   useEffect(() => {
-    if (!onKindsDiscovered) return;
-    onKindsDiscovered(collectKinds(items.map((i) => i.comment)));
-  }, [items, onKindsDiscovered]);
+    setKindFilter((prev) => pruneKindFilter(prev, availableKinds));
+  }, [availableKinds]);
 
   // Apply the kind filter client-side. The fetch itself is unfiltered
   // so switching chips is instant (no CLI round-trip) and the chip
@@ -193,9 +178,8 @@ export function InboxSection({
   // selected `question`, we'd never see the other kinds to offer
   // chips for.
   const visibleItems = useMemo(() => {
-    const active = kindFilter ?? [];
-    if (active.length === 0) return items;
-    return items.filter((i) => matchesKindFilter(i.comment.remargin_kind, active));
+    if (kindFilter.length === 0) return items;
+    return items.filter((i) => matchesKindFilter(i.comment.remargin_kind, kindFilter));
   }, [items, kindFilter]);
 
   if (loading) {
@@ -271,6 +255,12 @@ export function InboxSection({
         </div>
       </div>
 
+      <KindFilterBar
+        availableKinds={availableKinds}
+        selected={kindFilter}
+        onChange={setKindFilter}
+      />
+
       <div className="min-w-0">
         {error ? (
           <div className="px-4 py-3 text-xs text-red-400 whitespace-pre-wrap break-words">
@@ -281,7 +271,7 @@ export function InboxSection({
           <div className="px-4 py-3 text-xs text-text-faint">
             {isSearching
               ? "No comments match your search."
-              : (kindFilter?.length ?? 0) > 0
+              : kindFilter.length > 0
                 ? "No comments match the selected kinds."
                 : filter === "pending"
                   ? "No pending comments."

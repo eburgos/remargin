@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { CommentCard } from "@/components/sidebar/CommentCard";
+import { KindFilterBar } from "@/components/sidebar/KindFilterBar";
 import { findRadixScrollViewport } from "@/components/sidebar/scrollViewport";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { Comment } from "@/generated";
 import { useBackend } from "@/hooks/useBackend";
-import { collectKinds, matchesKindFilter } from "@/lib/kindFilter";
+import { collectKinds, matchesKindFilter, pruneKindFilter } from "@/lib/kindFilter";
 import { buildThreadTree, type ThreadNode } from "@/lib/threadTree";
 import { parseVerifyFailure, type VerifyFailure } from "@/lib/verifyFailure";
 
@@ -34,19 +35,6 @@ interface ThreadedCommentsProps {
    * thread can slot it in at the right place.
    */
   replyEditor?: React.ReactNode;
-  /**
-   * Session-scoped `remargin_kind` filter owned by RemarginSidebar. Empty
-   * array means no filter. OR semantics: a comment stays visible when at
-   * least one of its kinds is in this list. Orphaned replies (parent
-   * filtered out) float up to root so the user still sees the response.
-   */
-  kindFilter?: string[];
-  /**
-   * Fires whenever the loaded (pre-filter) comments change, reporting the
-   * sorted, de-duplicated set of `remargin_kind` values present. Parent
-   * unions this with the Inbox section's set to drive the chip row.
-   */
-  onKindsDiscovered?: (kinds: string[]) => void;
 }
 
 function errorMessage(err: unknown): string {
@@ -67,11 +55,10 @@ export function ThreadedComments({
   refreshKey,
   replyTarget,
   replyEditor,
-  kindFilter,
-  onKindsDiscovered,
 }: ThreadedCommentsProps) {
   const backend = useBackend();
   const [comments, setComments] = useState<Comment[]>([]);
+  const [kindFilter, setKindFilter] = useState<string[]>([]);
   // `loading` is true only until the very first fetch for a given file
   // resolves. Subsequent refetches (from refreshKey bumps, reactions,
   // acks, or reply submits) do NOT flip this back to true — that would
@@ -166,12 +153,12 @@ export function ThreadedComments({
     };
   }, [backend]);
 
-  // Report the set of `remargin_kind` values present in the loaded
-  // (pre-filter) comments so RemarginSidebar can build the chip row.
+  const availableKinds = useMemo(() => collectKinds(comments), [comments]);
+
+  // Drop any selected kinds that are no longer present in the visible set.
   useEffect(() => {
-    if (!onKindsDiscovered) return;
-    onKindsDiscovered(collectKinds(comments));
-  }, [comments, onKindsDiscovered]);
+    setKindFilter((prev) => pruneKindFilter(prev, availableKinds));
+  }, [availableKinds]);
 
   // Apply the kind filter client-side. Filtering at the comment level
   // (not thread level) matches the CLI semantics and lets a reply that
@@ -179,9 +166,8 @@ export function ThreadedComments({
   // not. Orphans naturally float up to root via `buildThreadTree`
   // because it treats a missing `reply_to` parent as "no parent".
   const visibleComments = useMemo(() => {
-    const active = kindFilter ?? [];
-    if (active.length === 0) return comments;
-    return comments.filter((c) => matchesKindFilter(c.remargin_kind ?? [], active));
+    if (kindFilter.length === 0) return comments;
+    return comments.filter((c) => matchesKindFilter(c.remargin_kind ?? [], kindFilter));
   }, [comments, kindFilter]);
 
   const threads = useMemo(() => buildThreadTree(visibleComments), [visibleComments]);
@@ -252,16 +238,30 @@ export function ThreadedComments({
   }
 
   if (threads.length === 0) {
-    const filtered = comments.length > 0 && (kindFilter?.length ?? 0) > 0;
+    const filtered = comments.length > 0 && kindFilter.length > 0;
     return (
-      <div ref={rootRef} className="px-4 py-3 text-xs text-text-faint">
-        {filtered ? "No comments match the selected kinds." : "No comments in this file."}
+      <div ref={rootRef}>
+        {filtered && (
+          <KindFilterBar
+            availableKinds={availableKinds}
+            selected={kindFilter}
+            onChange={setKindFilter}
+          />
+        )}
+        <div className="px-4 py-3 text-xs text-text-faint">
+          {filtered ? "No comments match the selected kinds." : "No comments in this file."}
+        </div>
       </div>
     );
   }
 
   return (
     <div ref={rootRef}>
+      <KindFilterBar
+        availableKinds={availableKinds}
+        selected={kindFilter}
+        onChange={setKindFilter}
+      />
       <ScrollArea className="flex-1">
         <div className="flex flex-col">
           {threads.map((node) => (

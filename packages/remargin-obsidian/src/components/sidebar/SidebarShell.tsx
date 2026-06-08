@@ -39,14 +39,6 @@ interface SidebarShellProps {
    * sidebar section to refetch its data.
    */
   onRefreshClick?: () => void;
-  /**
-   * Optional filter/toolbar row rendered directly below the top header
-   * and above the scrollable section list. Stays visible while the
-   * user scrolls long Inbox or thread lists, which is the point of
-   * having a filter. Hidden entirely when omitted, so plugins that
-   * don't provide one see the original layout.
-   */
-  filterBar?: React.ReactNode;
   sandboxContent?: React.ReactNode;
   sandboxActions?: React.ReactNode;
   inboxContent?: React.ReactNode;
@@ -73,7 +65,6 @@ export function SidebarShell({
   onInitialized,
   onPlusClick,
   onRefreshClick,
-  filterBar,
   sandboxContent,
   sandboxActions,
   inboxContent,
@@ -225,8 +216,6 @@ export function SidebarShell({
           New
         </button>
       </div>
-
-      {filterBar}
 
       <ScrollArea className="flex-1 min-w-0">
         <div className="flex flex-col min-w-0">
