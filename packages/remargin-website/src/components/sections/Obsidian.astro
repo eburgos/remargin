@@ -1,0 +1,49 @@
+---
+import Card from '../Card.astro';
+import Callout from '../Callout.astro';
+import SectionHeader from '../SectionHeader.astro';
+---
+<section id="obsidian" aria-labelledby="obsidian-title">
+  <div class="container">
+    <SectionHeader eyebrow="07 / Obsidian" title="The human side of the protocol.">
+      <Fragment slot="lede">
+        Agents are happy reading raw YAML fences. Humans aren't. The Remargin Obsidian plugin turns the same comment layer into an inline, clickable review surface — threaded comments in a sidebar, and pretty-printed comment cards rendered right where they live in your note.
+      </Fragment>
+    </SectionHeader>
+
+    <div class="obsidian__grid">
+      <Card num="CARD 01" title="Threaded sidebar">
+        <p class="card__body">Read, write, reply, ack, and react to comments in a panel docked beside your note. Threading, addressing, and ack state are all live — and you can filter by comment kind, per section.</p>
+      </Card>
+      <Card num="CARD 02" title="Inline comment widgets">
+        <p class="card__body">In Reading mode and Live Preview, raw remargin fenced blocks render as rich read-only cards — author, timestamp, and rendered markdown. Source mode keeps the raw YAML as an escape hatch.</p>
+      </Card>
+      <Card num="CARD 03" title="Click to sync">
+        <p class="card__body">Click a comment widget in the document and the sidebar scrolls to the matching thread and flashes. The note and its conversation stay one addressable surface.</p>
+      </Card>
+      <Card num="CARD 04" title="Thin layer, same guarantees">
+        <p class="card__body">A React + CodeMirror&nbsp;6 layer over the <code>remargin</code> CLI. The CLI still does the file I/O, parsing, Ed25519 signing, and integrity checks — the plugin can't drift from the protocol.</p>
+      </Card>
+    </div>
+
+    <Callout title="~ /your-vault" label="installing the Obsidian plugin">
+      <span class="row"><span class="muted"># Bundled with the CLI — drops main.js, manifest.json, styles.css into the vault</span></span>
+      <span class="row"><span class="prompt">$</span> <span class="cmd">remargin obsidian install --vault-path ~/vault</span></span>
+      <span class="row"><span class="muted"># then enable "Remargin" under Settings -> Community plugins, and open the sidebar</span></span>
+    </Callout>
+
+    <p class="caption">Desktop Obsidian 1.5+. Editor widgets are opt-in under <code>Settings -> Remargin -> Editor widgets</code>; the plugin tracks the CLI version and flags when an upgrade is available.</p>
+  </div>
+</section>
+
+<style>
+.obsidian__grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 20px;
+  margin-bottom: 28px;
+}
+@media (max-width: 760px) {
+  .obsidian__grid { grid-template-columns: 1fr; }
+}
+</style>
