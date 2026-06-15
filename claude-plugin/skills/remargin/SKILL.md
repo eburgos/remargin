@@ -21,6 +21,7 @@ When the remargin plugin is installed, these slash commands are available:
 - `/remargin:process-file <path>` — process a single managed markdown file. Trigger phrases: "process this file", "submit this file", "process <path>", "run remargin on this".
 - `/remargin:process-sandbox-group <prompt-name>` — process one sandbox group at a time. Trigger phrases: "process the <prompt-name> group", "submit the <prompt-name> group". Use when the user names a specific prompt group.
 - `/remargin:process-sandbox` — process every sandboxed file in the vault, one subagent per resolved prompt group (context isolation per group). Trigger phrases: "process the sandbox", "process sandboxed items in this vault", "submit the sandbox", "run the sandbox", "process everything I staged".
+- `/remargin:process-folder <path>` — process a folder driven by activity: first read the full activity delta across ALL identities to build awareness, then act only on items pending to this identity or open/unassigned. Groups by resolved system prompt and spawns one subagent per group. Does NOT touch sandbox markers. Trigger phrases: "process this folder", "process the folder <path>", "go through this folder", "what changed in this folder and handle my part".
 - `/remargin:activity [path]` — report what changed since the caller last acted on each managed `.md` under `path`. Read-only. Trigger phrases: "what's new", "what happened since I was last here", "what changed in this workspace", "any activity I missed", "anything for me".
 
 Routing rules:
@@ -28,6 +29,7 @@ Routing rules:
 - When the user names a single file, route to `/remargin:process-file`.
 - When the user names a specific prompt group, route to `/remargin:process-sandbox-group`.
 - When the user asks for the sandbox / staging area / "everything I staged" / similar without naming a group, route to `/remargin:process-sandbox` (vault-wide, subagents per group).
+- When the user names a folder (a directory, not a single file and not the sandbox / staging area), route to `/remargin:process-folder` (activity-driven). Branch on the path itself, not its spelling: inspect whether the path is a directory rather than guessing from the name. If the path is ambiguous (file vs folder), resolve by inspecting the path.
 - When the user asks what's new / what happened / what changed, route to `/remargin:activity`.
 - If the user gives no path and no sandbox cue, ask which they mean. Do not pick.
 - Never bypass a slash command and reproduce its logic inline. The slash command is the canonical entry point; the skill is the router.
