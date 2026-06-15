@@ -2427,22 +2427,11 @@ fn handle_sandbox_list(
         .context("identity is required for sandbox_list")?;
 
     let listings = sandbox_ops::list_for_identity(system, &root, identity)?;
-    let items: Vec<Value> = listings
+    let files: Vec<sandbox_ops::SandboxListEntry> = listings
         .iter()
-        .map(|l| {
-            let display_path = l
-                .path
-                .strip_prefix(&root)
-                .unwrap_or(&l.path)
-                .display()
-                .to_string();
-            json!({
-                "path": display_path,
-                "since": l.since.to_rfc3339(),
-            })
-        })
+        .map(|l| sandbox_ops::SandboxListEntry::from_listing(l, &root, false))
         .collect();
-    Ok(json!({ "files": items }))
+    Ok(json!({ "files": files }))
 }
 
 /// Handle the `search` tool: search across documents for text matches.

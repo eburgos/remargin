@@ -30,7 +30,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, Result, bail};
 use chrono::{DateTime, FixedOffset, Utc};
 use os_shim::System;
-use serde_json::{Value, json};
+use serde::Serialize;
+use serde_json::Value;
+use tixschema::model_schema;
 
 use crate::config::ResolvedConfig;
 use crate::document::allowlist;
@@ -54,34 +56,89 @@ pub struct SandboxBulkResult {
 
 impl SandboxBulkResult {
     /// `changed_key` is `"added"` for `sandbox add`, `"removed"` for
-    /// `sandbox remove`. Paths are rendered relative to `base_dir`.
+    /// `sandbox remove`. Paths are rendered relative to `base_dir`. The
+    /// output is serialized from a typed report; the key name is the only
+    /// thing that varies between the two operations.
     #[must_use]
     pub fn to_json(&self, base_dir: &Path, changed_key: &str) -> Value {
-        let changed: Vec<String> = self
-            .changed
-            .iter()
-            .map(|p| strip_prefix_display(p, base_dir))
-            .collect();
-        let skipped: Vec<String> = self
-            .skipped
-            .iter()
-            .map(|p| strip_prefix_display(p, base_dir))
-            .collect();
-        let failed: Vec<Value> = self
+        let changed = display_paths(&self.changed, base_dir);
+        let skipped = display_paths(&self.skipped, base_dir);
+        let failed = self
             .failed
             .iter()
-            .map(|f| {
-                json!({
-                    "path": strip_prefix_display(&f.path, base_dir),
-                    "reason": f.reason,
-                })
+            .map(|f| SandboxFailureEntry {
+                path: strip_prefix_display(&f.path, base_dir),
+                reason: f.reason.clone(),
             })
             .collect();
-        json!({
-            changed_key: changed,
-            "skipped": skipped,
-            "failed": failed,
-        })
+        let report = match changed_key {
+            "added" => serde_json::to_value(SandboxAddReport {
+                added: changed,
+                failed,
+                skipped,
+            }),
+            _ => serde_json::to_value(SandboxRemoveReport {
+                failed,
+                removed: changed,
+                skipped,
+            }),
+        };
+        report.unwrap_or(Value::Null)
+    }
+}
+
+/// A per-file failure entry in a sandbox bulk report.
+#[derive(Debug, Serialize)]
+#[non_exhaustive]
+#[model_schema]
+pub struct SandboxFailureEntry {
+    pub path: String,
+    pub reason: String,
+}
+
+/// JSON report for `sandbox add`.
+#[derive(Debug, Serialize)]
+#[non_exhaustive]
+#[model_schema]
+pub struct SandboxAddReport {
+    pub added: Vec<String>,
+    pub failed: Vec<SandboxFailureEntry>,
+    pub skipped: Vec<String>,
+}
+
+/// JSON report for `sandbox remove`.
+#[derive(Debug, Serialize)]
+#[non_exhaustive]
+#[model_schema]
+pub struct SandboxRemoveReport {
+    pub failed: Vec<SandboxFailureEntry>,
+    pub removed: Vec<String>,
+    pub skipped: Vec<String>,
+}
+
+/// A single entry in a `sandbox list` report.
+#[derive(Debug, Serialize)]
+#[non_exhaustive]
+#[model_schema]
+pub struct SandboxListEntry {
+    pub path: String,
+    pub since: String,
+}
+
+impl SandboxListEntry {
+    /// Render a [`SandboxListing`] for JSON output: the path relative to
+    /// `root` (or absolute when `absolute`), plus the RFC 3339 timestamp.
+    #[must_use]
+    pub fn from_listing(listing: &SandboxListing, root: &Path, absolute: bool) -> Self {
+        let path = if absolute {
+            listing.path.display().to_string()
+        } else {
+            strip_prefix_display(&listing.path, root)
+        };
+        Self {
+            path,
+            since: listing.since.to_rfc3339(),
+        }
     }
 }
 
@@ -110,6 +167,14 @@ fn strip_prefix_display(path: &Path, base: &Path) -> String {
         .unwrap_or(path)
         .display()
         .to_string()
+}
+
+/// Render each path relative to `base_dir` for JSON output.
+fn display_paths(paths: &[PathBuf], base_dir: &Path) -> Vec<String> {
+    paths
+        .iter()
+        .map(|p| strip_prefix_display(p, base_dir))
+        .collect()
 }
 
 /// Add the caller (`identity`) to the sandbox list of each file in

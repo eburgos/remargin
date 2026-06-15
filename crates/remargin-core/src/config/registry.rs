@@ -23,7 +23,22 @@ extern crate alloc;
 
 use alloc::collections::BTreeMap;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use tixschema::model_schema;
+
+/// JSON projection of a registry participant for `registry show --json`.
+/// `display_name` falls back to the participant id; `pubkeys` is the count.
+#[derive(Debug, Serialize)]
+#[non_exhaustive]
+#[model_schema]
+pub struct ParticipantView {
+    #[serde(rename = "type")]
+    pub author_type: String,
+    pub display_name: String,
+    pub name: String,
+    pub pubkeys: usize,
+    pub status: ParticipantStatus,
+}
 
 /// Parsed contents of a `.remargin-registry.yaml` file.
 #[derive(Debug, Clone, Deserialize)]
@@ -50,6 +65,16 @@ pub struct RegistryParticipant {
     pub status: RegistryParticipantStatus,
 }
 
+/// Status of a participant as rendered in `registry show --json`.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "lowercase")]
+#[non_exhaustive]
+#[model_schema]
+pub enum ParticipantStatus {
+    Active,
+    Revoked,
+}
+
 /// Status of a registered participant.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -57,6 +82,26 @@ pub struct RegistryParticipant {
 pub enum RegistryParticipantStatus {
     Active,
     Revoked,
+}
+
+impl ParticipantView {
+    #[must_use]
+    pub fn from_registry(name: &str, participant: &RegistryParticipant) -> Self {
+        let status = match participant.status {
+            RegistryParticipantStatus::Active => ParticipantStatus::Active,
+            RegistryParticipantStatus::Revoked => ParticipantStatus::Revoked,
+        };
+        Self {
+            author_type: participant.author_type.clone(),
+            display_name: participant
+                .display_name
+                .clone()
+                .unwrap_or_else(|| name.to_owned()),
+            name: name.to_owned(),
+            pubkeys: participant.pubkeys.len(),
+            status,
+        }
+    }
 }
 
 impl Registry {

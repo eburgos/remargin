@@ -1793,22 +1793,11 @@ pub fn registry_participant_json(
     name: &str,
     participant: &config::registry::RegistryParticipant,
 ) -> Value {
-    let status = match participant.status {
-        config::registry::RegistryParticipantStatus::Active => "active",
-        config::registry::RegistryParticipantStatus::Revoked => "revoked",
-        _ => "unknown",
-    };
-    let display_name = participant
-        .display_name
-        .clone()
-        .unwrap_or_else(|| String::from(name));
-    json!({
-        "name": name,
-        "display_name": display_name,
-        "type": participant.author_type,
-        "status": status,
-        "pubkeys": participant.pubkeys.len(),
-    })
+    serde_json::to_value(config::registry::ParticipantView::from_registry(
+        name,
+        participant,
+    ))
+    .unwrap_or(Value::Null)
 }
 
 pub fn cmd_registry(
@@ -1904,25 +1893,11 @@ pub fn cmd_sandbox(
             let listings = sandbox_ops::list_for_identity(system, &root, identity)?;
 
             if json_mode {
-                let items: Vec<Value> = listings
+                let files: Vec<sandbox_ops::SandboxListEntry> = listings
                     .iter()
-                    .map(|l| {
-                        let display_path = if *absolute {
-                            l.path.display().to_string()
-                        } else {
-                            l.path
-                                .strip_prefix(&root)
-                                .unwrap_or(&l.path)
-                                .display()
-                                .to_string()
-                        };
-                        json!({
-                            "path": display_path,
-                            "since": l.since.to_rfc3339(),
-                        })
-                    })
+                    .map(|l| sandbox_ops::SandboxListEntry::from_listing(l, &root, *absolute))
                     .collect();
-                out_json(sinks, &json!({ "files": items }))
+                out_json(sinks, &json!({ "files": files }))
             } else {
                 for l in &listings {
                     let display_path = if *absolute {
