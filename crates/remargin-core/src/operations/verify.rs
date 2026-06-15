@@ -39,7 +39,7 @@ use anyhow::{Context as _, Result};
 use core::fmt::Write as _;
 use os_shim::System;
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 use thiserror::Error;
 use tixschema::model_schema;
 
@@ -456,6 +456,22 @@ pub struct SubsetGateFailure {
     pub path: PathBuf,
 }
 
+#[derive(Serialize)]
+struct IntroducedJson {
+    id: String,
+    kind: &'static str,
+}
+
+#[derive(Serialize)]
+struct SubsetGateJson {
+    error_kind: &'static str,
+    headline: String,
+    hint: String,
+    introduced: Vec<IntroducedJson>,
+    mode: &'static str,
+    path: String,
+}
+
 impl SubsetGateFailure {
     /// One-line plain-English summary.
     #[must_use]
@@ -489,19 +505,23 @@ impl SubsetGateFailure {
     /// JSON shape for `--json` / MCP tool errors.
     #[must_use]
     pub fn to_json(&self) -> Value {
-        let introduced: Vec<Value> = self
+        let introduced = self
             .introduced
             .iter()
-            .map(|a| json!({ "id": a.id, "kind": a.kind.as_str() }))
+            .map(|a| IntroducedJson {
+                id: a.id.clone(),
+                kind: a.kind.as_str(),
+            })
             .collect();
-        json!({
-            "error_kind": "subset_gate_failed",
-            "introduced": introduced,
-            "headline": self.headline(),
-            "hint": self.hint(),
-            "mode": self.mode.as_str(),
-            "path": self.path.display().to_string(),
+        serde_json::to_value(SubsetGateJson {
+            error_kind: "subset_gate_failed",
+            headline: self.headline(),
+            hint: self.hint(),
+            introduced,
+            mode: self.mode.as_str(),
+            path: self.path.display().to_string(),
         })
+        .unwrap_or(Value::Null)
     }
 }
 
