@@ -2562,20 +2562,22 @@ fn cmd_verify_folder(
         )?;
     }
 
+    let files_verified = report.files.len();
+    let files_passed = files_verified - damaged;
     if report.ok {
         out(
             sinks,
             &format!(
-                "verified {} file(s); no integrity problems",
-                report.files.len()
+                "verified {files_verified} file(s); {files_passed} passed; no integrity problems"
             ),
         )?;
         Ok(())
     } else {
-        anyhow::bail!(
-            "integrity check failed in {damaged} of {} file(s)",
-            report.files.len()
-        );
+        out(
+            sinks,
+            &format!("verified {files_verified} file(s); {files_passed} passed; {damaged} failed"),
+        )?;
+        anyhow::bail!("integrity check failed in {damaged} of {files_verified} file(s)");
     }
 }
 

@@ -1977,7 +1977,7 @@ fn verify_path_empty_directory_is_ok_with_no_files() {
 }
 
 #[test]
-fn verify_path_folder_json_carries_per_file_detail() {
+fn verify_path_folder_json_is_failures_only_summary() {
     let system = MockSystem::new()
         .with_dir(Path::new("/d"))
         .unwrap()
@@ -1992,12 +1992,148 @@ fn verify_path_folder_json_carries_per_file_detail() {
         .to_json();
 
     assert_eq!(json["ok"], serde_json::Value::Bool(false));
-    let files = json["files"].as_array().unwrap();
-    assert_eq!(files.len(), 2);
-    // Every file carries a `path`, an `ok`, and `results` rows.
-    for file in files {
-        assert!(file["path"].is_string());
-        assert!(file["ok"].is_boolean());
-        assert!(file["results"].is_array());
+    assert_eq!(json["files_verified"], 2_u64);
+    assert_eq!(json["files_passed"], 1_u64);
+    let failures = json["failures"].as_array().unwrap();
+    assert_eq!(failures.len(), 1, "only the failing file is enumerated");
+    let failed = &failures[0];
+    assert!(
+        failed["path"].as_str().unwrap().ends_with("bad.md"),
+        "the passing file must be absent: {failed}"
+    );
+    assert_eq!(failed["comments"], 1_u64);
+    let bad = failed["bad"].as_array().unwrap();
+    assert_eq!(bad.len(), 1, "only the not-clean row is listed");
+    assert!(failed.get("error").is_none(), "verified file has no error");
+}
+
+#[test]
+fn verify_path_folder_json_all_clean_has_empty_failures() {
+    let system = MockSystem::new()
+        .with_dir(Path::new("/d"))
+        .unwrap()
+        .with_file(Path::new("/d/a.md"), SIMPLE_DOC.as_bytes())
+        .unwrap()
+        .with_file(Path::new("/d/b.md"), SIMPLE_DOC.as_bytes())
+        .unwrap();
+    let cfg = open_cfg_as("alice");
+
+    let json = verify_path(&system, Path::new("/d"), Path::new("/d"), &cfg)
+        .unwrap()
+        .to_json();
+
+    assert_eq!(json["ok"], serde_json::Value::Bool(true));
+    assert_eq!(json["files_verified"], 2_u64);
+    assert_eq!(json["files_passed"], 2_u64);
+    assert!(json["failures"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn verify_path_folder_json_parse_error_file_carries_error_only() {
+    let system = MockSystem::new()
+        .with_dir(Path::new("/d"))
+        .unwrap()
+        .with_file(Path::new("/d/good.md"), SIMPLE_DOC.as_bytes())
+        .unwrap()
+        .with_file(Path::new("/d/broken.md"), MALFORMED_DOC.as_bytes())
+        .unwrap();
+    let cfg = open_cfg_as("alice");
+
+    let json = verify_path(&system, Path::new("/d"), Path::new("/d"), &cfg)
+        .unwrap()
+        .to_json();
+
+    assert_eq!(json["files_verified"], 2_u64);
+    assert_eq!(
+        json["files_passed"], 1_u64,
+        "parse-error file is not passed"
+    );
+    let failures = json["failures"].as_array().unwrap();
+    assert_eq!(failures.len(), 1);
+    let failed = &failures[0];
+    assert!(failed["path"].as_str().unwrap().ends_with("broken.md"));
+    assert!(failed["error"].is_string(), "parse error surfaced");
+    assert!(failed.get("comments").is_none(), "no comment count");
+    assert!(failed.get("bad").is_none(), "no bad rows");
+}
+
+#[test]
+fn verify_path_folder_json_all_bad_file_lists_every_row() {
+    // A file whose every comment is not-clean enumerates them all in `bad`.
+    const TWO_TAMPERED: &str = "\
+---
+title: Test
+---
+
+# Hello
+
+```remargin
+---
+id: bad1
+author: alice
+type: human
+ts: 2026-04-06T12:00:00-04:00
+checksum: sha256:deadbeef
+---
+one
+```
+
+```remargin
+---
+id: bad2
+author: alice
+type: human
+ts: 2026-04-06T13:00:00-04:00
+checksum: sha256:deadbeef
+---
+two
+```
+";
+    let system = MockSystem::new()
+        .with_dir(Path::new("/d"))
+        .unwrap()
+        .with_file(Path::new("/d/x.md"), TWO_TAMPERED.as_bytes())
+        .unwrap();
+    let cfg = open_cfg_as("alice");
+
+    let json = verify_path(&system, Path::new("/d"), Path::new("/d"), &cfg)
+        .unwrap()
+        .to_json();
+
+    let failures = json["failures"].as_array().unwrap();
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0]["comments"], 2_u64);
+    assert_eq!(
+        failures[0]["bad"].as_array().unwrap().len(),
+        2,
+        "every not-clean row is listed when all are bad"
+    );
+}
+
+#[test]
+fn verify_path_folder_json_summary_is_smaller_than_per_file_form() {
+    // Size-regression guard: a large mostly-passing directory serializes
+    // far smaller as a failures-only summary than the per-file form would.
+    let mut system = MockSystem::new().with_dir(Path::new("/d")).unwrap();
+    for i in 0_u32..200 {
+        let path = format!("/d/f{i}.md");
+        system = system
+            .with_file(Path::new(&path), SIMPLE_DOC.as_bytes())
+            .unwrap();
     }
+    system = system
+        .with_file(Path::new("/d/bad.md"), TAMPERED_DOC.as_bytes())
+        .unwrap();
+    let cfg = open_cfg_as("alice");
+
+    let report = verify_path(&system, Path::new("/d"), Path::new("/d"), &cfg).unwrap();
+    let summary_len = report.to_json().to_string().len();
+
+    assert_eq!(report.to_json()["files_verified"], 201_u64);
+    assert_eq!(report.to_json()["files_passed"], 200_u64);
+    // 201 files but the summary stays tiny — only the one failure is enumerated.
+    assert!(
+        summary_len < 2_000,
+        "failures-only summary must stay small, was {summary_len} bytes"
+    );
 }

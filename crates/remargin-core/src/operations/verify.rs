@@ -200,44 +200,73 @@ pub struct FolderVerifyReport {
 }
 
 #[derive(Serialize)]
-struct FolderFile {
+struct VerifyFailureFile {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    bad: Vec<VerifyRow>,
+    /// Total comments verified in this file; `None` for parse/read-error files.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    comments: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
-    ok: bool,
     path: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    results: Option<Vec<VerifyRow>>,
 }
 
 #[derive(Serialize)]
-struct FolderVerifyReportView {
-    files: Vec<FolderFile>,
+struct FolderVerifySummaryView {
+    failures: Vec<VerifyFailureFile>,
+    files_passed: usize,
+    files_verified: usize,
     ok: bool,
 }
 
 impl FolderVerifyReport {
-    /// JSON projection of the folder sweep: `{ ok, files: [ { path, ok,
-    /// results | error } ] }`. Each file's `results` rows match the
-    /// single-file [`VerifyReport::to_json`] row shape; a file that
-    /// failed to read/parse carries `error` instead.
+    /// Failures-only JSON projection: `{ ok, files_verified, files_passed,
+    /// failures }`. Passing files are counted in `files_passed` and never
+    /// enumerated; each failing verified file carries its total `comments`
+    /// plus only its not-clean `bad` rows; a file that failed to
+    /// read/parse carries `error`. Keeps whole-vault directory verify
+    /// within the MCP token budget.
     #[must_use]
     pub fn to_json(&self) -> Value {
-        let files = self
+        let files_verified = self.files.len();
+        let files_passed = self
             .files
             .iter()
-            .map(|f| {
-                let (ok, results) = f.report.as_ref().map_or((false, None), |report| {
-                    (report.ok, Some(verify_rows_json(report)))
-                });
-                FolderFile {
-                    error: f.error.clone(),
-                    ok,
-                    path: f.path.display().to_string(),
-                    results,
+            .filter(|f| f.error.is_none() && f.report.as_ref().is_some_and(|r| r.ok))
+            .count();
+
+        let failures = self
+            .files
+            .iter()
+            .filter_map(|f| {
+                if let Some(err) = &f.error {
+                    return Some(VerifyFailureFile {
+                        bad: Vec::new(),
+                        comments: None,
+                        error: Some(err.clone()),
+                        path: f.path.display().to_string(),
+                    });
                 }
+                let report = f.report.as_ref()?;
+                if report.ok {
+                    return None;
+                }
+                Some(VerifyFailureFile {
+                    bad: bad_rows_json(report),
+                    comments: Some(report.results.len()),
+                    error: None,
+                    path: f.path.display().to_string(),
+                })
             })
             .collect();
-        serde_json::to_value(FolderVerifyReportView { files, ok: self.ok }).unwrap_or(Value::Null)
+
+        serde_json::to_value(FolderVerifySummaryView {
+            failures,
+            files_passed,
+            files_verified,
+            ok: self.ok,
+        })
+        .unwrap_or(Value::Null)
     }
 }
 
@@ -580,25 +609,45 @@ impl SubsetGateFailure {
     }
 }
 
-/// Project a [`VerifyReport`]'s rows to their JSON row shape, shared by
-/// [`VerifyReport::to_json`] and [`FolderVerifyReport::to_json`].
+/// Project a single [`RowStatus`] to its JSON row shape.
+fn row_to_json(row: &RowStatus) -> VerifyRow {
+    VerifyRow {
+        author: row.author.clone(),
+        checksum_ok: row.checksum_ok,
+        id: row.id.clone(),
+        line: row.line,
+        recipients: match &row.recipients {
+            RecipientStatus::Ok => Recipients::Ok,
+            RecipientStatus::Unknown(bad) => Recipients::Unknown {
+                unresolved: bad.clone(),
+            },
+        },
+        signature: row.signature.as_str(),
+    }
+}
+
+/// Project a [`VerifyReport`]'s rows to their JSON row shape, used by the
+/// single-file [`VerifyReport::to_json`].
 fn verify_rows_json(report: &VerifyReport) -> Vec<VerifyRow> {
+    report.results.iter().map(row_to_json).collect()
+}
+
+/// A row is clean iff its checksum holds, its signature is `Valid`, and
+/// its recipients resolve. Anything else is surfaced in a failing file's
+/// `bad` list — the cheap not-clean superset the CLI text form shows.
+const fn is_clean(row: &RowStatus) -> bool {
+    row.checksum_ok
+        && matches!(row.signature, SignatureStatus::Valid)
+        && matches!(row.recipients, RecipientStatus::Ok)
+}
+
+/// Only the not-clean rows of a failing file, in document order.
+fn bad_rows_json(report: &VerifyReport) -> Vec<VerifyRow> {
     report
         .results
         .iter()
-        .map(|row| VerifyRow {
-            author: row.author.clone(),
-            checksum_ok: row.checksum_ok,
-            id: row.id.clone(),
-            line: row.line,
-            recipients: match &row.recipients {
-                RecipientStatus::Ok => Recipients::Ok,
-                RecipientStatus::Unknown(bad) => Recipients::Unknown {
-                    unresolved: bad.clone(),
-                },
-            },
-            signature: row.signature.as_str(),
-        })
+        .filter(|row| !is_clean(row))
+        .map(row_to_json)
         .collect()
 }
 

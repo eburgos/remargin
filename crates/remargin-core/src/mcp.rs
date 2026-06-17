@@ -927,7 +927,9 @@ fn desc_verify() -> ToolDesc {
         name: "verify",
         description: "Verify comment integrity (checksums and signatures) against the participant registry. \
              Accepts a file or a directory: a directory walks every visible `.md` file recursively \
-             (honoring `.gitignore`) and returns per-file results keyed by path plus an aggregate `ok`. \
+             (honoring `.gitignore`) and returns a failures-only summary \
+             {ok, files_verified, files_passed, failures}: passing files are counted, never enumerated; \
+             each failing file lists only its not-clean rows (or a parse/read `error`). \
              A file returns per-comment status plus an aggregate `ok` flag driven by the active mode.",
         schema: json!({
             "type": "object",

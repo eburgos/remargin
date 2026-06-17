@@ -128,7 +128,7 @@ fn strip_volatile(v: &mut Value) {
 }
 
 #[test]
-fn cli_verify_dir_json_parses_to_folder_report_with_failures() {
+fn cli_verify_dir_json_is_failures_only_summary() {
     let tmp = build_workspace();
     let out = run_cli(tmp.path(), &["verify", "notes", "--json"]);
     // A directory with a damaged file exits non-zero.
@@ -136,18 +136,23 @@ fn cli_verify_dir_json_parses_to_folder_report_with_failures() {
 
     let json: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(json["ok"], Value::Bool(false));
-    let files = json["files"].as_array().unwrap();
-    assert_eq!(files.len(), 2, "both .md files reported: {files:?}");
-    let damaged = files
-        .iter()
-        .find(|f| f["path"].as_str().unwrap().ends_with("damaged.md"))
-        .unwrap();
-    assert_eq!(damaged["ok"], Value::Bool(false));
-    let clean = files
-        .iter()
-        .find(|f| f["path"].as_str().unwrap().ends_with("clean.md"))
-        .unwrap();
-    assert_eq!(clean["ok"], Value::Bool(true));
+    assert_eq!(json["files_verified"], 2_u64);
+    assert_eq!(json["files_passed"], 1_u64);
+    let failures = json["failures"].as_array().unwrap();
+    assert_eq!(
+        failures.len(),
+        1,
+        "only the failing file enumerated: {failures:?}"
+    );
+    let damaged = &failures[0];
+    assert!(damaged["path"].as_str().unwrap().ends_with("damaged.md"));
+    assert!(
+        failures
+            .iter()
+            .all(|f| !f["path"].as_str().unwrap().ends_with("clean.md")),
+        "passing file must be absent: {failures:?}"
+    );
+    assert!(!damaged["bad"].as_array().unwrap().is_empty());
 }
 
 #[test]
@@ -164,6 +169,11 @@ fn cli_verify_dir_text_lists_only_damaged_files() {
     assert!(
         !stdout.contains("clean.md"),
         "clean file must NOT be listed in text mode: {stdout:?}"
+    );
+    // The summary line carries the verified / passed counts.
+    assert!(
+        stdout.contains("2 file(s)") && stdout.contains("1 passed"),
+        "text summary must report verified + passed counts: {stdout:?}"
     );
 }
 
@@ -227,17 +237,18 @@ fn cli_verify_dir_honors_gitignore() {
         tmp.path(),
         json!({ "path": "notes" }).as_object().unwrap().clone(),
     );
-    let files = mcp_json["files"].as_array().unwrap();
+    // The gitignored file (tampered) would have surfaced as a failure had
+    // it been swept; it must not appear, and only 2 files are verified.
+    assert_eq!(
+        mcp_json["files_verified"], 2_u64,
+        "only clean.md + damaged.md swept: {mcp_json}"
+    );
+    let failures = mcp_json["failures"].as_array().unwrap();
     assert!(
-        files
+        failures
             .iter()
             .all(|f| !f["path"].as_str().unwrap().ends_with("ignored.md")),
-        "gitignored file must be skipped: {files:?}"
-    );
-    assert_eq!(
-        files.len(),
-        2,
-        "only clean.md + damaged.md remain: {files:?}"
+        "gitignored file must be skipped: {failures:?}"
     );
 }
 
@@ -250,6 +261,8 @@ fn mcp_verify_legacy_file_alias_walks_directory() {
         json!({ "file": "notes" }).as_object().unwrap().clone(),
     );
     assert_eq!(mcp_json["ok"], Value::Bool(false));
-    let files = mcp_json["files"].as_array().unwrap();
-    assert_eq!(files.len(), 2, "legacy file=dir walks the directory");
+    assert_eq!(
+        mcp_json["files_verified"], 2_u64,
+        "legacy file=dir walks the directory"
+    );
 }
