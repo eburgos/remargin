@@ -50,6 +50,22 @@ export function __setCreateRootForTests(impl: typeof defaultCreateRoot | null): 
   createRootImpl = impl ?? defaultCreateRoot;
 }
 
+// Defer past Obsidian's incremental render pass: double rAF lands after
+// the next paint; setTimeout is the headless/test fallback.
+type DeferFn = (cb: () => void) => void;
+const defaultDefer: DeferFn = (cb) => {
+  if (typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(() => requestAnimationFrame(cb));
+  } else {
+    setTimeout(cb, 0);
+  }
+};
+let deferCollapse: DeferFn = defaultDefer;
+
+export function __setDeferCollapseForTests(fn: DeferFn | null): void {
+  deferCollapse = fn ?? defaultDefer;
+}
+
 /**
  * Reading-mode markdown post-processor that swaps each well-formed
  * `<pre><code class="language-remargin">…</code></pre>` block for the
@@ -210,10 +226,10 @@ export class ReadingModeCommentChild extends MarkdownRenderChild {
       this.suppressed = true;
       this.subtree = null;
       this.subtreeIds = new Set();
-      // Hide so the empty host doesn't reserve vertical space.
-      (this.containerEl as HTMLElement).style.display = "none";
-      this.root.unmount();
-      this.root = null;
+      // Collapse AFTER the render pass — display:none mid-render leaves a
+      // zero-height section that stalls Obsidian's incremental renderer
+      // (trailing content stops painting). Stays visibility:hidden until.
+      this.collapse();
       return;
     }
 
@@ -262,6 +278,17 @@ export class ReadingModeCommentChild extends MarkdownRenderChild {
     const el = this.containerEl as HTMLElement;
     el.style.display = "";
     el.style.visibility = "";
+  }
+
+  private collapse(): void {
+    deferCollapse(() => {
+      // A newer loadTree may have reclaimed this host as a root, or we
+      // may have unloaded — either way, leave it alone.
+      if (!this.suppressed || this.root === null) return;
+      (this.containerEl as HTMLElement).style.display = "none";
+      this.root.unmount();
+      this.root = null;
+    });
   }
 }
 

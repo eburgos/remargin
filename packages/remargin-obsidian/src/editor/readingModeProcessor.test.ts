@@ -8,6 +8,7 @@ import { CollapseState } from "../state/collapseState.ts";
 import { DEFAULT_SETTINGS } from "../types.ts";
 import {
   __setCreateRootForTests,
+  __setDeferCollapseForTests,
   parseFromInnerContent,
   ReadingModeCommentChild,
   remarginPostProcessor,
@@ -790,6 +791,10 @@ describe("ReadingModeCommentChild", () => {
       },
     })) as unknown as Parameters<typeof __setCreateRootForTests>[0]);
 
+    // Run the deferred collapse synchronously so the suppression
+    // assertions below observe the collapsed state.
+    __setDeferCollapseForTests((cb) => cb());
+
     try {
       // Build the parsed block for c2 so the child believes it's
       // rendering the reply chunk.
@@ -827,6 +832,7 @@ describe("ReadingModeCommentChild", () => {
       child.onunload();
     } finally {
       __setCreateRootForTests(null);
+      __setDeferCollapseForTests(null);
     }
   });
 
@@ -905,6 +911,96 @@ describe("ReadingModeCommentChild", () => {
       child.onunload();
     } finally {
       __setCreateRootForTests(null);
+    }
+  });
+
+  // Regression: a same-doc reply must NOT collapse to display:none during
+  // the render pass — that zero-height section stalls Obsidian's
+  // incremental renderer and trailing content stops painting. The collapse
+  // is deferred until after the pass; until then the host stays painted
+  // (visibility:hidden, reserving height).
+  it("test #13: suppressed reply defers its collapse past the render pass", async () => {
+    const plugin = makePlugin(true);
+    plugin.__vaultFiles.set(
+      "notes/thread.md",
+      [
+        "```remargin",
+        "---",
+        "id: c1",
+        "author: alice",
+        "type: human",
+        "ts: 2026-04-25T12:00:00-04:00",
+        "---",
+        "hello widget",
+        "```",
+        "",
+        "```remargin",
+        "---",
+        "id: c2",
+        "author: bob",
+        "type: human",
+        "ts: 2026-04-25T12:01:00-04:00",
+        "reply-to: c1",
+        "---",
+        "second comment",
+        "```",
+        "",
+      ].join("\n")
+    );
+
+    // Capture the deferred collapse instead of running it, so we can
+    // observe host state DURING the render window vs AFTER.
+    let deferred: (() => void) | null = null;
+    __setDeferCollapseForTests((cb) => {
+      deferred = cb;
+    });
+
+    let unmountCalls = 0;
+    __setCreateRootForTests(((_el: unknown) => ({
+      render: () => {
+        /* test-only no-op */
+      },
+      unmount: () => {
+        unmountCalls += 1;
+      },
+    })) as unknown as Parameters<typeof __setCreateRootForTests>[0]);
+
+    try {
+      const c2Inner = [
+        "---",
+        "id: c2",
+        "author: bob",
+        "type: human",
+        "ts: 2026-04-25T12:01:00-04:00",
+        "reply-to: c1",
+        "---",
+        "second comment",
+      ].join("\n");
+      const parsed = parseFromInnerContent(c2Inner)[0];
+      const host = makeHost();
+      const child = new ReadingModeCommentChild(
+        host as unknown as HTMLElement,
+        parsed,
+        "notes/thread.md",
+        plugin as unknown as RemarginPlugin
+      );
+      child.onload();
+      await new Promise((r) => setTimeout(r, 0));
+
+      // During the render window: scheduled but NOT yet collapsed.
+      assert.ok(deferred, "a collapse must be scheduled");
+      assert.notEqual(host.style.display, "none", "must NOT collapse mid-render");
+      assert.equal(unmountCalls, 0, "root must not be unmounted before the deferred pass");
+
+      // After the pass completes, the deferred collapse runs.
+      (deferred as unknown as () => void)();
+      assert.equal(host.style.display, "none", "collapses after the render pass");
+      assert.equal(unmountCalls, 1, "root unmounted after the deferred pass");
+
+      child.onunload();
+    } finally {
+      __setCreateRootForTests(null);
+      __setDeferCollapseForTests(null);
     }
   });
 });
