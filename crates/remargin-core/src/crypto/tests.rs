@@ -491,7 +491,7 @@ fn ssh_keygen_accepts_our_keypair() {
     }
 
     let dir = tempfile::tempdir().unwrap();
-    let (private_pem, public_line) = generate_keypair("remargin");
+    let (private_pem, public_line) = generate_keypair("remargin").unwrap();
 
     let key_path = dir.path().join("id_ed25519");
     write(&key_path, &private_pem).unwrap();

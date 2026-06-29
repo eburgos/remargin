@@ -102,7 +102,11 @@ pub fn fetch_plugin_assets() -> Result<(Vec<u8>, Vec<u8>)> {
     let main_js_url = format!("{RELEASE_BASE}/obsidian-v{version}/main.js");
     let manifest_url = format!("{RELEASE_BASE}/obsidian-v{version}/manifest.json");
 
-    let agent = ureq::AgentBuilder::new().timeout(FETCH_TIMEOUT).build();
+    let agent = ureq::Agent::new_with_config(
+        ureq::Agent::config_builder()
+            .timeout_global(Some(FETCH_TIMEOUT))
+            .build(),
+    );
 
     let main_js = fetch_one(&agent, &main_js_url)?;
     let manifest = fetch_one(&agent, &manifest_url)?;
@@ -119,12 +123,13 @@ fn fetch_one(agent: &ureq::Agent, url: &str) -> Result<Vec<u8>> {
         .with_context(|| format!("failed to request {url}"))?;
 
     let status = response.status();
-    if status != 200 {
+    if status.as_u16() != 200 {
         bail!("unexpected HTTP status {status} from {url}");
     }
 
     let mut bytes = Vec::new();
     response
+        .into_body()
         .into_reader()
         .take(MAX_ASSET_BYTES)
         .read_to_end(&mut bytes)

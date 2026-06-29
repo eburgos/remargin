@@ -30,7 +30,8 @@ tixschema = { git = "https://github.com/tixena/tixschema.git", features = ["chro
 # Cryptography (checksums, signatures)
 sha2 = "0.11"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
-rand_core = { version = "0.6", features = ["getrandom"] }
+rand_core = { version = "0.10.1" }
+getrandom = "0.4"
 base64 = "0.22"
 
 # Error handling
@@ -59,7 +60,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 # HTTP client (sync, minimal, pure-Rust TLS). Used by the `obsidian` feature
 # to fetch plugin assets from GitHub releases at install time.
-ureq = { version = "2", default-features = false, features = ["tls"] }
+ureq = { version = "3.3.0" }
 
 # Skill embedding
 include_dir = "0.7"

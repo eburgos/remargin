@@ -1111,7 +1111,7 @@ pub fn cmd_resolve_mode(
 }
 
 pub fn cmd_keygen(sinks: &mut IoSinks<'_>, system: &dyn System, output: &Path) -> Result<()> {
-    let (private_pem, public_openssh) = crypto::generate_keypair("remargin");
+    let (private_pem, public_openssh) = crypto::generate_keypair("remargin")?;
 
     system
         .write(output, private_pem.as_bytes())

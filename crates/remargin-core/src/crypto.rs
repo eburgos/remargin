@@ -120,12 +120,15 @@ pub fn compute_signature(
 /// Returns `(private_openssh, public_openssh)` where the private key is
 /// an unencrypted `openssh-key-v1` PEM and the public key is an
 /// `ssh-ed25519 <base64>` line — both accepted by `ssh-keygen`.
-#[must_use]
-pub fn generate_keypair(comment: &str) -> (String, String) {
-    let private_key = PrivateKey::generate();
+///
+/// # Errors
+///
+/// Returns an error if the OS random source is unavailable.
+pub fn generate_keypair(comment: &str) -> Result<(String, String)> {
+    let private_key = PrivateKey::generate()?;
     let private_openssh = private_key.to_openssh(comment);
     let public_openssh = private_key.public_key().to_openssh();
-    (private_openssh, public_openssh)
+    Ok((private_openssh, public_openssh))
 }
 
 #[must_use]

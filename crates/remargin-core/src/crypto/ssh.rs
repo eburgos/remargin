@@ -16,7 +16,6 @@ use anyhow::{Context as _, Result, bail};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use ed25519_dalek::{Signature, Signer as _, SigningKey, Verifier as _, VerifyingKey};
-use rand_core::OsRng;
 use sha2::{Digest as _, Sha256};
 
 /// Algorithm identifier for Ed25519 keys and signatures.
@@ -103,12 +102,17 @@ impl PrivateKey {
         })
     }
 
-    /// Generates a fresh Ed25519 signing key from the OS RNG.
-    #[must_use]
-    pub fn generate() -> Self {
-        Self {
-            inner: SigningKey::generate(&mut OsRng),
-        }
+    /// Generates a fresh Ed25519 signing key from OS entropy.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the OS random source is unavailable.
+    pub fn generate() -> Result<Self> {
+        let mut seed = [0_u8; 32];
+        getrandom::fill(&mut seed).context("reading OS entropy for key generation")?;
+        Ok(Self {
+            inner: SigningKey::from_bytes(&seed),
+        })
     }
 
     /// Returns the matching public key.
