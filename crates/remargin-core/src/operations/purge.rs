@@ -403,13 +403,9 @@ pub fn purge_dir(
 /// [`purge_dir`] should attempt. Pure: no I/O, no allocation beyond
 /// the result vector.
 ///
-/// Real `walk_dir(hidden=false)` honours the `ignore` crate's
-/// dot-folder + gitignore filtering, but the in-process mock does
-/// not — so this function additionally rejects any entry whose path
-/// (relative to the walk root) contains a dot-prefixed component.
-/// Restricting to `.md` keeps non-markdown allowlist entries
-/// (source code, etc.) out — purge is a comment-stripping op and
-/// those files have no remargin comments to strip.
+/// The dot-component check is defensive redundancy: `walk_dir(hidden=false)`
+/// already excludes dot-prefixed entries on both surfaces. The `.md`
+/// restriction keeps non-markdown allowlist entries out.
 fn collect_purge_candidates(entries: &[WalkEntry], root: &Path) -> Vec<PathBuf> {
     let mut candidates: Vec<PathBuf> = Vec::new();
     for entry in entries {

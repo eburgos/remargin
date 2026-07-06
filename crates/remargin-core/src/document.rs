@@ -815,7 +815,7 @@ fn ensure_no_comments(system: &dyn System, resolved: &Path) -> Result<()> {
 ///    remargin could not list is left in place and recorded).
 fn rm_directory(system: &dyn System, resolved: &Path) -> Result<RmDirReport> {
     let entries = system
-        .walk_dir(resolved, false, true)
+        .walk_dir(resolved, false, false)
         .with_context(|| format!("walking {}", resolved.display()))?;
 
     // The resources remargin can see: visible files, plus every

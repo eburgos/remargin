@@ -1587,7 +1587,7 @@ fn check_mv_dst_overwrite(
 /// `0` so the projection still carries a populated [`MvDiff`].
 fn mv_directory_size(system: &dyn System, dir: &Path) -> usize {
     system
-        .walk_dir(dir, false, true)
+        .walk_dir(dir, false, false)
         .map_or(0, |entries| entries.iter().filter(|e| e.is_file).count())
 }
 

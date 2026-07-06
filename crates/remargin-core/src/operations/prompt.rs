@@ -145,8 +145,9 @@ pub fn delete(
 ///
 /// Returns an error only if `root` cannot be walked.
 pub fn list(system: &dyn System, root: &Path) -> Result<Vec<PromptListEntry>> {
+    // hidden=true: targets are `.remargin.yaml` dotfiles.
     let entries = system
-        .walk_dir(root, false, false)
+        .walk_dir(root, false, true)
         .with_context(|| format!("walking directory {}", root.display()))?;
 
     let mut out = Vec::new();

@@ -522,7 +522,7 @@ fn mv_directory(
 /// failing the rename. The numbers are informational — the rename's
 /// success doesn't hinge on them.
 fn directory_size_summary(system: &dyn System, dir: &Path) -> (usize, u64) {
-    let Ok(entries) = system.walk_dir(dir, false, true) else {
+    let Ok(entries) = system.walk_dir(dir, false, false) else {
         return (0, 0);
     };
     let mut count: usize = 0;
