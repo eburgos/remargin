@@ -16,7 +16,7 @@ mod tests;
 
 use core::mem;
 use std::ffi::OsStr;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Component, Path, PathBuf, is_separator};
 
 use anyhow::Result;
 use os_shim::System;
@@ -288,32 +288,45 @@ fn bash_decision(
     }
 
     let mut cwd = event_cwd.to_path_buf();
+    let mut cd_active = false;
     for tokens in &commands {
-        if let Some(outcome) = evaluate_simple_command(system, tokens, &mut cwd) {
+        if let Some(outcome) = evaluate_simple_command(system, tokens, &mut cwd, &mut cd_active) {
             return outcome;
         }
     }
     PretoolOutcome::SilentAllow
 }
 
-/// Resolve one simple command's path-shaped words. Returns `Some` to
-/// short-circuit the whole command (a `Deny` or a fail-closed `Fail`);
-/// `None` to keep scanning. Tracks `cd` into `cwd` for later commands.
+/// Resolve one simple command's path-shaped words against the realm that
+/// governs each. Returns `Some` to short-circuit the whole command (a
+/// `Deny` or a fail-closed `Fail`); `None` to keep scanning. A run with no
+/// path evidence is a bare word (a verb, subcommand, or flag) and is a path
+/// candidate only once a tracked `cd` has moved `cwd` and the word is an
+/// argument — otherwise the bare verb would resolve to `<cwd>/<verb>` and
+/// self-deny a wildcard realm rooted at the cwd. Tracks `cd` into `cwd`
+/// (and flips `cd_active`) for later commands.
 fn evaluate_simple_command(
     system: &dyn System,
     tokens: &[String],
     cwd: &mut PathBuf,
+    cd_active: &mut bool,
 ) -> Option<PretoolOutcome> {
     let verb_info = command_verb(tokens);
     let verb = verb_info.map(|(_, name)| name);
+    let verb_idx = verb_info.map(|(idx, _)| idx);
 
     // The remargin CLI is the sanctioned surface; do not gate its args.
     if verb == Some("remargin") {
         return None;
     }
 
-    for token in tokens {
+    for (idx, token) in tokens.iter().enumerate() {
+        let is_argument = verb_idx.is_some_and(|boundary| idx > boundary);
         for run in path_runs(token) {
+            let is_candidate = has_path_evidence(run) || (is_argument && *cd_active);
+            if !is_candidate {
+                continue;
+            }
             let candidate = resolve_run(system, run, cwd);
             let resolved = match resolve_for_target(system, &candidate) {
                 Ok(value) => value,
@@ -332,15 +345,30 @@ fn evaluate_simple_command(
         }
     }
 
-    // A non-restricted `cd` moves the base directory for later words.
+    // A non-restricted `cd` moves the base directory for later words; from
+    // there on bare argument words are meaningful path candidates.
     if verb == Some("cd")
         && let Some((idx, _)) = verb_info
         && let Some(dir_token) = tokens.get(idx + 1)
         && let Some(run) = path_runs(dir_token).next()
     {
         *cwd = resolve_run(system, run, cwd);
+        *cd_active = true;
     }
     None
+}
+
+/// A run carries path evidence when it names a path rather than a bare
+/// word: it contains a path separator, starts with `~`, is `.`/`..`, or
+/// carries a glob metacharacter. Bare words (`ls`, `status`, `--release`)
+/// have none, so a command verb resolving against the cwd cannot itself
+/// match a wildcard realm rooted at that cwd.
+fn has_path_evidence(run: &str) -> bool {
+    run.chars().any(is_separator)
+        || run.starts_with('~')
+        || run == "."
+        || run == ".."
+        || run.contains(is_glob_meta)
 }
 
 fn first_verb_is_remargin(commands: &[Vec<String>]) -> bool {

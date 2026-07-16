@@ -1274,3 +1274,57 @@ fn allow_dot_folders_hook_matches_projected_rules_for_reallow() {
         );
     }
 }
+
+// ---------------------------------------------------------------------
+// Bare-word path evidence: under a wildcard realm whose cwd sits inside
+// it, the bare command verb (and bare subcommands / flags) must not
+// resolve against the cwd into the realm and self-deny. Only runs that
+// carry path evidence — or bare argument words reached through a tracked
+// `cd` — are path candidates.
+// ---------------------------------------------------------------------
+
+/// A bare verb (`ls`) in a wildcard realm rooted at the cwd → `SilentAllow`.
+/// The verb resolving to `<cwd>/ls` must not match the wildcard root.
+#[test]
+fn bash_wildcard_bare_verb_ls_silent_allows() {
+    let system = mock_with(&[("/r/.remargin.yaml", &restrict_yaml("'*'"))]);
+    let stdin = event_json("Bash", "/r", &json!({ "command": "ls" }));
+    assert_eq!(pretool(&system, &stdin), PretoolOutcome::SilentAllow);
+}
+
+/// A bare verb + bare subcommand (`git status`) in a wildcard realm →
+/// `SilentAllow`; `status` is a bare word, not a path candidate.
+#[test]
+fn bash_wildcard_git_status_silent_allows() {
+    let system = mock_with(&[("/r/.remargin.yaml", &restrict_yaml("'*'"))]);
+    let stdin = event_json("Bash", "/r", &json!({ "command": "git status" }));
+    assert_eq!(pretool(&system, &stdin), PretoolOutcome::SilentAllow);
+}
+
+/// A bare subcommand + flag (`cargo build --release`) in a wildcard realm →
+/// `SilentAllow`; neither `build` nor `--release` is a path candidate.
+#[test]
+fn bash_wildcard_cargo_build_release_silent_allows() {
+    let system = mock_with(&[("/r/.remargin.yaml", &restrict_yaml("'*'"))]);
+    let stdin = event_json("Bash", "/r", &json!({ "command": "cargo build --release" }));
+    assert_eq!(pretool(&system, &stdin), PretoolOutcome::SilentAllow);
+}
+
+/// A real path argument into the wildcard realm still denies — the
+/// path-evidence carve-out never lifts an actual managed-path reference.
+#[test]
+fn bash_wildcard_real_path_argument_denies() {
+    let system = mock_with(&[("/r/.remargin.yaml", &restrict_yaml("'*'"))]);
+    let stdin = event_json("Bash", "/r", &json!({ "command": "rm /r/x.md" }));
+    assert!(matches!(pretool(&system, &stdin), PretoolOutcome::Deny(_)));
+}
+
+/// After a tracked `cd` into a wildcard realm, a bare-name mutator argument
+/// is a meaningful path candidate and denies — the cwd is no longer the
+/// event cwd, so `foo` resolves to a real managed path.
+#[test]
+fn bash_wildcard_cd_then_bare_rm_denies() {
+    let system = mock_with(&[("/r/.remargin.yaml", &restrict_yaml("'*'"))]);
+    let stdin = event_json("Bash", "/x", &json!({ "command": "cd /r && rm foo" }));
+    assert!(matches!(pretool(&system, &stdin), PretoolOutcome::Deny(_)));
+}
