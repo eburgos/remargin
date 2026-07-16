@@ -17,8 +17,7 @@ use chrono::Utc;
 use os_shim::System;
 use serde_yaml::{Mapping, Value};
 
-use crate::config::permissions::resolve::{ResolvedTrustedRoot, TrustedRootPath};
-use crate::permissions::claude_sync::{RuleSet, apply_rules, rules_for};
+use crate::permissions::claude_sync::{RuleSet, apply_rules, residual_rules};
 
 /// Wildcard literal accepted in `trusted_roots[].path`. Mirrors the schema
 /// constant in [`crate::config::permissions`].
@@ -129,8 +128,10 @@ pub struct RestrictOutcome {
 /// 2. Canonicalise `args.path` (or accept the wildcard).
 /// 3. Append-or-merge the entry into `<anchor>/.remargin.yaml`,
 ///    creating the file if absent.
-/// 4. Compute the rule set via [`rules_for`] and call [`apply_rules`]
-///    to update both Claude settings files + the sidecar.
+/// 4. Project the residue the hook cannot cover via [`residual_rules`].
+///    That set is empty today, so no settings files or sidecar entry
+///    are written — the `.remargin.yaml` entry alone activates both the
+///    per-op guard and the `PreToolUse` hook.
 ///
 /// The function is idempotent: re-running with the same arguments
 /// produces the same final state (no duplicate entries, no
@@ -177,31 +178,28 @@ pub fn restrict(
 
     let yaml_was_created = upsert_remargin_yaml(system, &anchor, &on_disk_path, args)?;
 
-    let resolved = ResolvedTrustedRoot {
-        also_deny_bash: args.also_deny_bash.clone(),
-        cli_allowed: args.cli_allowed,
-        path: if args.path == RESTRICT_WILDCARD {
-            TrustedRootPath::Wildcard {
-                realm_root: anchor.clone(),
-            }
-        } else {
-            TrustedRootPath::Absolute(absolute_path.clone())
-        },
-        source_file: anchor.join(".remargin.yaml"),
+    // The hook is the single source of truth; `restrict` writes only the
+    // residue the hook cannot cover (currently none). When there is
+    // nothing to project, skip the settings merge and the sidecar write
+    // entirely — this avoids polluting settings files with empty rule
+    // arrays and, crucially, never clobbers a pre-existing sidecar entry
+    // an older restrict left behind (which `unrestrict` still needs to
+    // scrub the legacy rules cleanly).
+    let rules = residual_rules();
+    let claude_files_touched = if rules.is_empty() {
+        Vec::new()
+    } else {
+        let timestamp = Utc::now().to_rfc3339();
+        apply_rules(
+            system,
+            &anchor,
+            &absolute_path.display().to_string(),
+            &rules,
+            settings_files,
+            &timestamp,
+        )?;
+        settings_files.to_vec()
     };
-
-    let allow_dot_folders = read_allow_dot_folders(system, &anchor)?;
-    let rules = rules_for(&resolved, &anchor, &allow_dot_folders);
-
-    let timestamp = Utc::now().to_rfc3339();
-    apply_rules(
-        system,
-        &anchor,
-        &absolute_path.display().to_string(),
-        &rules,
-        settings_files,
-        &timestamp,
-    )?;
 
     let RuleSet { allow, deny } = rules;
     let mut rules_applied: Vec<String> = Vec::with_capacity(deny.len() + allow.len());
@@ -211,7 +209,7 @@ pub fn restrict(
     Ok(RestrictOutcome {
         absolute_path,
         anchor,
-        claude_files_touched: settings_files.to_vec(),
+        claude_files_touched,
         rules_applied,
         yaml_was_created,
     })
@@ -294,26 +292,6 @@ fn lexical_normalise(path: &Path) -> PathBuf {
         out.push(component.as_os_str());
     }
     out
-}
-
-fn read_allow_dot_folders(system: &dyn System, anchor: &Path) -> Result<Vec<String>> {
-    let path = anchor.join(".remargin.yaml");
-    let body = match system.read_to_string(&path) {
-        Ok(body) => body,
-        Err(_err) => return Ok(Vec::new()),
-    };
-    let value: Value = serde_yaml::from_str(&body)
-        .with_context(|| format!("parsing {} for allow_dot_folders", path.display()))?;
-    let Some(perms) = value.get("permissions").and_then(Value::as_mapping) else {
-        return Ok(Vec::new());
-    };
-    let Some(list) = perms.get("allow_dot_folders").and_then(Value::as_sequence) else {
-        return Ok(Vec::new());
-    };
-    Ok(list
-        .iter()
-        .filter_map(|v| v.as_str().map(String::from))
-        .collect())
 }
 
 /// Pure projection of [`upsert_remargin_yaml`]: read the YAML file,
@@ -504,30 +482,27 @@ pub fn render_restrict_summary(outcome: &RestrictOutcome) -> String {
             outcome.anchor.join(".remargin.yaml").display(),
         );
     }
-    let _ = writeln!(
-        out,
-        "  Settings updated: {} file(s)",
-        outcome.claude_files_touched.len(),
-    );
-    for file in &outcome.claude_files_touched {
-        let _ = writeln!(out, "    {}", file.display());
+    if outcome.claude_files_touched.is_empty() {
+        let _ = writeln!(
+            out,
+            "  Settings: none written -- the PreToolUse hook is the single source of truth and \
+             enforces native-tool + Bash access to this path (no projected deny rules)."
+        );
+    } else {
+        let _ = writeln!(
+            out,
+            "  Settings updated: {} file(s)",
+            outcome.claude_files_touched.len(),
+        );
+        for file in &outcome.claude_files_touched {
+            let _ = writeln!(out, "    {}", file.display());
+        }
+        let _ = writeln!(out, "  Rules written: {}", outcome.rules_applied.len());
     }
-    let _ = writeln!(out, "  Rules written: {}", outcome.rules_applied.len());
     let _ = writeln!(
         out,
-        "  Sidecar updated: {}",
-        outcome
-            .anchor
-            .join(".claude/.remargin-restrictions.json")
-            .display(),
-    );
-    let _ = writeln!(
-        out,
-        "  Note: Claude must reload its settings for Layer 2 (NATIVE tool denials) to take effect."
-    );
-    let _ = writeln!(
-        out,
-        "  Layer 1 (remargin's own ops) is enforcing immediately on the next call."
+        "  The per-op guard (remargin's own ops) is enforcing immediately on the next call; run \
+         `remargin doctor` to confirm the hook is wired."
     );
     out
 }

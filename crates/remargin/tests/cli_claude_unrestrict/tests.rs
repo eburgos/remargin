@@ -58,42 +58,41 @@ fn run_restrict(realm: &TempDir, path: &str) {
     assert_status(&out, 0);
 }
 
-/// Scenario 12: end-to-end restrict + unprotect leaves
-/// the realm in a state that no longer carries the projected rules.
-/// Verifies using an editor-tool deny that is projected.
-/// Note: `Bash(remargin *)` is no longer projected; CLI denial is
-/// hook-enforced via the `cli_allowed` field.
+/// End-to-end restrict + unprotect on a hook-only realm: restrict writes
+/// no projected deny rules (no settings file at all — the `PreToolUse`
+/// hook is the single source of truth), and unprotect removes the
+/// `.remargin.yaml` entry. No sidecar is ever created.
 #[test]
 fn restrict_then_unprotect_clears_state() {
     let realm = realm_with_claude();
     fs::create_dir_all(realm.path().join("src/secret")).unwrap();
     run_restrict(&realm, "src/secret");
+
+    // Hook-only restrict writes no project-scope settings file.
     let project_scope = realm.path().join(".claude/settings.local.json");
-    let before = fs::read_to_string(&project_scope).unwrap();
-    // An editor-tool deny should be present after restrict.
     assert!(
-        before.contains("Edit(") && before.contains("src/secret"),
-        "expected Edit deny after restrict, got:\n{before}"
-    );
-    // `Bash(remargin *)` is NOT projected — CLI denial is hook-enforced.
-    assert!(
-        !before.contains("Bash(remargin *)"),
-        "Bash(remargin *) must not appear in projected settings:\n{before}"
+        !project_scope.exists(),
+        "no settings file should be projected"
     );
 
     let out = run_in(realm.path(), &["claude", "unrestrict", "src/secret"]);
     assert_status(&out, 0);
 
-    let after = fs::read_to_string(&project_scope).unwrap();
+    // The .remargin.yaml entry is gone.
+    let yaml = fs::read_to_string(realm.path().join(".remargin.yaml")).unwrap_or_default();
     assert!(
-        !after.contains("src/secret"),
-        "settings still references the removed rule:\n{after}"
+        !yaml.contains("src/secret"),
+        "yaml still references the removed entry:\n{yaml}"
     );
 
-    let sidecar_body =
-        fs::read_to_string(realm.path().join(".claude/.remargin-restrictions.json")).unwrap();
-    let sidecar: Value = serde_json::from_str(&sidecar_body).unwrap();
-    assert!(sidecar["entries"].as_object().unwrap().is_empty());
+    // No sidecar was ever created (nothing to track).
+    assert!(
+        !realm
+            .path()
+            .join(".claude/.remargin-restrictions.json")
+            .exists(),
+        "no sidecar should exist for a hook-only realm"
+    );
 }
 
 /// Layer 1 stops enforcing after unprotect. Post-polarity-flip:
@@ -260,52 +259,60 @@ fn unprotect_absent_from_mcp_surface() {
     assert!(text.contains("remargin claude unrestrict"), "got: {text}");
 }
 
-/// When a projected deny rule has been hand-deleted from BOTH
-/// the realm-local and the user-scope settings file between
-/// `restrict` and `unprotect`, the warning emitter must surface
-/// both — one warning per file — and the rest of the unprotect
-/// work (yaml + sidecar) must complete cleanly.
+/// Migration edge: a legacy realm (sidecar tracking projected rules)
+/// whose tracked deny rule has been hand-deleted from BOTH the
+/// realm-local and the user-scope settings file. `unprotect` must
+/// surface both misses — one warning per file — and still complete the
+/// yaml + sidecar reversal cleanly. Since the current `restrict` no
+/// longer projects, the legacy state is seeded directly here.
 #[test]
 fn unprotect_warns_per_settings_file_when_both_have_hand_deleted_rules() {
     let realm = realm_with_claude();
     fs::create_dir_all(realm.path().join("src/secret")).unwrap();
-    run_restrict(&realm, "src/secret");
-
     let realm_local = realm.path().join(".claude/settings.local.json");
     let user_scope = user_settings_arg(&realm);
 
-    // Read one of the projected editor-tool deny rules and hand-delete
-    // it from both settings files, mirroring what a user would do if
-    // they manually scrubbed entries.
-    let local_value: Value =
-        serde_json::from_str(&fs::read_to_string(&realm_local).unwrap()).unwrap();
-    let target_rule = local_value["permissions"]["deny"]
-        .as_array()
-        .and_then(|arr| {
-            arr.iter()
-                .find(|v| {
-                    v.as_str()
-                        .is_some_and(|s| s.starts_with("Edit(") && s.contains("src/secret"))
-                })
-                .and_then(|v| v.as_str())
-                .map(String::from)
-        })
-        .unwrap();
+    // Seed a legacy realm: .remargin.yaml entry + a sidecar tracking one
+    // projected deny rule across both settings files, but with the rule
+    // already hand-deleted from each (empty deny arrays).
+    let canonical_realm = fs::canonicalize(realm.path()).unwrap();
+    let target_key = format!("{}/src/secret", canonical_realm.display());
+    let tracked_rule = format!("Edit({target_key}/**)");
+    fs::write(
+        realm.path().join(".remargin.yaml"),
+        "permissions:\n  trusted_roots:\n    - path: src/secret\n",
+    )
+    .unwrap();
+    let empty_deny = json!({ "permissions": { "deny": [] } });
+    fs::write(&realm_local, empty_deny.to_string()).unwrap();
+    fs::write(&user_scope, empty_deny.to_string()).unwrap();
+    let sidecar_seed = json!({
+        "version": 1_u32,
+        "entries": {
+            target_key: {
+                "added_at": "legacy",
+                "added_to_files": [realm_local.to_string_lossy(), user_scope.to_string_lossy()],
+                "allow": [],
+                "deny": [tracked_rule],
+            }
+        }
+    });
+    fs::write(
+        realm.path().join(".claude/.remargin-restrictions.json"),
+        sidecar_seed.to_string(),
+    )
+    .unwrap();
 
-    for file in [&realm_local, &user_scope] {
-        let mut value: Value = serde_json::from_str(&fs::read_to_string(file).unwrap()).unwrap();
-        value["permissions"]["deny"]
-            .as_array_mut()
-            .unwrap()
-            .retain(|v| v.as_str() != Some(target_rule.as_str()));
-        fs::write(
-            file,
-            serde_json::to_string_pretty(&value).unwrap().as_bytes(),
-        )
-        .unwrap();
-    }
-
-    let out = run_in(realm.path(), &["claude", "unrestrict", "src/secret"]);
+    let out = run_in(
+        realm.path(),
+        &[
+            "claude",
+            "unrestrict",
+            "src/secret",
+            "--user-settings",
+            user_scope.to_str().unwrap(),
+        ],
+    );
     assert_status(&out, 0);
     let stderr = str::from_utf8(&out.stderr).unwrap();
 
@@ -334,7 +341,7 @@ fn unprotect_warns_per_settings_file_when_both_have_hand_deleted_rules() {
         "restrict entry should have been removed from yaml: {yaml}"
     );
 
-    // Sidecar entry was removed.
+    // Sidecar entry was removed — no dangling entry left behind.
     let sidecar_body =
         fs::read_to_string(realm.path().join(".claude/.remargin-restrictions.json")).unwrap();
     let sidecar: Value = serde_json::from_str(&sidecar_body).unwrap();
@@ -342,21 +349,6 @@ fn unprotect_warns_per_settings_file_when_both_have_hand_deleted_rules() {
         sidecar["entries"].as_object().unwrap().is_empty(),
         "sidecar entries should be empty after unprotect: {sidecar}"
     );
-
-    // The remargin-cli deny is gone from both files (it stays
-    // hand-deleted; no lingering rule references the realm).
-    for file in [&realm_local, &user_scope] {
-        let value: Value = serde_json::from_str(&fs::read_to_string(file).unwrap()).unwrap();
-        let any_remargin_left = value["permissions"]["deny"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|v| v.as_str() == Some(target_rule.as_str()));
-        assert!(
-            !any_remargin_left,
-            "{file:?} still contains the remargin-cli deny after unprotect: {value:#?}"
-        );
-    }
 }
 
 /// Idempotency on the CLI surface: a second `unprotect` is a

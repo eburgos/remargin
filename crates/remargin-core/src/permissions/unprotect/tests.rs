@@ -10,9 +10,44 @@ use os_shim::System as _;
 use os_shim::mock::MockSystem;
 use serde_yaml::Value;
 
+use crate::permissions::claude_sync::{RuleSet, apply_rules};
 use crate::permissions::restrict::{self, RestrictArgs};
 use crate::permissions::sidecar;
 use crate::permissions::unprotect::{UnprotectArgs, unprotect};
+
+/// Mimic a pre-retirement `restrict`: write the `.remargin.yaml` entry
+/// (via the current `restrict`) AND project a legacy deny set into the
+/// settings files + sidecar, so `unprotect`'s sidecar-driven reverse has
+/// something to scrub — the state a realm restricted by an older binary
+/// carries into the migration. The current `restrict` writes no settings
+/// or sidecar (the hook is the single source of truth).
+fn restrict_with_legacy_sidecar(
+    system: &MockSystem,
+    anchor: &Path,
+    path: &str,
+    settings: &[PathBuf],
+) {
+    restrict::restrict(system, anchor, &restrict_args(path), settings).unwrap();
+    let absolute = if path == "*" {
+        anchor.to_path_buf()
+    } else {
+        anchor.join(path)
+    };
+    let glob = absolute.display();
+    let rules = RuleSet {
+        allow: Vec::new(),
+        deny: vec![format!("Edit({glob}/**)"), format!("Write({glob}/**)")],
+    };
+    apply_rules(
+        system,
+        anchor,
+        &absolute.display().to_string(),
+        &rules,
+        settings,
+        "legacy",
+    )
+    .unwrap();
+}
 
 fn realm_with_claude() -> (MockSystem, PathBuf) {
     let anchor = PathBuf::from("/r");
@@ -40,13 +75,14 @@ fn read_yaml(system: &MockSystem, path: &Path) -> Value {
     serde_yaml::from_str(&body).unwrap()
 }
 
-/// Scenario 1: clean reverse — restrict then unprotect leaves the
-/// state byte-equivalent to "before restrict".
+/// Scenario 1: clean reverse — a realm carrying legacy projected rules
+/// (the migration state) is scrubbed byte-equivalent to "before
+/// restrict" by `unprotect` via the sidecar.
 #[test]
 fn clean_reverse_restores_state() {
     let (system, anchor) = realm_with_claude();
     let files = settings_files(&anchor);
-    restrict::restrict(&system, &anchor, &restrict_args("src/secret"), &files).unwrap();
+    restrict_with_legacy_sidecar(&system, &anchor, "src/secret", &files);
 
     let outcome = unprotect(
         &system,
@@ -114,7 +150,7 @@ fn never_restricted_path_warns_and_no_ops() {
 fn yaml_present_sidecar_absent_removes_yaml_only() {
     let (system, anchor) = realm_with_claude();
     let files = settings_files(&anchor);
-    restrict::restrict(&system, &anchor, &restrict_args("src/secret"), &files).unwrap();
+    restrict_with_legacy_sidecar(&system, &anchor, "src/secret", &files);
 
     // Strip the sidecar by hand (simulating the user's edit).
     let sidecar_path = anchor.join(".claude/.remargin-restrictions.json");
@@ -155,7 +191,7 @@ fn yaml_present_sidecar_absent_removes_yaml_only() {
 fn yaml_missing_sidecar_present_reverts_settings_only() {
     let (system, anchor) = realm_with_claude();
     let files = settings_files(&anchor);
-    restrict::restrict(&system, &anchor, &restrict_args("src/secret"), &files).unwrap();
+    restrict_with_legacy_sidecar(&system, &anchor, "src/secret", &files);
 
     // Strip the YAML entry by hand: rewrite without permissions.trusted_roots.
     restrict::write_remargin_yaml(&system, &anchor, "permissions:\n  trusted_roots: []\n").unwrap();
@@ -191,7 +227,7 @@ fn yaml_missing_sidecar_present_reverts_settings_only() {
 fn manual_rule_deletion_surfaces_warning() {
     let (system, anchor) = realm_with_claude();
     let files = settings_files(&anchor);
-    restrict::restrict(&system, &anchor, &restrict_args("src/secret"), &files).unwrap();
+    restrict_with_legacy_sidecar(&system, &anchor, "src/secret", &files);
 
     // Hand-delete one of the projected editor-tool deny rules from
     // the project-scope file, mirroring what a user does when they
@@ -236,7 +272,7 @@ fn manual_rule_deletion_surfaces_warning() {
 fn wildcard_restrict_and_unprotect_round_trip() {
     let (system, anchor) = realm_with_claude();
     let files = settings_files(&anchor);
-    restrict::restrict(&system, &anchor, &restrict_args("*"), &files).unwrap();
+    restrict_with_legacy_sidecar(&system, &anchor, "*", &files);
 
     let outcome = unprotect(&system, &anchor, &UnprotectArgs::new(String::from("*"))).unwrap();
     assert!(outcome.yaml_entry_removed);

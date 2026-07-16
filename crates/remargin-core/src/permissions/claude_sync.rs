@@ -10,10 +10,13 @@
 //! creation). When `allow_dot_folders` names specific folders, narrow
 //! re-allows override the broader deny.
 //!
-//! `Bash(remargin *)` is no longer emitted by this module. CLI denial
-//! is enforced by the `PreToolUse` hook (pretool.rs) via the
-//! folder-level `cli_allowed` field in `.remargin.yaml`. The
-//! projection is user-managed; the hook is the single source of truth.
+//! The `PreToolUse` hook (pretool.rs) is the single source of truth for
+//! enforcement. `remargin restrict` no longer projects deny rules into
+//! the settings files: [`residual_rules`] is what it writes today, and
+//! the residue audit found nothing the hook cannot cover, so it is
+//! empty. The full shape set [`hook_covered_rules`] produces is retained
+//! only so `remargin doctor` can recognise deny rules an older restrict
+//! left behind and flag them as drift.
 
 pub mod rule_shape;
 #[cfg(test)]
@@ -292,6 +295,16 @@ pub struct RuleSet {
     pub deny: Vec<String>,
 }
 
+impl RuleSet {
+    /// `true` when the set carries neither allow nor deny rules — the
+    /// restrict path skips the settings/sidecar write entirely in that
+    /// case (see [`residual_rules`]).
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.allow.is_empty() && self.deny.is_empty()
+    }
+}
+
 /// Per-settings-file projection of [`apply_rules`].
 ///
 /// Reports the rules that would be appended vs. the rules already
@@ -328,7 +341,13 @@ pub struct SettingsFileSim {
     pub will_be_created: bool,
 }
 
-/// Compute the rule set for one resolved `trusted_roots` entry.
+/// The full deny/allow shape set the `PreToolUse` hook now covers.
+///
+/// `remargin restrict` no longer writes these into settings files (see
+/// [`residual_rules`]); this function survives only as the reference
+/// `remargin doctor` compares on-disk deny rules against — any rule
+/// here that shows up in a settings file is drift an older restrict
+/// left behind, now redundant because the hook enforces it.
 ///
 /// Pure: no filesystem access. The caller must pass the realm anchor
 /// (the directory that holds `.claude/`) so wildcard entries can
@@ -340,29 +359,21 @@ pub struct SettingsFileSim {
 /// realm root already anchors them. Absolute entries use their own
 /// path verbatim.
 ///
-/// Output (per the restored projection):
+/// Output:
 ///
 /// - Per-tool path denies for every entry in [`EDITOR_TOOLS`]:
-///   `Edit/Write/Read/NotebookEdit(<path>/**)`.
-/// - Dot-folder default-deny: same four tools against `<path>/.*/**`.
+///   `Edit/Write/Read/NotebookEdit/MultiEdit(<path>/**)`.
+/// - Dot-folder default-deny: same tools against `<path>/.*/**`.
 /// - Bash mutators: every entry in [`BASH_MUTATORS`] expands to
 ///   `Bash(<cmd> <path>/**)`.
-/// - mv source-side coverage (T44): `Bash(mv <path>/**)`,
+/// - mv source-side coverage: `Bash(mv <path>/**)`,
 ///   `Bash(mv <path>/** *)`, `Bash(mv <path>/** <path>/**)`.
 /// - `also_deny_bash` extras: `Bash(<cmd> * <path>/**)` for each
 ///   user-supplied entry.
 /// - Per `allow_dot_folders` entry: per-tool re-allows that override
 ///   the dot-folder default-deny.
-///
-/// `mcp__remargin__*` is NOT auto-emitted on the allow side;
-/// the user opts in if they want silent MCP forwarding.
-///
-/// Note: `Bash(remargin *)` is no longer emitted here. CLI denial is
-/// now enforced by the hook (pretool) via the folder-level
-/// `cli_allowed` field on `ResolvedPermissions`. The projection is
-/// user-managed and the hook is the single source of truth.
 #[must_use]
-pub fn rules_for(
+pub fn hook_covered_rules(
     entry: &ResolvedTrustedRoot,
     _anchor: &Path,
     allow_dot_folders: &[String],
@@ -439,6 +450,37 @@ pub fn rules_for(
     }
 
     RuleSet { allow, deny }
+}
+
+/// The rules `remargin restrict` actually writes into settings files.
+///
+/// The `PreToolUse` hook is the single source of truth, so every shape
+/// [`hook_covered_rules`] emits is redundant and no longer projected.
+/// Residue audit — each shape and why the hook already covers it:
+///
+/// - Editor-tool path denies (`Read/Write/Edit/MultiEdit/NotebookEdit
+///   (<root>/**)`): the hook's `Path` branch gates all five tools (plus
+///   `Grep`/`Glob`) on any target under a trusted root.
+/// - Dot-folder default-deny (`<root>/.*/**`): the hook denies every
+///   path under the root regardless of a dot-prefix, honouring
+///   `allow_dot_folders` for the carve-outs — so the paired re-allows
+///   are unneeded too.
+/// - Bash mutators + `also_deny_bash` extras (`Bash(<cmd> <root>/**)`):
+///   the hook resolves every path-shaped word verb-independently, so a
+///   managed path in any argv position is denied — broader than the
+///   enumerated command list, and it also catches redirection and
+///   `cd`-relative bypasses the projection could not.
+/// - mv/cp source- and destination-side shapes: every word (source and
+///   destination alike) is resolved per-word, so `mv <root>/x /tmp`,
+///   `cp /tmp/x <root>/y`, and both-sides forms are all denied.
+///
+/// The audit found no residue, so this is empty. It stays a named seam
+/// (rather than an inline `RuleSet::default()`) so the live `restrict`
+/// path and the `plan restrict` projection share one home, and a future
+/// genuinely-hook-uncoverable rule has an obvious place to land.
+#[must_use]
+pub fn residual_rules() -> RuleSet {
+    RuleSet::default()
 }
 
 /// Pure projection of [`apply_rules`]. Per file in `settings_files`,

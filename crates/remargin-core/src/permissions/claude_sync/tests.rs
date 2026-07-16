@@ -1,17 +1,18 @@
-//! Unit tests for [`crate::permissions::claude_sync::rules_for`].
+//! Unit tests for [`crate::permissions::claude_sync::hook_covered_rules`].
 //!
 //! Pure-data round-trips: every test feeds a hand-rolled
 //! [`ResolvedTrustedRoot`] in and asserts the returned rule strings.
 //!
-//! `restrict` projects the full native-tool fence (editor-tool denies,
-//! dot-folder defaults, `BASH_MUTATORS` list, mv source/dest patterns)
-//! plus `also_deny_bash` extras. `op_guard` enforces per-target ops
-//! inside the binary; the Claude-side projection covers the native-tool
-//! side that doesn't go through remargin.
+//! `hook_covered_rules` describes the full native-tool fence (editor-
+//! tool denies, dot-folder defaults, `BASH_MUTATORS` list, mv source/
+//! dest patterns) plus `also_deny_bash` extras. `restrict` no longer
+//! writes any of these (see `residual_rules`); the `PreToolUse` hook
+//! enforces the native-tool side and this shape set is retained only so
+//! `remargin doctor` can recognise leftover projected rules as drift.
 //!
-//! Note: `Bash(remargin *)` is NOT emitted by the projection. CLI
-//! denial is enforced by the `PreToolUse` hook via the folder-level
-//! `cli_allowed` field in `.remargin.yaml`.
+//! Note: `Bash(remargin *)` is NOT part of the set. CLI denial is
+//! enforced by the `PreToolUse` hook via the folder-level `cli_allowed`
+//! field in `.remargin.yaml`.
 
 use core::slice::from_ref;
 use std::path::{Path, PathBuf};
@@ -25,7 +26,7 @@ use crate::permissions::claude_sync::rule_shape::{
     OverlapKind, PathGlob, RuleShape, rules_overlap,
 };
 use crate::permissions::claude_sync::{
-    BASH_MUTATORS, RuleSet, apply_rules, revert_rules, rules_for,
+    BASH_MUTATORS, RuleSet, apply_rules, hook_covered_rules, revert_rules,
 };
 use crate::permissions::sidecar::{self, sidecar_path};
 
@@ -55,7 +56,7 @@ fn restrict_wildcard(realm: &str, cli_allowed: bool) -> ResolvedTrustedRoot {
 #[test]
 fn subpath_no_extras_emits_full_default_set() {
     let entry = restrict_subpath("/a/b", &[], false);
-    let rules = rules_for(&entry, Path::new("/a"), &[]);
+    let rules = hook_covered_rules(&entry, Path::new("/a"), &[]);
 
     // deny: 5 editor-tool path denies + 5 dot-folder wildcards +
     // BASH_MUTATORS.len() bash mutators + 3 source-side mv shapes
@@ -238,7 +239,7 @@ fn subpath_no_extras_emits_full_default_set() {
 #[test]
 fn wildcard_uses_realm_root_for_glob() {
     let entry = restrict_wildcard("/r", false);
-    let rules = rules_for(&entry, Path::new("/r"), &[]);
+    let rules = hook_covered_rules(&entry, Path::new("/r"), &[]);
 
     assert_eq!(rules.deny[0], "Edit(/r/**)");
     // 5 editor-tool path denies precede the dot-folder wildcards, so the
@@ -261,7 +262,7 @@ fn wildcard_uses_realm_root_for_glob() {
 fn projection_never_emits_remargin_cli_deny_regardless_of_cli_allowed() {
     for cli_allowed in [true, false] {
         let entry = restrict_subpath("/a/b", &[], cli_allowed);
-        let rules = rules_for(&entry, Path::new("/a"), &[]);
+        let rules = hook_covered_rules(&entry, Path::new("/a"), &[]);
 
         assert!(
             !rules
@@ -278,14 +279,14 @@ fn projection_never_emits_remargin_cli_deny_regardless_of_cli_allowed() {
     }
 }
 
-/// T9 — `Bash(remargin *)` is never emitted by `rules_for` regardless of
+/// T9 — `Bash(remargin *)` is never emitted by `hook_covered_rules` regardless of
 /// the `cli_allowed` flag value on the entry. CLI denial is hook-enforced.
 #[test]
 fn no_remargin_cli_deny_emitted_in_any_configuration() {
     for cli_allowed in [true, false] {
         for also_deny_bash in [&[] as &[&str], &["curl", "nc"]] {
             let entry = restrict_subpath("/a/b", also_deny_bash, cli_allowed);
-            let rules = rules_for(&entry, Path::new("/a"), &[]);
+            let rules = hook_covered_rules(&entry, Path::new("/a"), &[]);
             assert!(
                 !rules.deny.iter().any(|r| r.starts_with("Bash(remargin")),
                 "cli_allowed={cli_allowed}, also_deny_bash={also_deny_bash:?}: \
@@ -297,7 +298,7 @@ fn no_remargin_cli_deny_emitted_in_any_configuration() {
     // Wildcard entry also never emits it.
     for cli_allowed in [true, false] {
         let entry = restrict_wildcard("/r", cli_allowed);
-        let rules = rules_for(&entry, Path::new("/r"), &[]);
+        let rules = hook_covered_rules(&entry, Path::new("/r"), &[]);
         assert!(
             !rules.deny.iter().any(|r| r.starts_with("Bash(remargin")),
             "wildcard cli_allowed={cli_allowed}: Bash(remargin *) must not appear: {:#?}",
@@ -316,7 +317,7 @@ fn also_deny_bash_extras_appended() {
     // default deny list, so their presence below uniquely proves the
     // extras path is exercised.
     let entry = restrict_subpath("/a/b", &["aria2c", "nc"], false);
-    let rules = rules_for(&entry, Path::new("/a"), &[]);
+    let rules = hook_covered_rules(&entry, Path::new("/a"), &[]);
 
     assert!(
         rules.deny.iter().any(|r| r == "Bash(aria2c * /a/b/**)"),
@@ -341,7 +342,7 @@ fn also_deny_bash_extras_appended() {
 #[test]
 fn allow_dot_folders_emits_re_allows() {
     let entry = restrict_subpath("/a/b", &[], false);
-    let rules = rules_for(&entry, Path::new("/a"), &[String::from(".github")]);
+    let rules = hook_covered_rules(&entry, Path::new("/a"), &[String::from(".github")]);
 
     let github_allows: Vec<&String> = rules
         .allow
@@ -369,7 +370,7 @@ fn allow_dot_folders_emits_re_allows() {
 #[test]
 fn explicit_remargin_in_allow_list_emits_re_allows() {
     let entry = restrict_subpath("/a/b", &[], false);
-    let rules = rules_for(&entry, Path::new("/a"), &[String::from(".remargin")]);
+    let rules = hook_covered_rules(&entry, Path::new("/a"), &[String::from(".remargin")]);
 
     let count = rules
         .allow
@@ -386,7 +387,7 @@ fn explicit_remargin_in_allow_list_emits_re_allows() {
 #[test]
 fn deletion_family_emits_bare_and_flagged_forms() {
     let entry = restrict_subpath("/a/b", &[], false);
-    let rules = rules_for(&entry, Path::new("/a"), &[]);
+    let rules = hook_covered_rules(&entry, Path::new("/a"), &[]);
 
     for cmd in ["rm", "rmdir", "unlink", "shred"] {
         let bare = format!("Bash({cmd} /a/b/**)");
@@ -411,7 +412,7 @@ fn deletion_family_emits_bare_and_flagged_forms() {
 #[test]
 fn windows_cmd_mutators_projected() {
     let entry = restrict_subpath("/a/b", &[], false);
-    let rules = rules_for(&entry, Path::new("/a"), &[]);
+    let rules = hook_covered_rules(&entry, Path::new("/a"), &[]);
 
     // Each entry expands to `Bash(<cmd> /a/b/**)`. Tools that take a
     // source AND destination (`copy`, `move`, `xcopy`, `robocopy`)
@@ -450,7 +451,7 @@ fn windows_cmd_mutators_projected() {
 #[test]
 fn powershell_cmdlet_mutators_projected() {
     let entry = restrict_subpath("/a/b", &[], false);
-    let rules = rules_for(&entry, Path::new("/a"), &[]);
+    let rules = hook_covered_rules(&entry, Path::new("/a"), &[]);
 
     let cmdlets = [
         "Add-Content",
@@ -484,7 +485,7 @@ fn powershell_cmdlet_mutators_projected() {
 #[test]
 fn xargs_and_find_projected() {
     let entry = restrict_subpath("/a/b", &[], false);
-    let rules = rules_for(&entry, Path::new("/a"), &[]);
+    let rules = hook_covered_rules(&entry, Path::new("/a"), &[]);
 
     assert!(
         rules
@@ -505,7 +506,7 @@ fn xargs_and_find_projected() {
 #[test]
 fn no_implicit_remargin_native_allows_emitted() {
     let entry = restrict_subpath("/a/b", &[], false);
-    let rules = rules_for(&entry, Path::new("/a"), &[]);
+    let rules = hook_covered_rules(&entry, Path::new("/a"), &[]);
 
     for tool in ["Edit", "Write", "Read", "NotebookEdit", "MultiEdit"] {
         let needle = format!("{tool}(/a/b/.remargin/**)");
@@ -542,8 +543,8 @@ fn rule_set_round_trips_through_json() {
 #[test]
 fn anchor_argument_does_not_affect_output() {
     let entry = restrict_subpath("/a/b", &[], false);
-    let rules_a = rules_for(&entry, Path::new("/a"), &[]);
-    let rules_b = rules_for(&entry, Path::new("/somewhere/else"), &[]);
+    let rules_a = hook_covered_rules(&entry, Path::new("/a"), &[]);
+    let rules_b = hook_covered_rules(&entry, Path::new("/somewhere/else"), &[]);
     assert_eq!(rules_a, rules_b);
 }
 

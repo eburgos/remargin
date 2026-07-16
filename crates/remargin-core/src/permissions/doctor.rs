@@ -20,7 +20,7 @@ use os_shim::System;
 use serde::{Deserialize, Serialize};
 
 use crate::config::permissions::resolve::resolve_permissions;
-use crate::permissions::claude_sync::{self, RuleSet, canonicalize_rule, rules_for};
+use crate::permissions::claude_sync::{self, RuleSet, canonicalize_rule, hook_covered_rules};
 use crate::permissions::pretool_install::{self, TestOutcome};
 use crate::permissions::session_guard_install::{self, TestOutcome as GuardTestOutcome};
 
@@ -46,11 +46,12 @@ pub enum FindingKind {
     /// realm. All subsequent checks are skipped.
     HookMissing,
     /// A static `permissions.deny` rule in a settings file is drift the
-    /// hook has made redundant: either a path rule `rules_for` still
-    /// projects for this realm (now enforced by the `PreToolUse` hook,
-    /// so the static copy is a duplicate with no removal path) or a
-    /// stale `Bash(remargin *)` CLI deny the synchronizer no longer
-    /// emits. Each finding names the file and the exact rule string.
+    /// hook has made redundant: either a path rule in
+    /// [`hook_covered_rules`] for this realm (now enforced by the
+    /// `PreToolUse` hook, so the static copy is a duplicate an older
+    /// restrict left behind) or a stale `Bash(remargin *)` CLI deny the
+    /// synchronizer no longer emits. Each finding names the file and the
+    /// exact rule string.
     LeftoverProjectedRule,
     /// The `SessionStart` guard (`remargin claude session-guard`) is
     /// absent from both user-scope and project-scope settings files.
@@ -108,8 +109,9 @@ impl DoctorReport {
 
 /// Why a `permissions.deny` rule is flagged as leftover drift.
 enum LeftoverReason {
-    /// Path rule the hook now covers — `rules_for` still projects it,
-    /// so the static copy in settings is a redundant duplicate.
+    /// Path rule the hook now covers — it is in [`hook_covered_rules`],
+    /// so the static copy in settings is a duplicate an older restrict
+    /// left behind.
     Projected,
     /// Stale `Bash(remargin *)` CLI deny the synchronizer no longer
     /// emits — CLI denial is the hook's job via `cli_allowed`.
@@ -221,12 +223,13 @@ pub fn run_doctor(
 /// One [`FindingKind::LeftoverProjectedRule`] per deny rule the hook has
 /// made redundant, across every file in `settings_files`.
 ///
-/// The projected set is computed by reusing [`rules_for`] over the
-/// realm's resolved `trusted_roots` (plus `allow_dot_folders`), so the
-/// detector shares one rule-shape engine with the synchronizer instead
-/// of re-deriving the shapes. Any on-disk deny rule that (canonically)
-/// lands in that projected set is flagged; a `Bash(remargin *)`-shaped
-/// deny — which `rules_for` no longer emits — is flagged as stale.
+/// The reference set is computed by reusing [`hook_covered_rules`] over
+/// the realm's resolved `trusted_roots` (plus `allow_dot_folders`), so
+/// the detector shares one rule-shape engine with the synchronizer
+/// instead of re-deriving the shapes. Any on-disk deny rule that
+/// (canonically) lands in that set is flagged as a leftover an older
+/// restrict projected; a `Bash(remargin *)`-shaped deny — which the
+/// synchronizer never emits — is flagged as stale.
 fn leftover_projected_rule_findings(
     system: &dyn System,
     cwd: &Path,
@@ -237,7 +240,7 @@ fn leftover_projected_rule_findings(
 
     let mut projected = RuleSet::default();
     for entry in &resolved.trusted_roots {
-        let rules = rules_for(entry, cwd, &allow_dot_folders);
+        let rules = hook_covered_rules(entry, cwd, &allow_dot_folders);
         projected.deny.extend(rules.deny);
         projected.allow.extend(rules.allow);
     }

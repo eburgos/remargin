@@ -295,16 +295,17 @@ If you ever see that guard diagnostic in your context (enforcement may be silent
 ### Q: I want to restrict (or unrestrict) a path.
 
 1. `remargin claude restrict <path>` — appends an entry to
-   `<.claude-anchor>/.remargin.yaml` AND syncs the equivalent rules
-   into `.claude/settings.local.json` + `~/.claude/settings.json`.
-   Layer 1 (remargin-core) starts refusing ops on the path on the
-   very next call. Layer 2 (Claude's NATIVE Read/Edit/Write/Bash
-   tools) takes effect when Claude reloads its settings (typically
-   a Claude restart — outside remargin's control).
-2. `remargin claude unrestrict <path>` — exact reverse. Uses a
-   sidecar (`<.claude-anchor>/.claude/.remargin-restrictions.json`)
-   to know precisely which rules to remove; never touches user-added
-   rules.
+   `<.claude-anchor>/.remargin.yaml`. That entry alone activates both
+   layers: Layer 1 (remargin-core) starts refusing ops on the path on
+   the very next call, and Layer 2 (the `PreToolUse` hook, the single
+   source of truth for native `Read`/`Edit`/`Write`/`Bash` enforcement)
+   reads the same `.remargin.yaml` on every tool call. restrict no
+   longer projects `permissions.deny` rules into the settings files.
+2. `remargin claude unrestrict <path>` — exact reverse. Removes the
+   `.remargin.yaml` entry. For realms an older remargin projected rules
+   into, it also reads the sidecar
+   (`<.claude-anchor>/.claude/.remargin-restrictions.json`) to scrub
+   those legacy rules precisely; never touches user-added rules.
 3. `remargin permissions show` — print the resolved permissions
    tree at cwd. JSON via `--json`.
 4. `remargin permissions check <path> [--why]` — gitignore-style:
@@ -653,12 +654,14 @@ the read-only inspection tools (`mcp__remargin__permissions_show`,
 ship. (`claude restrict` / `claude unrestrict` are CLI-only and not
 exposed via MCP.)
 
-When `remargin claude restrict <path>` itself runs, it APPENDS deny
-rules (plus any explicit `allow_dot_folders` re-allows) to the same
-`permissions` block (see the "restrict / unrestrict" decision flowchart
-above for the full mechanism). The synchronizer is idempotent.
-Crucially, `claude restrict` does **not** add `mcp__remargin__*` to the
-allow list — if the user has it there, it is because they put it there
+When `remargin claude restrict <path>` runs, it writes **only** the
+`.remargin.yaml` entry — the `PreToolUse` hook is the single source of
+truth for native-tool + Bash enforcement, so restrict no longer
+projects `permissions.deny` rules into the settings files. Run
+`remargin doctor` to verify enforcement is live and to find (and clear)
+any leftover projected rules an older restrict left behind. Crucially,
+`claude restrict` does **not** add `mcp__remargin__*` to the allow
+list — if the user has it there, it is because they put it there
 themselves, and `claude unrestrict` will leave it alone.
 
 ---

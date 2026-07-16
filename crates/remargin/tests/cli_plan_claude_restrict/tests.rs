@@ -126,11 +126,11 @@ fn plan_then_apply_then_replan_reports_noop() {
     }
 }
 
-/// the projection no longer emits per-tool path denies,
-/// so a user-scope `Read(<path>/**)` allow has nothing on the
-/// projected deny side to overlap with.
+/// With the projection retired, an existing user-scope allow that would
+/// once have overlapped a projected deny surfaces no `allow_deny_overlap`
+/// conflict — nothing is projected to overlap.
 #[test]
-fn plan_surfaces_allow_deny_overlap_in_user_settings() {
+fn plan_surfaces_no_allow_deny_overlap_now_projection_retired() {
     let realm = realm_with_claude();
     let target = realm.path().join("src/secret");
     fs::create_dir_all(&target).unwrap();
@@ -160,29 +160,18 @@ fn plan_surfaces_allow_deny_overlap_in_user_settings() {
     assert_status(&out, 0);
     let report = parse_json(&out);
     let conflicts = report["config_diff"]["conflicts"].as_array().unwrap();
-    let saw_overlap = conflicts.iter().any(|c| c["kind"] == "allow_deny_overlap");
     assert!(
-        saw_overlap,
-        "expected allow_deny_overlap in conflicts: {conflicts:?}"
+        !conflicts.iter().any(|c| c["kind"] == "allow_deny_overlap"),
+        "projection is empty, so no allow_deny_overlap can surface: {conflicts:?}"
     );
 }
 
-/// format-drift case — a single-slash `Read(/realm/**)`
-/// allow on disk still surfaces an overlap against the projected
-/// `Read(/realm/**)` deny because the conflict detector
-/// canonicalises both forms.
+/// `plan restrict` projects no settings changes — the hook is the single
+/// source of truth, so `settings_files` is empty (no deny rules to add).
 #[test]
-fn plan_overlap_seeded_with_single_slash_allow_still_fires() {
+fn plan_wildcard_projects_no_settings_rules() {
     let realm = realm_with_claude();
     let user_settings = user_settings_arg(&realm);
-    let canonical = fs::canonicalize(realm.path()).unwrap();
-    let body = json!({
-        "permissions": {
-            "allow": [format!("Read({}/**)", canonical.display())],
-            "deny": []
-        }
-    });
-    fs::write(&user_settings, body.to_string()).unwrap();
 
     let out = run_in(
         realm.path(),
@@ -198,94 +187,10 @@ fn plan_overlap_seeded_with_single_slash_allow_still_fires() {
     );
     assert_status(&out, 0);
     let report = parse_json(&out);
-    let conflicts = report["config_diff"]["conflicts"].as_array().unwrap();
-    let saw_overlap = conflicts.iter().any(|c| c["kind"] == "allow_deny_overlap");
+    let settings_files = report["config_diff"]["settings_files"].as_array().unwrap();
     assert!(
-        saw_overlap,
-        "expected single-slash allow to still surface overlap: {conflicts:?}"
-    );
-}
-
-/// emitted deny rules carry exactly one leading slash
-/// before the path glob (no `//`, no `///`), matching Claude's
-/// documented format and the user-scope settings file's rules.
-#[test]
-fn plan_emits_single_slash_path_globs() {
-    let realm = realm_with_claude();
-    let user_settings = user_settings_arg(&realm);
-    let canonical = fs::canonicalize(realm.path()).unwrap();
-
-    let out = run_in(
-        realm.path(),
-        &[
-            "plan",
-            "claude",
-            "restrict",
-            "*",
-            "--user-settings",
-            user_settings.to_str().unwrap(),
-            "--json",
-        ],
-    );
-    assert_status(&out, 0);
-    let report = parse_json(&out);
-    let cd = &report["config_diff"];
-    let realm_str = canonical.display().to_string();
-    for sf in cd["settings_files"].as_array().unwrap() {
-        for rule in sf["deny_rules_to_add"].as_array().unwrap() {
-            let rule_str = rule.as_str().unwrap();
-            let slashed = format!("//{realm_str}");
-            assert!(
-                !rule_str.contains(&slashed),
-                "rule {rule_str} must not have multi-slash before path"
-            );
-            let triple = format!("///{realm_str}");
-            assert!(
-                !rule_str.contains(&triple),
-                "rule {rule_str} must not have triple-slash before path"
-            );
-        }
-    }
-}
-
-/// Subtree-shadow case: a user-scope allow inside the realm
-/// (`Read(/realm/safe)`) is shadowed by the broader projected deny
-/// (`Read(/realm/**)`). The conflict detector reports this as
-/// `overlap_kind=allow_shadowed_by_broader_deny`.
-#[test]
-fn plan_overlap_subtree_shadow_reports_kind() {
-    let realm = realm_with_claude();
-    let user_settings = user_settings_arg(&realm);
-    let canonical = fs::canonicalize(realm.path()).unwrap();
-    let body = json!({
-        "permissions": {
-            "allow": [format!("Read({}/safe)", canonical.display())],
-            "deny": []
-        }
-    });
-    fs::write(&user_settings, body.to_string()).unwrap();
-
-    let out = run_in(
-        realm.path(),
-        &[
-            "plan",
-            "claude",
-            "restrict",
-            "*",
-            "--user-settings",
-            user_settings.to_str().unwrap(),
-            "--json",
-        ],
-    );
-    assert_status(&out, 0);
-    let report = parse_json(&out);
-    let conflicts = report["config_diff"]["conflicts"].as_array().unwrap();
-    let saw_shadow = conflicts.iter().any(|c| {
-        c["kind"] == "allow_deny_overlap" && c["overlap_kind"] == "allow_shadowed_by_broader_deny"
-    });
-    assert!(
-        saw_shadow,
-        "expected allow_shadowed_by_broader_deny: {conflicts:?}"
+        settings_files.is_empty(),
+        "plan should project no settings files, got {settings_files:?}"
     );
 }
 

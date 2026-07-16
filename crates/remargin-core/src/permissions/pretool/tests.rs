@@ -1161,9 +1161,9 @@ fn path_in_neither_bash_rm_silent_allows() {
 
 // ---------------------------------------------------------------------
 // allow_dot_folders: the hook honours the realm's dot-folder re-allow,
-// mirroring the projected `rules_for` re-allow so retiring the rules
-// cannot regress an explicitly-allowed dot folder. The carve-out only
-// lifts restriction for dot-folder paths — never for non-dot paths.
+// mirroring the `hook_covered_rules` re-allow so retiring the projected
+// rules cannot regress an explicitly-allowed dot folder. The carve-out
+// only lifts restriction for dot-folder paths — never for non-dot paths.
 // ---------------------------------------------------------------------
 
 /// A wildcard realm re-allowing the named dot folders. Empty
@@ -1233,15 +1233,15 @@ fn allow_dot_folders_allowed_dot_folder_bash_silent_allows() {
 }
 
 /// Parity: for a fixed realm + `allow_dot_folders`, the hook's decision on
-/// each dot-folder path agrees with whether `rules_for` emitted a re-allow
-/// covering it — restricted iff not re-allowed. Guards the hook and the
-/// projected rules against drift while both layers still exist.
+/// each dot-folder path agrees with whether `hook_covered_rules` emitted a
+/// re-allow covering it — restricted iff not re-allowed. Guards the hook
+/// against drift from the shape set `doctor` uses for drift detection.
 #[test]
-fn allow_dot_folders_hook_matches_projected_rules_for_reallow() {
+fn allow_dot_folders_hook_matches_hook_covered_reallow() {
     use std::path::PathBuf;
 
     use crate::config::permissions::resolve::{ResolvedTrustedRoot, TrustedRootPath};
-    use crate::permissions::claude_sync::rules_for;
+    use crate::permissions::claude_sync::hook_covered_rules;
 
     let allow = [String::from(".obsidian")];
     let entry = ResolvedTrustedRoot {
@@ -1252,7 +1252,7 @@ fn allow_dot_folders_hook_matches_projected_rules_for_reallow() {
         },
         source_file: PathBuf::from("/r/.remargin.yaml"),
     };
-    let rules = rules_for(&entry, Path::new("/r"), &allow);
+    let rules = hook_covered_rules(&entry, Path::new("/r"), &allow);
 
     let system = mock_with(&[(
         "/r/.remargin.yaml",
@@ -1264,8 +1264,8 @@ fn allow_dot_folders_hook_matches_projected_rules_for_reallow() {
         "/r/.git/config",
         "/r/.cache/blob",
     ] {
-        // A re-allow covers `path` iff `rules_for` emitted a rule for the
-        // path's leading dot-folder component.
+        // A re-allow covers `path` iff `hook_covered_rules` emitted a rule
+        // for the path's leading dot-folder component.
         let folder = path.strip_prefix("/r/").unwrap().split('/').next().unwrap();
         let reallowed = rules.allow.contains(&format!("Read(/r/{folder}/**)"));
 
@@ -1274,7 +1274,7 @@ fn allow_dot_folders_hook_matches_projected_rules_for_reallow() {
 
         assert_eq!(
             hook_restricted, !reallowed,
-            "hook and rules_for disagree on {path}: restricted={hook_restricted}, reallowed={reallowed}",
+            "hook and hook_covered_rules disagree on {path}: restricted={hook_restricted}, reallowed={reallowed}",
         );
     }
 }

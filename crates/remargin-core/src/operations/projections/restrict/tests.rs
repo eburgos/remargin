@@ -10,7 +10,6 @@ use crate::operations::plan::{
     ConfigConflict, ConfigPlanDiff, EntryAction, RemarginYamlDiff, SidecarDiff,
 };
 use crate::operations::projections::restrict::{RestrictProjection, project_restrict};
-use crate::permissions::claude_sync::rule_shape::OverlapKind;
 use crate::permissions::restrict::{RestrictArgs, restrict};
 
 /// Realm fixture: `<r>/.claude/` exists, no `.remargin.yaml`, no
@@ -81,7 +80,7 @@ fn write_settings_file(system: MockSystem, path: &Path, body: &str) -> MockSyste
 }
 
 #[test]
-fn anchor_at_cwd_with_empty_state_projects_added() {
+fn anchor_at_cwd_with_empty_state_projects_yaml_only() {
     let (system, realm, project, user) = fresh_realm();
     let args = restrict_args("src/secret");
 
@@ -96,9 +95,14 @@ fn anchor_at_cwd_with_empty_state_projects_added() {
         diff.remargin_yaml.entry_action,
         EntryAction::Added
     ));
-    assert!(diff.settings_files[0].will_be_created);
-    assert!(!diff.settings_files[0].deny_rules_to_add.is_empty());
-    assert!(matches!(diff.sidecar.entry_action, EntryAction::Added));
+    // The hook is the single source of truth: `restrict` writes no
+    // settings rules and no sidecar entry, so the plan projects neither.
+    assert!(
+        diff.settings_files.is_empty(),
+        "expected no settings files touched: {:?}",
+        diff.settings_files
+    );
+    assert!(matches!(diff.sidecar.entry_action, EntryAction::Noop));
     assert!(
         !diff
             .conflicts
@@ -168,21 +172,19 @@ fn path_outside_anchor_returns_reject() {
 }
 
 #[test]
-fn wildcard_resolves_to_anchor_and_emits_realm_rules() {
+fn wildcard_resolves_to_anchor_and_projects_no_rules() {
     let (system, realm, project, user) = fresh_realm();
     let args = restrict_args("*");
 
     let projection = project_restrict(&system, &realm, &args, &[project, user]).unwrap();
     let diff = diff_or_fail(projection);
     assert_eq!(diff.absolute_path, realm);
-    let realm_str = realm.display().to_string();
+    // Wildcard restrict projects no settings rules — the hook covers every
+    // path under the realm root.
     assert!(
-        diff.settings_files[0]
-            .deny_rules_to_add
-            .iter()
-            .any(|r| r.contains(&realm_str) && r.contains("/**")),
-        "expected realm-wide deny rule, got {:?}",
-        diff.settings_files[0].deny_rules_to_add,
+        diff.settings_files.is_empty(),
+        "expected no settings rules under the wildcard projection, got {:?}",
+        diff.settings_files,
     );
 }
 
@@ -233,8 +235,14 @@ fn yaml_entry_change_surfaces_conflict_with_previous() {
     );
 }
 
+/// With the projection retired, an existing allow that would once have
+/// overlapped a projected deny surfaces no `AllowDenyOverlap` conflict —
+/// there is no deny projected to overlap. Covers the exact-match case
+/// that used to fire; the overlap classifier's own logic (legacy-slash
+/// canonicalization, subtree shadow) stays unit-tested in
+/// `claude_sync::rule_shape`.
 #[test]
-fn allow_deny_overlap_surfaces_when_existing_allow_matches_projected_deny() {
+fn overlapping_allow_surfaces_no_conflict_now_projection_retired() {
     let (system, realm, project, user) = fresh_realm();
     let secret_glob = format!("{}/src/secret/**", realm.display());
     let body = serde_json::json!({
@@ -246,96 +254,16 @@ fn allow_deny_overlap_surfaces_when_existing_allow_matches_projected_deny() {
     let seeded = write_settings_file(system, &user, &body.to_string());
 
     let args = restrict_args("src/secret");
-    let projection = project_restrict(&seeded, &realm, &args, &[project, user.clone()]).unwrap();
+    let projection = project_restrict(&seeded, &realm, &args, &[project, user]).unwrap();
     let diff = diff_or_fail(projection);
 
-    let saw_overlap = diff.conflicts.iter().any(|c| {
-        matches!(
-            c,
-            ConfigConflict::AllowDenyOverlap {
-                overlap_kind: OverlapKind::Exact,
-                settings_file,
-                ..
-            } if settings_file == &user
-        )
-    });
     assert!(
-        saw_overlap,
-        "expected AllowDenyOverlap (Exact) on user-scope file. conflicts: {:?}, sims: {:?}",
-        diff.conflicts, diff.settings_files,
-    );
-}
-
-/// scenario 17: format-drift tolerance — a user-scope allow
-/// with the legacy single-slash prefix still surfaces as an overlap
-/// against the projection's `///`-prefixed deny rules.
-#[test]
-fn allow_deny_overlap_handles_legacy_single_slash_format() {
-    let (system, realm, project, user) = fresh_realm();
-    let secret_glob = format!("{}/src/secret/**", realm.display());
-    let body = serde_json::json!({
-        "permissions": {
-            "allow": [format!("Read({secret_glob})")],
-            "deny": []
-        }
-    });
-    let seeded = write_settings_file(system, &user, &body.to_string());
-
-    let args = restrict_args("src/secret");
-    let projection = project_restrict(&seeded, &realm, &args, &[project, user.clone()]).unwrap();
-    let diff = diff_or_fail(projection);
-
-    let saw_overlap = diff.conflicts.iter().any(|c| {
-        matches!(
-            c,
-            ConfigConflict::AllowDenyOverlap {
-                settings_file,
-                ..
-            } if settings_file == &user
-        )
-    });
-    assert!(
-        saw_overlap,
-        "expected format-drift overlap on user-scope file. conflicts: {:?}",
+        !diff
+            .conflicts
+            .iter()
+            .any(|c| matches!(c, ConfigConflict::AllowDenyOverlap { .. })),
+        "projection is empty, so no allow/deny overlap can surface: {:?}",
         diff.conflicts,
-    );
-}
-
-/// scenario 18: a more-specific allow shadowed by the
-/// realm-wide projected deny (subtree shadow) is reported as
-/// `AllowShadowedByBroaderDeny`.
-#[test]
-fn allow_deny_overlap_subtree_shadow_kind() {
-    let (system, realm, project, user) = fresh_realm();
-    // Allow a strict subpath, then restrict the whole realm — the
-    // wildcard deny shadows the safe-area allow.
-    let safe_path = format!("{}/safe", realm.display());
-    let body = serde_json::json!({
-        "permissions": {
-            "allow": [format!("Read({safe_path})")],
-            "deny": []
-        }
-    });
-    let seeded = write_settings_file(system, &user, &body.to_string());
-
-    let args = restrict_args("*");
-    let projection = project_restrict(&seeded, &realm, &args, &[project, user.clone()]).unwrap();
-    let diff = diff_or_fail(projection);
-
-    let saw_shadow = diff.conflicts.iter().any(|c| {
-        matches!(
-            c,
-            ConfigConflict::AllowDenyOverlap {
-                overlap_kind: OverlapKind::AllowShadowedByBroaderDeny,
-                settings_file,
-                ..
-            } if settings_file == &user
-        )
-    });
-    assert!(
-        saw_shadow,
-        "expected AllowShadowedByBroaderDeny in {:?}",
-        diff.conflicts
     );
 }
 

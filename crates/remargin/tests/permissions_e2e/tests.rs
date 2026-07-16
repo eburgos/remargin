@@ -78,11 +78,6 @@ fn write_md(realm: &TempDir, rel: &str, body: &str) {
     fs::write(path, body).unwrap();
 }
 
-fn read_local_settings(realm: &TempDir) -> Value {
-    let body = fs::read_to_string(realm.path().join(".claude/settings.local.json")).unwrap();
-    serde_json::from_str(&body).unwrap()
-}
-
 /// E3: the MCP `restrict` tool is intentionally absent
 /// from the surface. Calling it leaves the realm completely
 /// untouched (no .remargin.yaml, no settings file mutation), and
@@ -145,22 +140,11 @@ fn mcp_restrict_is_inert_and_leaves_realm_untouched() {
     );
 }
 
-/// E5: restrict two paths, unprotect one — only the surviving
-/// entry remains in `.remargin.yaml`. `op_guard` re-resolves on
-/// every call so the surviving restrict still gates writes
-/// regardless of what's in the Claude settings file.
-///
-/// Note: under the minimised projection, both restricts emit the
-/// identical `Bash(remargin *)` deny. The sidecar carries one
-/// entry per restrict path; removing the `src/secret` entry's
-/// sidecar entry scrubs the projected string from the settings
-/// file even though the `archive` entry's projection nominally
-/// still wants it. This is acceptable: enforcement of `archive` is
-/// load-bearing on `op_guard` reading `.remargin.yaml`, not on
-/// Claude pattern-matching. A subsequent `restrict archive` re-run
-/// (or running `restrict` again on the existing `archive` entry)
-/// would back-fill the rule. The test pins the YAML survival as
-/// the contract; settings-file behaviour is a follow-up concern.
+/// E5: restrict two paths, unprotect one — only the surviving entry
+/// remains in `.remargin.yaml`. Enforcement of `archive` is load-bearing
+/// on `op_guard` and the hook reading `.remargin.yaml`, not on any
+/// projected settings (there are none — the hook is the single source of
+/// truth), so no sidecar is ever created.
 #[test]
 fn unprotect_one_path_leaves_others_intact() {
     let realm = realm_with_claude();
@@ -181,20 +165,13 @@ fn unprotect_one_path_leaves_others_intact() {
         serde_yaml::Value::String(String::from("archive"))
     );
 
-    // Sidecar entry for `src/secret` is gone; the `archive` entry
-    // remains so a subsequent unprotect of `archive` knows what
-    // to scrub.
-    let sidecar_body =
-        fs::read_to_string(realm.path().join(".claude/.remargin-restrictions.json")).unwrap();
-    let sidecar: serde_json::Value = serde_json::from_str(&sidecar_body).unwrap();
-    let entries = sidecar["entries"].as_object().unwrap();
+    // No sidecar is created for hook-only realms — nothing to track.
     assert!(
-        !entries.keys().any(|k| k.contains("src/secret")),
-        "src/secret sidecar entry should be removed: {entries:?}",
-    );
-    assert!(
-        entries.keys().any(|k| k.contains("archive")),
-        "archive sidecar entry should remain: {entries:?}",
+        !realm
+            .path()
+            .join(".claude/.remargin-restrictions.json")
+            .exists(),
+        "no sidecar should exist for a hook-only realm"
     );
 }
 
@@ -345,13 +322,12 @@ fn allow_dot_folders_permits_named_dot_folder() {
     );
 }
 
-/// E16: `also_deny_bash` lands in the Claude settings as
-/// `Bash(<cmd> * //...)` denies. Uses commands that are NOT in
-/// the default deny list (the defaults cover `curl` / `wget` and
-/// friends, so the original test would pass even if
-/// `--also-deny-bash` was a no-op).
+/// E16: `also_deny_bash` lands on the `.remargin.yaml` entry — not in a
+/// settings file. The hook denies every command touching a managed path
+/// regardless of verb, so no `Bash(...)` deny is projected. Uses commands
+/// NOT in the default set to prove the flag flows through to the entry.
 #[test]
-fn also_deny_bash_propagates_into_settings() {
+fn also_deny_bash_lands_on_yaml_entry() {
     let realm = realm_with_claude();
     write_md(&realm, "src/secret/foo.md", "x");
     restrict_in(
@@ -360,33 +336,41 @@ fn also_deny_bash_propagates_into_settings() {
         &["--also-deny-bash", "aria2c", "--also-deny-bash", "nc"],
     );
 
-    let settings = read_local_settings(&realm);
-    let deny = settings["permissions"]["deny"].as_array().unwrap();
+    let yaml = fs::read_to_string(realm.path().join(".remargin.yaml")).unwrap();
+    let value: serde_yaml::Value = serde_yaml::from_str(&yaml).unwrap();
+    let extras: Vec<String> = value["permissions"]["trusted_roots"][0]["also_deny_bash"]
+        .as_sequence()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_owned())
+        .collect();
+    assert!(extras.contains(&"aria2c".to_owned()), "got: {extras:?}");
+    assert!(extras.contains(&"nc".to_owned()), "got: {extras:?}");
+
+    // No settings file is projected.
     assert!(
-        deny.iter()
-            .any(|v| v.as_str().is_some_and(|s| s.starts_with("Bash(aria2c"))),
-        "expected Bash(aria2c ...) deny, got: {deny:#?}"
-    );
-    assert!(
-        deny.iter()
-            .any(|v| v.as_str().is_some_and(|s| s.starts_with("Bash(nc"))),
-        "expected Bash(nc ...) deny, got: {deny:#?}"
+        !realm.path().join(".claude/settings.local.json").exists(),
+        "no settings file should be written"
     );
 }
 
-/// E17: `--cli-allowed` omits the `Bash(remargin *)` deny.
+/// E17: `--cli-allowed` lands on the `.remargin.yaml` entry; no settings
+/// file is projected. CLI denial (or its exemption) is enforced by the
+/// `PreToolUse` hook via the folder-level `cli_allowed` field.
 #[test]
-fn cli_allowed_omits_remargin_cli_deny() {
+fn cli_allowed_persists_on_yaml_entry() {
     let realm = realm_with_claude();
     write_md(&realm, "src/secret/foo.md", "x");
     restrict_in(&realm, "src/secret", &["--cli-allowed"]);
 
-    let settings = read_local_settings(&realm);
-    let deny = settings["permissions"]["deny"].as_array().unwrap();
+    let yaml = fs::read_to_string(realm.path().join(".remargin.yaml")).unwrap();
+    let value: serde_yaml::Value = serde_yaml::from_str(&yaml).unwrap();
+    assert_eq!(
+        value["permissions"]["trusted_roots"][0]["cli_allowed"],
+        serde_yaml::Value::Bool(true)
+    );
     assert!(
-        !deny
-            .iter()
-            .any(|v| v.as_str().is_some_and(|s| s.starts_with("Bash(remargin"))),
-        "expected NO Bash(remargin ...) deny, got: {deny:#?}"
+        !realm.path().join(".claude/settings.local.json").exists(),
+        "no settings file should be written"
     );
 }

@@ -87,11 +87,12 @@ fn restrict_then_write_outside_allow_list_is_refused() {
     );
 }
 
-/// Scenarios 15-17: end-to-end restrict writes the projected
-/// rule set into both settings files, records the sidecar entry,
-/// and adds the gitignore line.
+/// A hook-only restrict writes only the `.remargin.yaml` entry: no
+/// projected deny rules land in either settings file, and no sidecar or
+/// gitignore line is created (there is nothing to track). The hook is
+/// the single source of truth for native-tool + Bash enforcement.
 #[test]
-fn restrict_writes_settings_sidecar_and_gitignore() {
+fn restrict_writes_only_yaml_no_settings_sidecar_or_gitignore() {
     let realm = realm_with_claude();
     fs::create_dir_all(realm.path().join("src/secret")).unwrap();
     let user_settings = user_settings_arg(&realm);
@@ -108,34 +109,35 @@ fn restrict_writes_settings_sidecar_and_gitignore() {
     );
     assert_status(&out, 0);
 
-    // Project-scope settings file landed with the rules.
-    let project_scope = realm.path().join(".claude/settings.local.json");
-    let body = fs::read_to_string(&project_scope).unwrap();
-    let value: Value = serde_json::from_str(&body).unwrap();
-    let deny = value["permissions"]["deny"].as_array().unwrap();
-    assert!(deny.iter().any(|v| {
-        v.as_str()
-            .is_some_and(|s| s.starts_with("Edit(") && s.contains("src/secret"))
-    }));
-    // `Bash(remargin *)` is no longer projected — CLI denial is enforced
-    // by the PreToolUse hook via the folder-level `cli_allowed` field.
-    assert!(!deny.iter().any(|v| v.as_str() == Some("Bash(remargin *)")));
+    // The .remargin.yaml entry is the only artifact.
+    let yaml = fs::read_to_string(realm.path().join(".remargin.yaml")).unwrap();
+    assert!(
+        yaml.contains("src/secret"),
+        "yaml should carry the entry: {yaml}"
+    );
 
-    // User-scope file landed too.
-    let user_body = fs::read_to_string(&user_settings).unwrap();
-    let user_value: Value = serde_json::from_str(&user_body).unwrap();
-    assert!(user_value["permissions"]["deny"].is_array());
+    // No projected settings files.
+    assert!(
+        !realm.path().join(".claude/settings.local.json").exists(),
+        "no project-scope settings should be written"
+    );
+    assert!(
+        !user_settings.exists(),
+        "no user-scope settings should be written"
+    );
 
-    // Sidecar exists with one entry.
-    let sidecar_body =
-        fs::read_to_string(realm.path().join(".claude/.remargin-restrictions.json")).unwrap();
-    let sidecar: Value = serde_json::from_str(&sidecar_body).unwrap();
-    let entries = sidecar["entries"].as_object().unwrap();
-    assert_eq!(entries.len(), 1);
-
-    // Gitignore created with the entry.
-    let gitignore = fs::read_to_string(realm.path().join(".gitignore")).unwrap();
-    assert!(gitignore.contains(".claude/.remargin-restrictions.json"));
+    // No sidecar, no gitignore line — nothing to track.
+    assert!(
+        !realm
+            .path()
+            .join(".claude/.remargin-restrictions.json")
+            .exists(),
+        "no sidecar should be written"
+    );
+    assert!(
+        !realm.path().join(".gitignore").exists(),
+        "no gitignore line should be added"
+    );
 }
 
 /// Wildcard `restrict '*'` allow-lists the entire realm — writes
@@ -212,17 +214,18 @@ fn restrict_json_output_round_trips() {
     let value: Value = serde_json::from_str(stdout).unwrap();
     assert!(value.get("absolute_path").is_some());
     assert!(value.get("anchor").is_some());
+    // Hook-only restrict touches no settings files and applies no rules.
     assert!(
         value
             .get("claude_files_touched")
             .and_then(Value::as_array)
-            .is_some_and(|a| a.len() == 2)
+            .is_some_and(Vec::is_empty)
     );
     assert!(
         value
             .get("rules_applied")
             .and_then(Value::as_array)
-            .is_some_and(|a| !a.is_empty())
+            .is_some_and(Vec::is_empty)
     );
     assert_eq!(value["yaml_was_created"], json!(true));
 }
@@ -363,12 +366,11 @@ fn also_deny_bash_single_value() {
     assert_eq!(tokens, vec!["curl".to_owned()]);
 }
 
-/// `cd` and `pushd` denies are emitted by default
-/// so the `cd /restricted && rm file` bypass class is closed. Both
-/// the bare form (`cd /path`) and the with-flag form (`cd -P /path`)
-/// are covered by emitting both `cd <path>/**` and `cd * <path>/**`.
+/// The `cd`/`pushd` bypass class is closed by the `PreToolUse` hook, not
+/// by projected denies: `restrict` writes no `Bash(cd ...)` /
+/// `Bash(pushd ...)` rules — it writes no settings files at all.
 #[test]
-fn cd_pushd_denies_emitted_by_default() {
+fn cd_pushd_denies_not_projected() {
     let realm = realm_with_claude();
     fs::create_dir_all(realm.path().join("src/secret")).unwrap();
     let user_settings = user_settings_arg(&realm);
@@ -385,45 +387,22 @@ fn cd_pushd_denies_emitted_by_default() {
     );
     assert_status(&out, 0);
 
-    let canonical = fs::canonicalize(realm.path().join("src/secret")).unwrap();
-    let glob = format!("{}/**", canonical.display());
-    let expected: [String; 4] = [
-        format!("Bash(cd {glob})"),
-        format!("Bash(cd * {glob})"),
-        format!("Bash(pushd {glob})"),
-        format!("Bash(pushd * {glob})"),
-    ];
-
-    let project_scope = realm.path().join(".claude/settings.local.json");
-    let project_body = fs::read_to_string(&project_scope).unwrap();
-    let project_value: Value = serde_json::from_str(&project_body).unwrap();
-    let project_deny = project_value["permissions"]["deny"].as_array().unwrap();
-    for needle in &expected {
-        assert!(
-            project_deny
-                .iter()
-                .any(|v| v.as_str() == Some(needle.as_str())),
-            "project-scope settings missing {needle}, got {project_deny:?}"
-        );
-    }
-
-    let user_body = fs::read_to_string(&user_settings).unwrap();
-    let user_value: Value = serde_json::from_str(&user_body).unwrap();
-    let user_deny = user_value["permissions"]["deny"].as_array().unwrap();
-    for needle in &expected {
-        assert!(
-            user_deny
-                .iter()
-                .any(|v| v.as_str() == Some(needle.as_str())),
-            "user-scope settings missing {needle}, got {user_deny:?}"
-        );
-    }
+    // No project-scope or user-scope settings file is written, so no
+    // cd/pushd (or any other) deny rule is projected.
+    assert!(
+        !realm.path().join(".claude/settings.local.json").exists(),
+        "no project-scope settings should be written"
+    );
+    assert!(
+        !user_settings.exists(),
+        "no user-scope settings should be written"
+    );
 }
 
-/// cd / pushd denies installed by `restrict` are
-/// scrubbed cleanly by `unprotect` via the sidecar — no leftovers.
+/// restrict then unprotect on a hook-only realm leaves no settings
+/// artifacts — nothing was projected, so there is nothing to scrub.
 #[test]
-fn cd_pushd_denies_round_trip_through_unprotect() {
+fn restrict_unprotect_round_trip_leaves_no_settings() {
     let realm = realm_with_claude();
     fs::create_dir_all(realm.path().join("src/secret")).unwrap();
     let user_settings = user_settings_arg(&realm);
@@ -452,55 +431,20 @@ fn cd_pushd_denies_round_trip_through_unprotect() {
     );
     assert_status(&unprotect, 0);
 
-    let canonical = fs::canonicalize(realm.path().join("src/secret")).unwrap();
-    let glob = format!("{}/**", canonical.display());
-    let expected: [String; 4] = [
-        format!("Bash(cd {glob})"),
-        format!("Bash(cd * {glob})"),
-        format!("Bash(pushd {glob})"),
-        format!("Bash(pushd * {glob})"),
-    ];
-
-    // Project-scope settings file no longer carries any of them.
-    let project_scope = realm.path().join(".claude/settings.local.json");
-    let project_body = fs::read_to_string(&project_scope).unwrap();
-    let project_value: Value = serde_json::from_str(&project_body).unwrap();
-    let project_deny = project_value["permissions"]["deny"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-    for needle in &expected {
-        assert!(
-            !project_deny
-                .iter()
-                .any(|v| v.as_str() == Some(needle.as_str())),
-            "expected {needle} to be scrubbed from project-scope, got {project_deny:?}"
-        );
-    }
-
-    // User-scope settings file no longer carries any of them.
-    let user_body = fs::read_to_string(&user_settings).unwrap();
-    let user_value: Value = serde_json::from_str(&user_body).unwrap();
-    let user_deny = user_value["permissions"]["deny"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-    for needle in &expected {
-        assert!(
-            !user_deny
-                .iter()
-                .any(|v| v.as_str() == Some(needle.as_str())),
-            "expected {needle} to be scrubbed from user-scope, got {user_deny:?}"
-        );
-    }
+    assert!(
+        !realm.path().join(".claude/settings.local.json").exists(),
+        "no project-scope settings should exist after the round trip"
+    );
+    assert!(
+        !user_settings.exists(),
+        "no user-scope settings should exist after the round trip"
+    );
 }
 
-/// `plan restrict` reflects the cd/pushd defaults
-/// in its `deny_rules_to_add` projection. Pin both the bare and
-/// with-flag forms so the plan output stays in sync with what the
-/// live `restrict` would emit.
+/// `plan restrict` projects no settings changes now — the hook covers
+/// the cd/pushd bypass class, so `settings_files` is empty.
 #[test]
-fn plan_restrict_reflects_cd_pushd_defaults() {
+fn plan_restrict_projects_no_settings() {
     let realm = realm_with_claude();
     fs::create_dir_all(realm.path().join("src/secret")).unwrap();
     let user_settings = user_settings_arg(&realm);
@@ -519,38 +463,15 @@ fn plan_restrict_reflects_cd_pushd_defaults() {
     );
     assert_status(&out, 0);
     let report: Value = serde_json::from_slice(&out.stdout).unwrap();
-    let canonical = fs::canonicalize(realm.path().join("src/secret")).unwrap();
-    let glob = format!("{}/**", canonical.display());
-    let expected: [String; 4] = [
-        format!("Bash(cd {glob})"),
-        format!("Bash(cd * {glob})"),
-        format!("Bash(pushd {glob})"),
-        format!("Bash(pushd * {glob})"),
-    ];
-    for sf in report["config_diff"]["settings_files"].as_array().unwrap() {
-        let to_add = sf["deny_rules_to_add"].as_array().unwrap();
-        for needle in &expected {
-            assert!(
-                to_add.iter().any(|v| v.as_str() == Some(needle.as_str())),
-                "plan restrict's deny_rules_to_add missing {needle} for {}, got {to_add:?}",
-                sf["path"].as_str().unwrap_or("<unknown>")
-            );
-        }
-        // `Bash(remargin *)` is no longer projected — CLI denial is
-        // enforced by the PreToolUse hook via the folder-level
-        // `cli_allowed` field in `.remargin.yaml`.
-        assert!(
-            !to_add
-                .iter()
-                .any(|v| v.as_str() == Some("Bash(remargin *)")),
-            "plan restrict must NOT project the remargin-cli deny (moved to hook), got {to_add:?}"
-        );
-    }
+    let settings_files = report["config_diff"]["settings_files"].as_array().unwrap();
+    assert!(
+        settings_files.is_empty(),
+        "plan restrict should project no settings files, got {settings_files:?}"
+    );
 }
 
-/// Idempotency: re-running CLI restrict produces the same final
-/// state. Sidecar still has one entry; settings-file rule count
-/// stays constant.
+/// Idempotency: re-running CLI restrict produces the same final state.
+/// No settings file is created; the `.remargin.yaml` stays byte-stable.
 #[test]
 fn cli_restrict_is_idempotent() {
     let realm = realm_with_claude();
@@ -566,12 +487,16 @@ fn cli_restrict_is_idempotent() {
     ];
     let first = run_in(realm.path(), &args);
     assert_status(&first, 0);
-    let project_scope = realm.path().join(".claude/settings.local.json");
-    let first_body = fs::read_to_string(&project_scope).unwrap();
+    let yaml_path = realm.path().join(".remargin.yaml");
+    let first_yaml = fs::read_to_string(&yaml_path).unwrap();
 
     let second = run_in(realm.path(), &args);
     assert_status(&second, 0);
-    let second_body = fs::read_to_string(&project_scope).unwrap();
+    let second_yaml = fs::read_to_string(&yaml_path).unwrap();
 
-    assert_eq!(first_body, second_body, "idempotent re-run must match");
+    assert_eq!(first_yaml, second_yaml, "idempotent re-run must match");
+    assert!(
+        !realm.path().join(".claude/settings.local.json").exists(),
+        "restrict must not create a settings file"
+    );
 }

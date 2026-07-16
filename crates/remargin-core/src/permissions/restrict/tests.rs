@@ -4,6 +4,7 @@
 //! (create + merge + idempotency), Claude-sync invocation through
 //! `apply_rules`.
 
+use std::io;
 use std::path::{Path, PathBuf};
 
 use os_shim::System as _;
@@ -175,62 +176,31 @@ fn duplicate_path_does_not_create_second_entry() {
     assert_eq!(restricts.len(), 1, "{value:#?}");
 }
 
-/// Scenario 9: re-running after a manually-deleted Claude
-/// rule backfills the missing rule (`apply_rules` dedupes against
-/// existing entries; the second call still writes any missing strings).
-/// Uses an editor-tool deny (the Edit rule) as the test target.
-/// Note: `Bash(remargin *)` is no longer projected; CLI denial is
-/// hook-enforced via the folder-level `cli_allowed` field.
+/// Scenario 9: a hook-only restrict writes no Claude settings file and
+/// no sidecar entry; re-running stays clean (still nothing projected).
+/// The hook is the single source of truth, so there is nothing to
+/// backfill into the settings files.
 #[test]
-fn rerun_backfills_missing_settings_rule() {
+fn rerun_writes_no_settings_or_sidecar() {
     let (system, anchor) = realm_with_claude(&[]);
     let files = settings_files(&anchor);
     restrict(&system, &anchor, &args("src/secret"), &files).unwrap();
 
-    // Manually scrub an editor-tool deny from the project-scope
-    // settings file.
-    let local = files[0].clone();
-    let mut json_value: serde_json::Value =
-        serde_json::from_str(&system.read_to_string(&local).unwrap()).unwrap();
-    let edit_rule = json_value["permissions"]["deny"]
-        .as_array()
-        .and_then(|arr| {
-            arr.iter()
-                .find(|v| {
-                    v.as_str()
-                        .is_some_and(|s| s.starts_with("Edit(") && s.contains("src/secret"))
-                })
-                .and_then(|v| v.as_str())
-                .map(String::from)
-        })
-        .unwrap();
-    json_value["permissions"]["deny"]
-        .as_array_mut()
-        .unwrap()
-        .retain(|v| v.as_str() != Some(edit_rule.as_str()));
-    let body = serde_json::to_string_pretty(&json_value).unwrap();
-    system.write(&local, body.as_bytes()).unwrap();
+    // No project-scope settings file was created, and no sidecar entry.
+    let _: io::Error = system.read_to_string(&files[0]).unwrap_err();
+    assert!(sidecar::load(&system, &anchor).unwrap().entries.is_empty());
 
-    // Re-running restrict re-adds the missing rule.
+    // Re-running is a clean no-op on the settings/sidecar side.
     restrict(&system, &anchor, &args("src/secret"), &files).unwrap();
-    let after: serde_json::Value =
-        serde_json::from_str(&system.read_to_string(&local).unwrap()).unwrap();
-    let deny = after["permissions"]["deny"].as_array().unwrap();
-    assert!(
-        deny.iter().any(|v| v.as_str() == Some(edit_rule.as_str())),
-        "missing {edit_rule:?} was not backfilled: {after:#?}"
-    );
-    // `Bash(remargin *)` is never projected.
-    assert!(
-        !deny.iter().any(|v| v.as_str() == Some("Bash(remargin *)")),
-        "Bash(remargin *) must not appear in projected settings: {after:#?}"
-    );
+    let _: io::Error = system.read_to_string(&files[0]).unwrap_err();
+    assert!(sidecar::load(&system, &anchor).unwrap().entries.is_empty());
 }
 
-/// Scenario 10: `also_deny_bash` lands on the entry AND in the
-/// emitted Bash rules.
+/// Scenario 10: `also_deny_bash` lands on the `.remargin.yaml` entry but
+/// projects no Bash deny rules — the hook denies every command touching a
+/// managed path regardless of verb, so `rules_applied` stays empty.
 #[test]
-fn also_deny_bash_propagates_to_yaml_and_rules() {
+fn also_deny_bash_lands_on_yaml_entry_but_projects_no_rules() {
     let (system, anchor) = realm_with_claude(&[]);
     let mut a = args("src/secret");
     a.also_deny_bash = vec![String::from("curl"), String::from("wget")];
@@ -242,16 +212,9 @@ fn also_deny_bash_propagates_to_yaml_and_rules() {
     assert_eq!(extras.len(), 2);
 
     assert!(
-        outcome
-            .rules_applied
-            .iter()
-            .any(|r| r.starts_with("Bash(curl"))
-    );
-    assert!(
-        outcome
-            .rules_applied
-            .iter()
-            .any(|r| r.starts_with("Bash(wget"))
+        outcome.rules_applied.is_empty(),
+        "no rules should be projected: {:#?}",
+        outcome.rules_applied
     );
 }
 
@@ -279,21 +242,22 @@ fn cli_allowed_true_persists_in_yaml_no_remargin_cli_deny_projected() {
     );
 }
 
-/// Scenario 12: outcome reporting names every file touched and every
-/// rule applied.
+/// Scenario 12: a hook-only restrict touches no settings files, applies
+/// no rules, and writes no sidecar entry — only the `.remargin.yaml`
+/// entry activates enforcement.
 #[test]
-fn outcome_lists_files_and_rules() {
+fn outcome_reports_no_settings_or_sidecar() {
     let (system, anchor) = realm_with_claude(&[]);
     let files = settings_files(&anchor);
     let outcome = restrict(&system, &anchor, &args("src/secret"), &files).unwrap();
     assert_eq!(outcome.anchor, anchor);
     assert!(outcome.absolute_path.ends_with("src/secret"));
-    assert_eq!(outcome.claude_files_touched, files);
-    assert!(!outcome.rules_applied.is_empty());
+    assert!(outcome.claude_files_touched.is_empty());
+    assert!(outcome.rules_applied.is_empty());
 
-    // Sidecar tracked the outcome.
+    // No sidecar entry is written when nothing is projected.
     let sc = sidecar::load(&system, &anchor).unwrap();
-    assert_eq!(sc.entries.len(), 1);
+    assert!(sc.entries.is_empty());
 }
 
 /// Scenario 13: the dedicated `write_remargin_yaml` helper is the

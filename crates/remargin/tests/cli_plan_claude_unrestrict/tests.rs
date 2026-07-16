@@ -43,13 +43,15 @@ fn parse_json(out: &Output) -> Value {
     serde_json::from_str(stdout).unwrap()
 }
 
-/// Plan does not write any of the four target files.
+/// Plan does not write. A hook-only restrict creates only the
+/// `.remargin.yaml`; plan unrestrict leaves it byte-identical and creates
+/// none of the settings/sidecar files.
 #[test]
 fn plan_unprotect_does_not_write() {
     let realm = realm_with_claude();
     fs::create_dir_all(realm.path().join("src/secret")).unwrap();
     let user_settings = user_settings_arg(&realm);
-    // Apply restrict so there's actual state to project removal of.
+    // Apply restrict so there's actual state (the .remargin.yaml entry).
     let apply = run_in(
         realm.path(),
         &[
@@ -62,14 +64,10 @@ fn plan_unprotect_does_not_write() {
     );
     assert_status(&apply, 0);
 
-    // Snapshot every interesting file before plan.
     let yaml_path = realm.path().join(".remargin.yaml");
     let project_settings = realm.path().join(".claude/settings.local.json");
     let sidecar = realm.path().join(".claude/.remargin-restrictions.json");
     let before_yaml = fs::read_to_string(&yaml_path).unwrap();
-    let before_project = fs::read_to_string(&project_settings).unwrap();
-    let before_user = fs::read_to_string(&user_settings).unwrap();
-    let before_sidecar = fs::read_to_string(&sidecar).unwrap();
 
     let out = run_in(
         realm.path(),
@@ -85,21 +83,24 @@ fn plan_unprotect_does_not_write() {
     );
     assert_status(&out, 0);
 
-    // Every file must be byte-identical after plan.
+    // The only artifact stays byte-identical; nothing else is created.
     assert_eq!(fs::read_to_string(&yaml_path).unwrap(), before_yaml);
-    assert_eq!(
-        fs::read_to_string(&project_settings).unwrap(),
-        before_project
+    assert!(
+        !project_settings.exists(),
+        "plan must not create project settings"
     );
-    assert_eq!(fs::read_to_string(&user_settings).unwrap(), before_user);
-    assert_eq!(fs::read_to_string(&sidecar).unwrap(), before_sidecar);
+    assert!(
+        !user_settings.exists(),
+        "plan must not create user settings"
+    );
+    assert!(!sidecar.exists(), "plan must not create the sidecar");
 }
 
-/// Plan-then-act parity: plan unprotect under a clean restrict
-/// reports `would_commit: true` and `noop: false`; the live
-/// `unprotect` run immediately after produces matching effects
-/// (the YAML entry disappears, sidecar entry disappears, project
-/// settings deny array shrinks).
+/// Plan-then-act parity: plan unprotect under a hook-only restrict
+/// reports `would_commit: true` and `noop: false` (the YAML entry would
+/// be removed); the sidecar is absent (never written). The live
+/// `unprotect` run immediately after removes the YAML entry, and the
+/// replan reports a noop.
 #[test]
 fn plan_then_apply_then_replan_reports_noop() {
     let realm = realm_with_claude();
@@ -138,7 +139,8 @@ fn plan_then_apply_then_replan_reports_noop() {
         cd["remargin_yaml"]["entry_action"],
         json!("would_be_removed")
     );
-    assert_eq!(cd["sidecar"]["entry_action"], json!("would_be_removed"));
+    // Hook-only realm: no sidecar was ever written, so it is absent.
+    assert_eq!(cd["sidecar"]["entry_action"], json!("absent"));
 
     // Unprotect, then replan — the second plan should be a noop.
     let unprotect = run_in(
@@ -173,46 +175,55 @@ fn plan_then_apply_then_replan_reports_noop() {
     assert_eq!(replan_cd["sidecar"]["entry_action"], json!("absent"));
 }
 
-/// Drift detection: manually delete a deny rule from the
-/// project-scope settings file between `restrict` and
-/// `plan unprotect`. The drift surfaces in the
-/// `rule_already_absent` conflicts and `rules_already_absent`
-/// list. `would_commit` stays true because conflicts are
-/// advisory, but `noop` is false because there are still other
-/// rules to remove.
+/// Drift detection on a migrated (legacy-sidecar) realm: a sidecar-tracked
+/// deny rule is present in the user-scope file but hand-deleted from the
+/// project-scope file. `plan unrestrict` surfaces the miss in the
+/// `rule_already_absent` conflicts. `would_commit` stays true (conflicts
+/// are advisory) and `noop` is false (the user-scope copy still needs
+/// removal). Since the current `restrict` projects nothing, the legacy
+/// state is seeded directly here.
 #[test]
 fn drift_detection_surfaces_rule_already_absent() {
     let realm = realm_with_claude();
     fs::create_dir_all(realm.path().join("src/secret")).unwrap();
     let user_settings = user_settings_arg(&realm);
-    let apply = run_in(
-        realm.path(),
-        &[
-            "claude",
-            "restrict",
-            "src/secret",
-            "--user-settings",
-            user_settings.to_str().unwrap(),
-        ],
-    );
-    assert_status(&apply, 0);
-
-    // Hand-edit project settings to drop the first deny rule.
     let project_settings = realm.path().join(".claude/settings.local.json");
-    let body = fs::read_to_string(&project_settings).unwrap();
-    let mut value: Value = serde_json::from_str(&body).unwrap();
-    let removed_rule = {
-        let deny = value
-            .get_mut("permissions")
-            .and_then(|v| v.get_mut("deny"))
-            .and_then(Value::as_array_mut)
-            .unwrap();
-        let popped = deny.remove(0);
-        String::from(popped.as_str().unwrap())
-    };
+
+    // Seed a legacy realm: yaml entry + a sidecar tracking one deny rule
+    // across both settings files; the rule is present in user-scope but
+    // hand-deleted from project-scope (the drift).
+    let canonical_realm = fs::canonicalize(realm.path()).unwrap();
+    let target_key = format!("{}/src/secret", canonical_realm.display());
+    let tracked_rule = format!("Edit({target_key}/**)");
+    fs::write(
+        realm.path().join(".remargin.yaml"),
+        "permissions:\n  trusted_roots:\n    - path: src/secret\n",
+    )
+    .unwrap();
     fs::write(
         &project_settings,
-        serde_json::to_string_pretty(&value).unwrap(),
+        json!({ "permissions": { "deny": [] } }).to_string(),
+    )
+    .unwrap();
+    fs::write(
+        &user_settings,
+        json!({ "permissions": { "deny": [tracked_rule] } }).to_string(),
+    )
+    .unwrap();
+    let sidecar = json!({
+        "version": 1_u32,
+        "entries": {
+            target_key: {
+                "added_at": "legacy",
+                "added_to_files": [project_settings.to_string_lossy(), user_settings.to_string_lossy()],
+                "allow": [],
+                "deny": [tracked_rule],
+            }
+        }
+    });
+    fs::write(
+        realm.path().join(".claude/.remargin-restrictions.json"),
+        sidecar.to_string(),
     )
     .unwrap();
 
@@ -234,11 +245,11 @@ fn drift_detection_surfaces_rule_already_absent() {
     assert_eq!(report["would_commit"], json!(true));
     let conflicts = report["unprotect_diff"]["conflicts"].as_array().unwrap();
     let saw = conflicts.iter().any(|c| {
-        c["kind"] == "rule_already_absent" && c["rule"].as_str() == Some(removed_rule.as_str())
+        c["kind"] == "rule_already_absent" && c["rule"].as_str() == Some(tracked_rule.as_str())
     });
     assert!(
         saw,
-        "expected rule_already_absent for {removed_rule}: {conflicts:?}"
+        "expected rule_already_absent for {tracked_rule}: {conflicts:?}"
     );
 }
 

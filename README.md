@@ -527,7 +527,7 @@ permissions:
 ```
 
 - **Layer 1 (remargin-core, CLI + MCP, per-op).** Every mutating op parent-walks `.remargin.yaml` and refuses ops outside the `trusted_roots` allow-list or matching `deny_ops`. The walk runs fresh on every call — no cache, no reload command, no mtime watcher. Editing `.remargin.yaml` between two ops takes effect on the second op without a restart.
-- **Layer 2 (Claude Code permission sync, one-shot).** Running `remargin claude restrict <path>` projects the entry into `.claude/settings.local.json` + `~/.claude/settings.json` so Claude's NATIVE Read / Edit / Write / Bash tools respect the same boundaries. Claude needs to reload its settings (typically a Claude restart) before Layer 2 takes effect.
+- **Layer 2 (Claude Code `PreToolUse` hook, native tools).** The `remargin claude pretool` hook inspects every gated tool call (`Read`, `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, `Grep`, `Glob`, `Bash`) and denies the ones that would touch a managed path, redirecting the agent to the matching `mcp__remargin__*` op. It resolves the boundary from `.remargin.yaml` on every call and is **the single source of truth** for native-tool enforcement — `remargin claude restrict` no longer projects `permissions.deny` rules into the settings files. Run `remargin doctor` to confirm the hook is wired and to find (and clear) any leftover projected rules an older restrict left behind.
 
 The single exception to per-op evaluation is `trusted_roots`, which defines the MCP server's filesystem sandbox at boot time — the sandbox cannot be expanded mid-session.
 
@@ -559,7 +559,7 @@ remargin permissions show [--json]
 remargin permissions check <PATH> [--why]
 ```
 
-`claude restrict` records the exact rule strings it added in a sidecar at `<.claude-anchor>/.claude/.remargin-restrictions.json` so `claude unrestrict` reverses cleanly without ever touching user-added rules. The sidecar is `.gitignore`d automatically (its absolute paths and per-machine timestamps don't belong in version control).
+Because the hook is the single source of truth, a fresh `claude restrict` writes **only** the `.remargin.yaml` entry — no `permissions.deny` rules, and therefore no sidecar. The sidecar at `<.claude-anchor>/.claude/.remargin-restrictions.json` survives only for realms an older remargin projected rules into: `claude unrestrict` reads it to scrub those legacy rules cleanly without ever touching user-added rules, and `remargin doctor` flags any that were never reversed. When present, it is `.gitignore`d automatically (its absolute paths and per-machine timestamps don't belong in version control).
 
 `permissions check <path>` exits gitignore-style: 0 when the path is restricted, 1 when not. Pair with `--why` for the matching rule's kind, source file, and rule text.
 

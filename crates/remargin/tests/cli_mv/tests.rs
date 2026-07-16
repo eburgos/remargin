@@ -336,14 +336,14 @@ fn plan_mv_for_directory_emits_is_directory() {
     assert!(!realm.path().join("dst").exists());
 }
 
-/// `remargin claude restrict` projects the full native-tool
-/// fence into Claude settings — editor-tool denies, dot-folder
-/// defaults, the `BASH_MUTATORS` list (including dest-side `mv *`),
-/// and source-side `mv` patterns. Slice A of
-/// removed these along with the remargin-specific
-/// rules; this task restored the native-tool half.
+/// `remargin claude restrict` no longer projects the `mv` (or any) deny
+/// fence into Claude settings — the `PreToolUse` hook denies every `mv`
+/// touching a managed path (source OR destination) through per-word
+/// resolution, so no `Bash(mv ...)` rules are written. restrict projects
+/// no settings file at all. The hook's `mv` source/dest coverage is
+/// exercised in the pretool tests and the hook-only e2e.
 #[test]
-fn restrict_projects_full_mv_deny_set() {
+fn restrict_projects_no_mv_deny_set() {
     let realm = TempDir::new().unwrap();
     fs::create_dir_all(realm.path().join(".claude")).unwrap();
     fs::create_dir_all(realm.path().join("src/secret")).unwrap();
@@ -361,42 +361,12 @@ fn restrict_projects_full_mv_deny_set() {
     );
     assert_status(&out, 0);
 
-    let project_scope = realm.path().join(".claude/settings.local.json");
-    let body = fs::read_to_string(&project_scope).unwrap();
-    let value: Value = serde_json::from_str(&body).unwrap();
-    let deny: Vec<String> = value["permissions"]["deny"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|v| String::from(v.as_str().unwrap()))
-        .collect();
-
-    let target_root = realm
-        .path()
-        .canonicalize()
-        .unwrap()
-        .join("src/secret")
-        .display()
-        .to_string();
-
-    // Dest-side from BASH_MUTATORS (`mv *`):
-    let dest_pattern = format!("Bash(mv * {target_root}/**)");
-    // Source-side trio:
-    let src_bare = format!("Bash(mv {target_root}/**)");
-    let src_to_anywhere = format!("Bash(mv {target_root}/** *)");
-    let src_to_self = format!("Bash(mv {target_root}/** {target_root}/**)");
-
-    for pat in [&dest_pattern, &src_bare, &src_to_anywhere, &src_to_self] {
-        assert!(
-            deny.iter().any(|r| r == pat),
-            "expected `{pat}` in deny set, got: {deny:#?}"
-        );
-    }
-
-    // `Bash(remargin *)` is NOT projected — CLI denial is hook-enforced
-    // via the folder-level `cli_allowed` field in `.remargin.yaml`.
     assert!(
-        !deny.iter().any(|r| r == "Bash(remargin *)"),
-        "Bash(remargin *) must not appear in projected deny set, got: {deny:#?}"
+        !realm.path().join(".claude/settings.local.json").exists(),
+        "no project-scope settings should be projected"
+    );
+    assert!(
+        !user_settings.exists(),
+        "no user-scope settings should be projected"
     );
 }

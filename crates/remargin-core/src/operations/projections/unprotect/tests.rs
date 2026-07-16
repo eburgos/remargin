@@ -11,8 +11,44 @@ use crate::operations::plan::{
     UnprotectYamlDiff,
 };
 use crate::operations::projections::unprotect::{UnprotectProjection, project_unprotect};
+use crate::permissions::claude_sync::{RuleSet, apply_rules};
 use crate::permissions::restrict::{RestrictArgs, restrict};
 use crate::permissions::unprotect::UnprotectArgs;
+
+/// Mimic a pre-retirement `restrict`: write the `.remargin.yaml` entry
+/// (via the current `restrict`) AND project a legacy deny set into the
+/// settings files + sidecar, so the unprotect projection has a populated
+/// sidecar to reverse — the state a realm restricted by an older binary
+/// carries into the migration. The current `restrict` writes no settings
+/// or sidecar (the hook is the single source of truth), so tests that
+/// exercise the sidecar-driven reverse must seed it here.
+fn restrict_with_legacy_sidecar(
+    system: &MockSystem,
+    realm: &Path,
+    path: &str,
+    settings: &[PathBuf],
+) {
+    restrict(system, realm, &restrict_args(path), settings).unwrap();
+    let absolute = if path == "*" {
+        realm.to_path_buf()
+    } else {
+        realm.join(path)
+    };
+    let glob = absolute.display();
+    let rules = RuleSet {
+        allow: Vec::new(),
+        deny: vec![format!("Edit({glob}/**)"), format!("Write({glob}/**)")],
+    };
+    apply_rules(
+        system,
+        realm,
+        &absolute.display().to_string(),
+        &rules,
+        settings,
+        "legacy",
+    )
+    .unwrap();
+}
 
 fn snapshot(system: &MockSystem, paths: &[&Path]) -> Vec<(PathBuf, Result<String, io::Error>)> {
     paths
@@ -88,7 +124,7 @@ fn restrict_args(path: &str) -> RestrictArgs {
 fn clean_projection_after_restrict() {
     let (system, realm, project, user) = fresh_realm();
     let settings = vec![project, user];
-    restrict(&system, &realm, &restrict_args("src/secret"), &settings).unwrap();
+    restrict_with_legacy_sidecar(&system, &realm, "src/secret", &settings);
 
     let projection = project_unprotect(&system, &realm, &unprotect_args("src/secret")).unwrap();
     let diff = diff_or_fail(projection);
@@ -192,7 +228,7 @@ fn yaml_present_sidecar_missing() {
 fn sidecar_present_yaml_missing() {
     let (system, realm, project, user) = fresh_realm();
     let settings = vec![project, user];
-    restrict(&system, &realm, &restrict_args("src/secret"), &settings).unwrap();
+    restrict_with_legacy_sidecar(&system, &realm, "src/secret", &settings);
 
     // Wipe the YAML — the sidecar still tracks the rules, but the
     // YAML no longer references the path.
@@ -230,7 +266,7 @@ fn sidecar_present_yaml_missing() {
 fn rule_already_absent_drift_surfaces_conflict() {
     let (system, realm, project, user) = fresh_realm();
     let settings = vec![project.clone(), user];
-    restrict(&system, &realm, &restrict_args("src/secret"), &settings).unwrap();
+    restrict_with_legacy_sidecar(&system, &realm, "src/secret", &settings);
 
     // Read project settings, drop the first deny rule, write back.
     let body = system.read_to_string(&project).unwrap();
@@ -284,7 +320,7 @@ fn rule_already_absent_drift_surfaces_conflict() {
 fn wildcard_projection_after_wildcard_restrict() {
     let (system, realm, project, user) = fresh_realm();
     let settings = vec![project, user];
-    restrict(&system, &realm, &restrict_args("*"), &settings).unwrap();
+    restrict_with_legacy_sidecar(&system, &realm, "*", &settings);
 
     let projection = project_unprotect(&system, &realm, &unprotect_args("*")).unwrap();
     let diff = diff_or_fail(projection);
