@@ -139,18 +139,18 @@ fn notebook_edit_on_restricted_path_denies_with_notebook_message() {
     assert!(deny_reason(&decision).contains("notebook"));
 }
 
-/// Test 6: `Bash` with a non-mutator verb (`echo`) → `SilentAllow`
-/// even if the command mentions a restricted path.
+/// Test 6: the verb is no longer a gate — `echo` naming a word that
+/// resolves inside the realm denies just like `cat` would. Quote
+/// stripping rejoins the path so the resolved word is `/r/secret/foo`.
 #[test]
-fn bash_non_mutator_verb_silent_allows() {
+fn bash_verb_not_a_gate_word_into_realm_denies() {
     let system = mock_with(&[("/r/.remargin.yaml", &restrict_yaml("secret"))]);
     let stdin = event_json(
         "Bash",
         "/r",
         &json!({ "command": "echo \"/r/secret/foo\"" }),
     );
-    let outcome = pretool(&system, &stdin);
-    assert_eq!(outcome, PretoolOutcome::SilentAllow);
+    assert!(matches!(pretool(&system, &stdin), PretoolOutcome::Deny(_)));
 }
 
 /// Test 7: `Bash` mutator that mentions a restricted path → `Deny`.
@@ -324,22 +324,15 @@ fn relative_file_path_resolves_against_event_cwd() {
 }
 
 /// Test 18 (rewritten): `cd` into the realm, then a bare-name mutator.
-/// The realm-root needle `/r/secret` never appears verbatim in the
-/// command, so the substring matcher cannot catch it — only a parser
-/// that tracks `cd` and reconstructs the `rm` target as `/r/secret/foo`
-/// can deny it. The old form (`cd /r/secret && rm foo`) passed by
-/// accident because the needle sat in the `cd` argument.
-// FIXME(69): flip to Deny once the hook parses `cd` and reconstructs
-// path-shaped words (design item 2 / task 69).
+/// The realm-root path `/r/secret` never appears verbatim in the
+/// command; only a parser that tracks `cd` and resolves the relative
+/// `cd secret` target (and the following bare `rm foo`) against it can
+/// deny. The `cd secret` word already lands on the realm root here.
 #[test]
-fn bash_cd_reconstructed_target_needs_cd_tracking() {
+fn bash_cd_reconstructed_target_denies() {
     let system = mock_with(&[("/r/.remargin.yaml", &restrict_yaml("secret"))]);
     let stdin = event_json("Bash", "/r", &json!({ "command": "cd secret && rm foo" }));
-    assert_eq!(
-        pretool(&system, &stdin),
-        PretoolOutcome::SilentAllow,
-        "current substring matcher misses the cd-reconstructed `/r/secret/foo`",
-    );
+    assert!(matches!(pretool(&system, &stdin), PretoolOutcome::Deny(_)));
 }
 
 /// Test 19: wildcard restrict (`*`) catches any path in the realm.
@@ -419,11 +412,12 @@ fn bash_rtk_ls_non_mutator_silent_allows() {
 }
 
 #[test]
-fn bash_rtk_ls_non_mutator_restricted_path_silent_allows() {
+fn bash_rtk_ls_restricted_path_denies() {
+    // `ls` reveals realm structure; the verb no longer matters — the
+    // `/r/secret/` argument resolves into the realm and denies.
     let system = mock_with(&[("/r/.remargin.yaml", &restrict_yaml("secret"))]);
     let stdin = event_json("Bash", "/r", &json!({ "command": "rtk ls /r/secret/" }));
-    let outcome = pretool(&system, &stdin);
-    assert_eq!(outcome, PretoolOutcome::SilentAllow);
+    assert!(matches!(pretool(&system, &stdin), PretoolOutcome::Deny(_)));
 }
 
 #[test]
@@ -487,18 +481,17 @@ fn bash_rtk_wrapped_with_per_realm_extra_denies() {
 }
 
 #[test]
-fn bash_bare_proxy_not_peeled() {
-    // Without `rtk` in front, `proxy` is treated as the verb itself; it
-    // is not in BASH_MUTATORS so the gate silent-allows even though the
-    // restricted path is present.
+fn bash_bare_proxy_still_denies_on_path() {
+    // Without `rtk` in front, `proxy` is the verb, not a wrapper — but
+    // the verb no longer gates, so the restricted `/r/secret/foo.md`
+    // argument denies regardless.
     let system = mock_with(&[("/r/.remargin.yaml", &restrict_yaml("secret"))]);
     let stdin = event_json(
         "Bash",
         "/r",
         &json!({ "command": "proxy sed /r/secret/foo.md" }),
     );
-    let outcome = pretool(&system, &stdin);
-    assert_eq!(outcome, PretoolOutcome::SilentAllow);
+    assert!(matches!(pretool(&system, &stdin), PretoolOutcome::Deny(_)));
 }
 
 fn assert_bash_deny_contains(command: &str, needles: &[&str]) {
@@ -753,67 +746,61 @@ fn bash_cli_denied_child_policy_does_not_affect_parent_cwd() {
 }
 
 // ---------------------------------------------------------------------
-// Shell-parsing bypass regressions (design item 12).
-//
-// Each command reaches a remargin-managed path through shell syntax the
-// current substring matcher cannot see, so today every one silent-allows.
-// They are asserted against that current (wrong) behavior under landing
-// option (b): this task is green now, and task 69 (real shell parsing,
-// design item 2) flips each SilentAllow to Deny at the FIXME(69) markers.
+// Shell-parsing bypass regressions. Each command reaches a
+// remargin-managed path through shell syntax the old substring matcher
+// could not see; real parsing now denies every one.
 // ---------------------------------------------------------------------
 
-fn assert_realm_bash_silent_allows(command: &str) {
+fn assert_realm_bash_denies(command: &str) {
     let system = mock_with(&[("/r/.remargin.yaml", &restrict_yaml("secret"))]);
     let stdin = event_json("Bash", "/r", &json!({ "command": command }));
-    assert_eq!(
-        pretool(&system, &stdin),
-        PretoolOutcome::SilentAllow,
-        "`{command}` is expected to bypass the current substring matcher",
+    assert!(
+        matches!(pretool(&system, &stdin), PretoolOutcome::Deny(_)),
+        "`{command}` must deny",
     );
 }
 
-// FIXME(69): flip to Deny — `rm` runs after a non-mutator verb in a `&&` chain.
+/// `rm` runs after a non-mutator verb in a `&&` chain.
 #[test]
-fn regression_logical_and_chained_mutator_bypasses() {
-    assert_realm_bash_silent_allows("ls && rm /r/secret/x");
+fn regression_logical_and_chained_mutator_denies() {
+    assert_realm_bash_denies("ls && rm /r/secret/x");
 }
 
-// FIXME(69): flip to Deny — `tee` writes the realm path after a pipe.
+/// `tee` writes the realm path after a pipe.
 #[test]
-fn regression_pipe_into_tee_bypasses() {
-    assert_realm_bash_silent_allows("echo hi | tee /r/secret/x");
+fn regression_pipe_into_tee_denies() {
+    assert_realm_bash_denies("echo hi | tee /r/secret/x");
 }
 
-// FIXME(69): flip to Deny — the subshell `(` defeats verb extraction.
+/// The subshell `(` used to defeat verb extraction.
 #[test]
-fn regression_subshell_cd_then_rm_bypasses() {
-    assert_realm_bash_silent_allows("(cd /r/secret && rm x)");
+fn regression_subshell_cd_then_rm_denies() {
+    assert_realm_bash_denies("(cd /r/secret && rm x)");
 }
 
-// FIXME(69): flip to Deny — `cat` reads the realm path; read verbs must deny too.
+/// `cat` reads the realm path; read verbs deny too.
 #[test]
-fn regression_cat_read_of_realm_path_bypasses() {
-    assert_realm_bash_silent_allows("cat /r/secret/secret");
+fn regression_cat_read_of_realm_path_denies() {
+    assert_realm_bash_denies("cat /r/secret/secret");
 }
 
-// FIXME(69): flip to Deny — the shell strips the quotes, rejoining `/r/secret/foo`.
+/// The shell strips the quotes, rejoining `/r/secret/foo`.
 #[test]
-fn regression_quoted_realm_prefix_bypasses() {
-    assert_realm_bash_silent_allows("rm \"/r/\"secret/foo");
+fn regression_quoted_realm_prefix_denies() {
+    assert_realm_bash_denies("rm \"/r/\"secret/foo");
 }
 
-// FIXME(69): flip to Deny — the glob expands into the realm.
+/// The glob would expand into the realm; coverage is glob-aware.
 #[test]
-fn regression_glob_realm_segment_bypasses() {
-    assert_realm_bash_silent_allows("rm /r/sec*ret/foo");
+fn regression_glob_realm_segment_denies() {
+    assert_realm_bash_denies("rm /r/sec*ret/foo");
 }
 
-// FIXME(69): flip to Deny — canonicalizing the bash word resolves the
-// symlink into the realm (design item 3, folded into task 69). Real FS
-// because MockSystem does not model symlinks.
+/// Canonicalizing the bash word resolves the symlink into the realm.
+/// Real FS because `MockSystem` does not model symlinks.
 #[cfg(unix)]
 #[test]
-fn regression_symlink_into_realm_via_bash_bypasses() {
+fn regression_symlink_into_realm_via_bash_denies() {
     use std::fs;
     use std::os::unix::fs::symlink;
 
@@ -821,7 +808,7 @@ fn regression_symlink_into_realm_via_bash_bypasses() {
     use tempfile::TempDir;
 
     let realm = TempDir::new().unwrap();
-    let realm_path = realm.path();
+    let realm_path = realm.path().canonicalize().unwrap();
     fs::create_dir_all(realm_path.join("src/secret")).unwrap();
     fs::write(realm_path.join("src/secret/foo"), "x").unwrap();
     fs::write(
@@ -834,9 +821,115 @@ fn regression_symlink_into_realm_via_bash_bypasses() {
     let cwd = realm_path.display().to_string();
     let command = format!("rm {cwd}/alias/foo");
     let stdin = event_json("Bash", &cwd, &json!({ "command": command }));
-    assert_eq!(
+    assert!(matches!(
         pretool(&RealSystem::new(), &stdin),
-        PretoolOutcome::SilentAllow,
-        "the bash branch never canonicalizes, so the symlink alias bypasses today",
+        PretoolOutcome::Deny(_)
+    ));
+}
+
+// ---------------------------------------------------------------------
+// Testing Plan cases (design item 2): reads deny like writes, chains and
+// pipes are parsed, embedded literal paths are recovered, and the CLI
+// policy is unchanged.
+// ---------------------------------------------------------------------
+
+/// Plan 1: `grep` only reads, but reads into the realm deny too — with
+/// the search-op guidance.
+#[test]
+fn plan_grep_read_denies_with_search_guidance() {
+    let system = mock_with(&[("/r/.remargin.yaml", &restrict_yaml("secret"))]);
+    let stdin = event_json("Bash", "/r", &json!({ "command": "grep -r foo /r/secret" }));
+    let decision = expect_deny(pretool(&system, &stdin));
+    assert!(deny_reason(&decision).contains("mcp__remargin__search"));
+}
+
+/// Plan 2: `rm` after a non-mutator verb in a `&&` chain denies.
+#[test]
+fn plan_logical_and_chain_denies() {
+    let system = mock_with(&[("/r/.remargin.yaml", &restrict_yaml("secret"))]);
+    let stdin = event_json("Bash", "/r", &json!({ "command": "ls && rm /r/secret/x" }));
+    assert!(matches!(pretool(&system, &stdin), PretoolOutcome::Deny(_)));
+}
+
+/// Plan 3: a pipe into `tee` writing the realm path denies.
+#[test]
+fn plan_pipe_into_tee_denies() {
+    let system = mock_with(&[("/r/.remargin.yaml", &restrict_yaml("secret"))]);
+    let stdin = event_json(
+        "Bash",
+        "/r",
+        &json!({ "command": "echo hi | tee /r/secret/x" }),
     );
+    assert!(matches!(pretool(&system, &stdin), PretoolOutcome::Deny(_)));
+}
+
+/// Plan 4: a subshell that `cd`s into the realm then removes denies.
+#[test]
+fn plan_subshell_cd_rm_denies() {
+    let system = mock_with(&[("/r/.remargin.yaml", &restrict_yaml("secret"))]);
+    let stdin = event_json(
+        "Bash",
+        "/r",
+        &json!({ "command": "(cd /r/secret && rm x)" }),
+    );
+    assert!(matches!(pretool(&system, &stdin), PretoolOutcome::Deny(_)));
+}
+
+/// Plan 5: an absolute `cd` into the realm then a bare-name `rm` denies —
+/// the `cd` target is tracked as the base for the following word.
+#[test]
+fn plan_cd_then_bare_rm_denies() {
+    let system = mock_with(&[("/r/.remargin.yaml", &restrict_yaml("secret"))]);
+    let stdin = event_json("Bash", "/r", &json!({ "command": "cd /r/secret && rm x" }));
+    assert!(matches!(pretool(&system, &stdin), PretoolOutcome::Deny(_)));
+}
+
+/// Plan 6: quote stripping rejoins `/r/secret/x` from `"/r/"secret/x`.
+#[test]
+fn plan_quoted_prefix_denies() {
+    let system = mock_with(&[("/r/.remargin.yaml", &restrict_yaml("secret"))]);
+    let stdin = event_json("Bash", "/r", &json!({ "command": "rm \"/r/\"secret/x" }));
+    assert!(matches!(pretool(&system, &stdin), PretoolOutcome::Deny(_)));
+}
+
+/// Plan 7: a path in no realm silent-allows even with a realm elsewhere.
+#[test]
+fn plan_no_realm_path_silent_allows() {
+    let system = mock_with(&[("/r/.remargin.yaml", &restrict_yaml("secret"))]);
+    let stdin = event_json("Bash", "/tmp", &json!({ "command": "cat /tmp/x" }));
+    assert_eq!(pretool(&system, &stdin), PretoolOutcome::SilentAllow);
+}
+
+/// Plan 8: a literal managed path embedded in a `python -c` argument is
+/// still recovered and denied.
+#[test]
+fn plan_python_c_literal_path_denies() {
+    let system = mock_with(&[("/r/.remargin.yaml", &restrict_yaml("secret"))]);
+    let stdin = event_json(
+        "Bash",
+        "/r",
+        &json!({ "command": "python -c \"open('/r/secret/f','w')\"" }),
+    );
+    assert!(matches!(pretool(&system, &stdin), PretoolOutcome::Deny(_)));
+}
+
+/// Plan 9: the `cli_allowed: false` remargin-verb denial is unchanged.
+#[test]
+fn plan_cli_denied_remargin_verb_denies() {
+    let system = mock_with(&[("/r/.remargin.yaml", cli_deny_yaml())]);
+    let stdin = event_json("Bash", "/r", &json!({ "command": "remargin get x" }));
+    let decision = expect_deny(pretool(&system, &stdin));
+    assert!(deny_reason(&decision).contains("cli_allowed: false"));
+}
+
+/// Plan 10: a pipeline touching two realms denies on the first word that
+/// resolves into either one.
+#[test]
+fn plan_two_realm_pipeline_denies() {
+    let system = mock_with(&[
+        ("/r1/.remargin.yaml", &restrict_yaml("'*'")),
+        ("/r2/.remargin.yaml", &restrict_yaml("'*'")),
+    ]);
+    let stdin = event_json("Bash", "/", &json!({ "command": "cat /r1/a | tee /r2/b" }));
+    assert!(matches!(pretool(&system, &stdin), PretoolOutcome::Deny(_)));
 }

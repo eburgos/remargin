@@ -14,6 +14,8 @@
 #[cfg(test)]
 mod tests;
 
+use core::mem;
+use std::ffi::OsStr;
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::Result;
@@ -22,9 +24,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::config::permissions::resolve::{
-    ResolvedPermissions, ResolvedTrustedRoot, TrustedRootPath, resolve_permissions,
+    ResolvedPermissions, TrustedRootPath, resolve_permissions,
 };
-use crate::permissions::claude_sync::BASH_MUTATORS;
 use crate::permissions::op_guard::target_is_sanctioned;
 
 const WRAPPER_PREFIXES: &[WrapperPrefix] = &[WrapperPrefix {
@@ -92,8 +93,8 @@ pub enum PretoolOutcome {
 
 /// Per-tool extracted shape that drives the decision.
 enum ToolTarget {
-    /// `Bash` command — the verb gates whether the path-substring
-    /// check runs.
+    /// `Bash` command — every path-shaped word is resolved against the
+    /// realm governing it and denied if it lands inside one.
     BashCommand { command: String },
     /// `Glob`, `Grep`, unknown tool — never deny.
     NoCheck,
@@ -135,13 +136,15 @@ pub fn pretool(system: &dyn System, stdin_bytes: &[u8]) -> PretoolOutcome {
             }
         }
         ToolTarget::BashCommand { command } => {
-            let resolved = match resolve_permissions(system, &event.cwd) {
+            // cli_allowed is a folder policy keyed off the session cwd;
+            // path restriction is resolved per-word from the target.
+            let policy = match resolve_permissions(system, &event.cwd) {
                 Ok(value) => value,
                 Err(err) => {
                     return PretoolOutcome::Fail(format!("permissions resolve failed: {err}"));
                 }
             };
-            bash_decision(&resolved, &command)
+            bash_decision(system, policy.cli_allowed(), &command, &event.cwd)
         }
     }
 }
@@ -231,54 +234,207 @@ fn path_is_restricted(resolved: &ResolvedPermissions, canonical: &Path) -> bool 
     target_is_sanctioned(canonical, &resolved.trusted_roots) && !resolved.trusted_roots.is_empty()
 }
 
-fn bash_decision(resolved: &ResolvedPermissions, command: &str) -> PretoolOutcome {
-    let Some(verb) = first_verb(command) else {
-        return PretoolOutcome::SilentAllow;
-    };
+/// Parse `command` into simple commands, resolve every path-shaped word
+/// against the realm that governs it, and deny the first one that lands
+/// inside a protected realm — regardless of verb. The verb is no longer
+/// a gate; it only selects the deny-message guidance.
+fn bash_decision(
+    system: &dyn System,
+    cli_allowed: bool,
+    command: &str,
+    event_cwd: &Path,
+) -> PretoolOutcome {
+    let commands = split_into_simple_commands(command);
 
     // Folder-level CLI policy: deny any `remargin` CLI invocation when
     // the effective policy is false (nearest-wins, default = allowed).
-    if !resolved.cli_allowed() && verb == "remargin" {
+    if !cli_allowed && first_verb_is_remargin(&commands) {
         return PretoolOutcome::Deny(build_cli_denied_decision());
     }
 
-    if !verb_triggers_check(verb, &resolved.trusted_roots) {
-        return PretoolOutcome::SilentAllow;
+    let mut cwd = event_cwd.to_path_buf();
+    for tokens in &commands {
+        if let Some(outcome) = evaluate_simple_command(system, tokens, &mut cwd) {
+            return outcome;
+        }
     }
-
-    if let Some(matched) = first_restricted_substring_match(command, &resolved.trusted_roots) {
-        return PretoolOutcome::Deny(build_bash_decision(&matched, Some(verb)));
-    }
-
     PretoolOutcome::SilentAllow
 }
 
-/// Pull the verb token from a Bash command. Skips leading whitespace,
-/// `KEY=value` env-var prefixes (`FOO=bar cat /x` → `cat`), and known
-/// command-wrapper prefixes (`rtk sed file` → `sed`,
-/// `rtk proxy sed file` → `sed`).
-fn first_verb(command: &str) -> Option<&str> {
-    let mut iter = command
-        .split_whitespace()
-        .skip_while(|tok| is_env_assignment(tok));
+/// Resolve one simple command's path-shaped words. Returns `Some` to
+/// short-circuit the whole command (a `Deny` or a fail-closed `Fail`);
+/// `None` to keep scanning. Tracks `cd` into `cwd` for later commands.
+fn evaluate_simple_command(
+    system: &dyn System,
+    tokens: &[String],
+    cwd: &mut PathBuf,
+) -> Option<PretoolOutcome> {
+    let verb_info = command_verb(tokens);
+    let verb = verb_info.map(|(_, name)| name);
 
+    // The remargin CLI is the sanctioned surface; do not gate its args.
+    if verb == Some("remargin") {
+        return None;
+    }
+
+    for token in tokens {
+        for run in path_runs(token) {
+            let candidate = resolve_run(system, run, cwd);
+            let resolved = match resolve_for_target(system, &candidate) {
+                Ok(value) => value,
+                Err(err) => {
+                    return Some(PretoolOutcome::Fail(format!(
+                        "permissions resolve failed: {err}"
+                    )));
+                }
+            };
+            if bash_word_restricted(&resolved, &candidate) {
+                return Some(PretoolOutcome::Deny(build_bash_decision(
+                    &candidate.display().to_string(),
+                    verb,
+                )));
+            }
+        }
+    }
+
+    // A non-restricted `cd` moves the base directory for later words.
+    if verb == Some("cd")
+        && let Some((idx, _)) = verb_info
+        && let Some(dir_token) = tokens.get(idx + 1)
+        && let Some(run) = path_runs(dir_token).next()
+    {
+        *cwd = resolve_run(system, run, cwd);
+    }
+    None
+}
+
+fn first_verb_is_remargin(commands: &[Vec<String>]) -> bool {
+    commands
+        .first()
+        .and_then(|tokens| command_verb(tokens))
+        .map(|(_, name)| name)
+        == Some("remargin")
+}
+
+/// Split the command line into simple commands on `&&`, `||`, `;`, `|`,
+/// and subshell / command-substitution boundaries (`(`, `)`, `$(`,
+/// backticks), quote- and escape-aware. Subshells and substitutions are
+/// flattened: their inner commands join the sequence, which is
+/// fail-closed for restriction detection.
+fn split_into_simple_commands(command: &str) -> Vec<Vec<String>> {
+    let chars: Vec<char> = command.chars().collect();
+    let mut commands: Vec<Vec<String>> = Vec::new();
+    let mut current: Vec<String> = Vec::new();
+    let mut word = String::new();
+    let mut word_started = false;
+    let mut idx = 0;
+
+    while idx < chars.len() {
+        let ch = chars[idx];
+        match ch {
+            '\'' => {
+                word_started = true;
+                idx += 1;
+                while idx < chars.len() && chars[idx] != '\'' {
+                    word.push(chars[idx]);
+                    idx += 1;
+                }
+                idx += 1;
+            }
+            '"' => {
+                word_started = true;
+                idx += 1;
+                while idx < chars.len() && chars[idx] != '"' {
+                    if chars[idx] == '\\'
+                        && matches!(chars.get(idx + 1), Some('"' | '\\' | '$' | '`'))
+                    {
+                        word.push(chars[idx + 1]);
+                        idx += 2;
+                    } else {
+                        word.push(chars[idx]);
+                        idx += 1;
+                    }
+                }
+                idx += 1;
+            }
+            '\\' => {
+                if let Some(next) = chars.get(idx + 1) {
+                    word.push(*next);
+                    word_started = true;
+                    idx += 2;
+                } else {
+                    idx += 1;
+                }
+            }
+            _ if ch.is_whitespace() => {
+                flush_word(&mut current, &mut word, &mut word_started);
+                idx += 1;
+            }
+            '$' if chars.get(idx + 1) == Some(&'(') => {
+                flush_word(&mut current, &mut word, &mut word_started);
+                flush_command(&mut commands, &mut current);
+                idx += 2;
+            }
+            '&' | '|' | ';' | '(' | ')' | '`' => {
+                flush_word(&mut current, &mut word, &mut word_started);
+                flush_command(&mut commands, &mut current);
+                if matches!(ch, '&' | '|') && chars.get(idx + 1) == Some(&ch) {
+                    idx += 2;
+                } else {
+                    idx += 1;
+                }
+            }
+            _ => {
+                word.push(ch);
+                word_started = true;
+                idx += 1;
+            }
+        }
+    }
+    flush_word(&mut current, &mut word, &mut word_started);
+    flush_command(&mut commands, &mut current);
+    commands
+}
+
+fn flush_word(current: &mut Vec<String>, word: &mut String, word_started: &mut bool) {
+    if *word_started {
+        current.push(mem::take(word));
+        *word_started = false;
+    }
+}
+
+fn flush_command(commands: &mut Vec<Vec<String>>, current: &mut Vec<String>) {
+    if !current.is_empty() {
+        commands.push(mem::take(current));
+    }
+}
+
+/// The verb of a simple command: skip leading `KEY=value` env prefixes
+/// and known command-wrapper prefixes (`rtk`, `rtk proxy`). Returns the
+/// verb's index and text so the caller can find a following `cd` target.
+fn command_verb(tokens: &[String]) -> Option<(usize, &str)> {
+    let mut idx = 0;
+    while tokens
+        .get(idx)
+        .is_some_and(|token| is_env_assignment(token))
+    {
+        idx += 1;
+    }
     loop {
-        let candidate = iter.next()?;
-        let mut matched: Option<&WrapperPrefix> = None;
-        for wrapper in WRAPPER_PREFIXES {
-            if candidate == wrapper.name {
-                matched = Some(wrapper);
+        let candidate = tokens.get(idx)?;
+        let mut wrapper: Option<&WrapperPrefix> = None;
+        for entry in WRAPPER_PREFIXES {
+            if candidate.as_str() == entry.name {
+                wrapper = Some(entry);
                 break;
             }
         }
-        let Some(wrapper) = matched else {
-            return Some(candidate);
+        let Some(entry) = wrapper else {
+            return Some((idx, candidate.as_str()));
         };
-        if wrapper.has_proxy_subcommand {
-            let mut peek = iter.clone();
-            if peek.next() == Some("proxy") {
-                iter = peek;
-            }
+        idx += 1;
+        if entry.has_proxy_subcommand && tokens.get(idx).map(String::as_str) == Some("proxy") {
+            idx += 1;
         }
     }
 }
@@ -293,38 +449,179 @@ fn is_env_assignment(token: &str) -> bool {
         && name.chars().next().is_some_and(|c| !c.is_ascii_digit())
 }
 
-fn verb_triggers_check(verb: &str, trusted_roots: &[ResolvedTrustedRoot]) -> bool {
-    if bash_mutator_verbs().any(|known| known == verb) {
-        return true;
+/// Maximal path-shaped runs inside a token: the token split on
+/// characters that cannot appear unquoted in a bare path, so an
+/// absolute path embedded in an interpreter argument
+/// (`open('/r/secret/f','w')`) is still recovered as `/r/secret/f`.
+/// Glob metacharacters (`*`, `?`, `[`, `]`) are kept in the run.
+fn path_runs(token: &str) -> impl Iterator<Item = &str> {
+    token.split(is_run_break).filter(|run| !run.is_empty())
+}
+
+const fn is_run_break(c: char) -> bool {
+    c.is_whitespace()
+        || matches!(
+            c,
+            '\'' | '"'
+                | '`'
+                | '('
+                | ')'
+                | ','
+                | '='
+                | ':'
+                | '<'
+                | '>'
+                | '!'
+                | '{'
+                | '}'
+                | '|'
+                | '&'
+                | ';'
+                | '$'
+        )
+}
+
+/// Absolutize a path run against `base_cwd` (honoring a tracked `cd`),
+/// expand a leading `~`, lexically normalize, and canonicalize the same
+/// way the `Path` branch does so symlinks resolve into the realm.
+fn resolve_run(system: &dyn System, run: &str, base_cwd: &Path) -> PathBuf {
+    let expanded = expand_tilde(system, run);
+    let raw = Path::new(&expanded);
+    let absolute = if raw.is_absolute() {
+        raw.to_path_buf()
+    } else {
+        base_cwd.join(raw)
+    };
+    let normalized = lexical_normalize(&absolute);
+    system.canonicalize(&normalized).unwrap_or(normalized)
+}
+
+fn expand_tilde(system: &dyn System, run: &str) -> String {
+    if run == "~" {
+        return system.env_var("HOME").unwrap_or_else(|_err| run.to_owned());
     }
-    trusted_roots
-        .iter()
-        .flat_map(|entry| entry.also_deny_bash.iter())
-        .any(|extra| extra == verb)
+    if let Some(rest) = run.strip_prefix("~/")
+        && let Ok(home) = system.env_var("HOME")
+    {
+        return format!("{home}/{rest}");
+    }
+    run.to_owned()
 }
 
-/// The verb half of every `BASH_MUTATORS` template — first
-/// whitespace-separated token, deduped naturally.
-fn bash_mutator_verbs() -> impl Iterator<Item = &'static str> {
-    BASH_MUTATORS
-        .iter()
-        .filter_map(|template| template.split_whitespace().next())
+/// A resolved bash word is restricted when it lands inside one of the
+/// realm's trusted roots. Coverage is glob-aware so a pattern that would
+/// expand into the realm (`/r/sec*ret/foo`) is denied without touching
+/// disk. `deny_ops` is intentionally not consulted here yet.
+fn bash_word_restricted(resolved: &ResolvedPermissions, candidate: &Path) -> bool {
+    !resolved.trusted_roots.is_empty()
+        && resolved
+            .trusted_roots
+            .iter()
+            .any(|entry| root_covers_word(&entry.path, candidate))
 }
 
-fn first_restricted_substring_match(
-    command: &str,
-    trusted_roots: &[ResolvedTrustedRoot],
-) -> Option<String> {
-    for entry in trusted_roots {
-        let needle = match &entry.path {
-            TrustedRootPath::Absolute(path) => path.display().to_string(),
-            TrustedRootPath::Wildcard { realm_root } => realm_root.display().to_string(),
-        };
-        if !needle.is_empty() && command.contains(&needle) {
-            return Some(needle);
+fn root_covers_word(root: &TrustedRootPath, candidate: &Path) -> bool {
+    let anchor = match root {
+        TrustedRootPath::Absolute(path) => path.as_path(),
+        TrustedRootPath::Wildcard { realm_root } => realm_root.as_path(),
+    };
+    let anchor_components: Vec<&OsStr> = anchor.components().map(Component::as_os_str).collect();
+    let word_components: Vec<&OsStr> = candidate.components().map(Component::as_os_str).collect();
+    if word_components.len() < anchor_components.len() {
+        return false;
+    }
+    anchor_components
+        .iter()
+        .zip(&word_components)
+        .all(|(anchor_component, word_component)| {
+            component_matches(word_component, anchor_component)
+        })
+}
+
+/// `pattern` (a candidate path component, possibly with glob
+/// metacharacters) matches `literal` (a trusted-root component). Plain
+/// components compare by equality; glob components match with `*` / `?`,
+/// and `[...]` classes are treated as a single-character wildcard
+/// (over-matching is safe here — it only widens denial).
+fn component_matches(pattern: &OsStr, literal: &OsStr) -> bool {
+    let pattern_str = pattern.to_string_lossy();
+    if !pattern_str.contains(is_glob_meta) {
+        return pattern == literal;
+    }
+    let literal_chars: Vec<char> = literal.to_string_lossy().chars().collect();
+    wildcard_matches(&declassify(&pattern_str), &literal_chars)
+}
+
+const fn is_glob_meta(c: char) -> bool {
+    matches!(c, '*' | '?' | '[')
+}
+
+/// Rewrite each `[...]` class to a single `?` so the matcher only has to
+/// reason about `*` and `?`. An unterminated `[` is left literal.
+fn declassify(pattern: &str) -> Vec<char> {
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut out: Vec<char> = Vec::with_capacity(chars.len());
+    let mut idx = 0;
+    while idx < chars.len() {
+        if chars[idx] == '['
+            && let Some(close) = class_close(&chars, idx)
+        {
+            out.push('?');
+            idx = close + 1;
+            continue;
         }
+        out.push(chars[idx]);
+        idx += 1;
+    }
+    out
+}
+
+fn class_close(chars: &[char], open: usize) -> Option<usize> {
+    let mut idx = open + 1;
+    if chars.get(idx).is_some_and(|c| *c == '!' || *c == '^') {
+        idx += 1;
+    }
+    // A `]` in the first position is a literal member, not the close.
+    if chars.get(idx) == Some(&']') {
+        idx += 1;
+    }
+    while idx < chars.len() {
+        if chars[idx] == ']' {
+            return Some(idx);
+        }
+        idx += 1;
     }
     None
+}
+
+/// Wildcard match with `*` (any run, including empty) and `?` (exactly
+/// one character). Standard single-pass matcher with `*` backtracking.
+fn wildcard_matches(pattern: &[char], text: &[char]) -> bool {
+    let mut p_idx = 0;
+    let mut t_idx = 0;
+    let mut star: Option<(usize, usize)> = None;
+    while t_idx < text.len() {
+        if pattern
+            .get(p_idx)
+            .is_some_and(|c| *c == '?' || *c == text[t_idx])
+        {
+            p_idx += 1;
+            t_idx += 1;
+        } else if pattern.get(p_idx) == Some(&'*') {
+            star = Some((p_idx, t_idx));
+            p_idx += 1;
+        } else if let Some((star_p, star_t)) = star {
+            p_idx = star_p + 1;
+            t_idx = star_t + 1;
+            star = Some((star_p, star_t + 1));
+        } else {
+            return false;
+        }
+    }
+    while pattern.get(p_idx) == Some(&'*') {
+        p_idx += 1;
+    }
+    p_idx == pattern.len()
 }
 
 fn build_decision(tool: &str, path: &Path) -> Decision {
