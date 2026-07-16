@@ -24,8 +24,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::config::permissions::resolve::{
-    ResolvedPermissions, TrustedRootPath, resolve_permissions,
+    ResolvedPermissions, TrustedRootPath, resolve_permissions, trusted_root_anchor,
 };
+use crate::permissions::op_guard::dot_folder_reallowed;
 
 const WRAPPER_PREFIXES: &[WrapperPrefix] = &[WrapperPrefix {
     has_proxy_subcommand: true,
@@ -236,6 +237,12 @@ fn lexical_normalize(path: &Path) -> PathBuf {
 /// carrying glob metacharacters (`/r/sec*ret/foo`) that could expand into
 /// a root is denied without touching disk; a literal path (every
 /// Path-branch target) matches by plain component equality, unchanged.
+///
+/// One carve-out: a path the realm re-allowed through `allow_dot_folders`
+/// is not restricted, mirroring the projected `<root>/<folder>/**`
+/// re-allow. An explicit `deny_ops` match is more specific than that
+/// re-allow, so it is checked first and never lifted — matching the op
+/// guard, which denies `deny_ops` before consulting `allow_dot_folders`.
 fn path_is_restricted(resolved: &ResolvedPermissions, candidate: &Path) -> bool {
     if resolved
         .deny_ops
@@ -244,10 +251,22 @@ fn path_is_restricted(resolved: &ResolvedPermissions, candidate: &Path) -> bool 
     {
         return true;
     }
+    let under_root = resolved
+        .trusted_roots
+        .iter()
+        .any(|entry| root_covers_word(&entry.path, candidate));
+    under_root && !reallowed_dot_folder_path(resolved, candidate)
+}
+
+/// `true` when `candidate` sits inside a dot-folder the realm explicitly
+/// re-allowed via `allow_dot_folders`. Delegates the dot-folder walk to
+/// the op guard's shared helper so the hook and the guard cannot diverge.
+fn reallowed_dot_folder_path(resolved: &ResolvedPermissions, candidate: &Path) -> bool {
+    let allowed = resolved.allow_dot_folder_names();
     resolved
         .trusted_roots
         .iter()
-        .any(|entry| root_covers_word(&entry.path, candidate))
+        .any(|entry| dot_folder_reallowed(trusted_root_anchor(entry), candidate, &allowed))
 }
 
 /// Parse `command` into simple commands, resolve every path-shaped word

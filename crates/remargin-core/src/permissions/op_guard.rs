@@ -412,8 +412,9 @@ fn find_trusted_roots_violation(
 
 /// Walk `target`'s components beneath `realm_anchor` looking for the
 /// first dot-folder component that is not on `allow_dot_folders`. The
-/// `.remargin/` folder is always allowed.
-fn first_disallowed_dot_folder(
+/// `.remargin/` folder is always allowed. Shared with the pretool hook
+/// so its dot-folder restriction cannot drift from the guard's.
+pub(crate) fn first_disallowed_dot_folder(
     realm_anchor: &Path,
     target: &Path,
     allow_dot_folders: &[String],
@@ -442,6 +443,37 @@ fn first_disallowed_dot_folder(
             return None;
         }
         Some(String::from(name))
+    })
+}
+
+/// `true` when `target` lives inside a dot-folder the realm explicitly
+/// re-allowed via `allow_dot_folders`, with no *disallowed* dot-folder
+/// between `realm_anchor` and the file. Mirrors the projected
+/// `<root>/<folder>/**` re-allow: the pretool hook uses it to lift its
+/// blanket restriction for exactly those paths. A non-dot path, or one
+/// under the always-special `.remargin` unless `.remargin` is itself
+/// listed, is not re-allowed.
+#[must_use]
+pub(crate) fn dot_folder_reallowed(
+    realm_anchor: &Path,
+    target: &Path,
+    allow_dot_folders: &[String],
+) -> bool {
+    if first_disallowed_dot_folder(realm_anchor, target, allow_dot_folders).is_some() {
+        return false;
+    }
+    let Ok(suffix) = target.strip_prefix(realm_anchor) else {
+        return false;
+    };
+    let mut components = suffix.components();
+    // The final component is the file itself — a dotfile leaf does not
+    // mean the file lives inside a dot-folder.
+    components.next_back();
+    components.any(|comp| {
+        let name = comp.as_os_str().to_string_lossy();
+        allow_dot_folders
+            .iter()
+            .any(|allowed| allowed == name.as_ref())
     })
 }
 

@@ -1154,3 +1154,123 @@ fn path_in_neither_bash_rm_silent_allows() {
     let stdin = event_json("Bash", "/r", &json!({ "command": "rm /r/y.md" }));
     assert_eq!(pretool(&system, &stdin), PretoolOutcome::SilentAllow);
 }
+
+// ---------------------------------------------------------------------
+// allow_dot_folders: the hook honours the realm's dot-folder re-allow,
+// mirroring the projected `rules_for` re-allow so retiring the rules
+// cannot regress an explicitly-allowed dot folder. The carve-out only
+// lifts restriction for dot-folder paths — never for non-dot paths.
+// ---------------------------------------------------------------------
+
+/// A wildcard realm re-allowing the named dot folders. Empty
+/// `allow_dot_folders` (`""`) emits `allow_dot_folders: []`.
+fn restrict_with_dot_folders(root: &str, allow_dot_folders: &str) -> String {
+    format!(
+        "permissions:\n  trusted_roots:\n    - path: {root}\n  allow_dot_folders: [{allow_dot_folders}]\n"
+    )
+}
+
+/// Case 1: `Read` a file inside an allowed dot folder → `SilentAllow`.
+#[test]
+fn allow_dot_folders_allowed_dot_folder_read_silent_allows() {
+    let system = mock_with(&[(
+        "/r/.remargin.yaml",
+        &restrict_with_dot_folders("'*'", "'.obsidian'"),
+    )]);
+    let stdin = event_json(
+        "Read",
+        "/r",
+        &json!({ "file_path": "/r/.obsidian/workspace.json" }),
+    );
+    assert_eq!(pretool(&system, &stdin), PretoolOutcome::SilentAllow);
+}
+
+/// Case 2: a dot folder not on the list (`.git`) stays restricted → `Deny`.
+#[test]
+fn allow_dot_folders_unlisted_dot_folder_read_denies() {
+    let system = mock_with(&[(
+        "/r/.remargin.yaml",
+        &restrict_with_dot_folders("'*'", "'.obsidian'"),
+    )]);
+    let stdin = event_json("Read", "/r", &json!({ "file_path": "/r/.git/config" }));
+    assert!(matches!(pretool(&system, &stdin), PretoolOutcome::Deny(_)));
+}
+
+/// Case 3: an empty allow list restricts every dot folder → `Deny`.
+#[test]
+fn allow_dot_folders_empty_list_dot_folder_read_denies() {
+    let system = mock_with(&[("/r/.remargin.yaml", &restrict_with_dot_folders("'*'", ""))]);
+    let stdin = event_json("Read", "/r", &json!({ "file_path": "/r/.obsidian/x" }));
+    assert!(matches!(pretool(&system, &stdin), PretoolOutcome::Deny(_)));
+}
+
+/// Case 4: a non-dot path under the realm is unaffected — still managed.
+#[test]
+fn allow_dot_folders_non_dot_path_still_denies() {
+    let system = mock_with(&[(
+        "/r/.remargin.yaml",
+        &restrict_with_dot_folders("'*'", "'.obsidian'"),
+    )]);
+    let stdin = event_json("Read", "/r", &json!({ "file_path": "/r/notes/a.md" }));
+    assert!(matches!(pretool(&system, &stdin), PretoolOutcome::Deny(_)));
+}
+
+/// Case 5: a `Bash` word into an allowed dot folder → `SilentAllow`. cwd
+/// sits outside the wildcard realm so only the `/r/.obsidian/x` argument
+/// — not the bare verb word — resolves into it.
+#[test]
+fn allow_dot_folders_allowed_dot_folder_bash_silent_allows() {
+    let system = mock_with(&[(
+        "/r/.remargin.yaml",
+        &restrict_with_dot_folders("'*'", "'.obsidian'"),
+    )]);
+    let stdin = event_json("Bash", "/x", &json!({ "command": "rm /r/.obsidian/x" }));
+    assert_eq!(pretool(&system, &stdin), PretoolOutcome::SilentAllow);
+}
+
+/// Parity: for a fixed realm + `allow_dot_folders`, the hook's decision on
+/// each dot-folder path agrees with whether `rules_for` emitted a re-allow
+/// covering it — restricted iff not re-allowed. Guards the hook and the
+/// projected rules against drift while both layers still exist.
+#[test]
+fn allow_dot_folders_hook_matches_projected_rules_for_reallow() {
+    use std::path::PathBuf;
+
+    use crate::config::permissions::resolve::{ResolvedTrustedRoot, TrustedRootPath};
+    use crate::permissions::claude_sync::rules_for;
+
+    let allow = [String::from(".obsidian")];
+    let entry = ResolvedTrustedRoot {
+        also_deny_bash: Vec::new(),
+        cli_allowed: true,
+        path: TrustedRootPath::Wildcard {
+            realm_root: PathBuf::from("/r"),
+        },
+        source_file: PathBuf::from("/r/.remargin.yaml"),
+    };
+    let rules = rules_for(&entry, Path::new("/r"), &allow);
+
+    let system = mock_with(&[(
+        "/r/.remargin.yaml",
+        &restrict_with_dot_folders("'*'", "'.obsidian'"),
+    )]);
+
+    for path in [
+        "/r/.obsidian/workspace.json",
+        "/r/.git/config",
+        "/r/.cache/blob",
+    ] {
+        // A re-allow covers `path` iff `rules_for` emitted a rule for the
+        // path's leading dot-folder component.
+        let folder = path.strip_prefix("/r/").unwrap().split('/').next().unwrap();
+        let reallowed = rules.allow.contains(&format!("Read(/r/{folder}/**)"));
+
+        let stdin = event_json("Read", "/r", &json!({ "file_path": path }));
+        let hook_restricted = matches!(pretool(&system, &stdin), PretoolOutcome::Deny(_));
+
+        assert_eq!(
+            hook_restricted, !reallowed,
+            "hook and rules_for disagree on {path}: restricted={hook_restricted}, reallowed={reallowed}",
+        );
+    }
+}
