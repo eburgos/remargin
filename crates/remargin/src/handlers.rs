@@ -283,6 +283,7 @@ pub fn build_query_params(command: &Commands) -> Result<QueryParams<'_>> {
         content_regex,
         expanded,
         ignore_case,
+        include_integrity,
         pending,
         pending_broadcast,
         pending_for,
@@ -297,7 +298,13 @@ pub fn build_query_params(command: &Commands) -> Result<QueryParams<'_>> {
     else {
         bail!("internal: build_query_params called with wrong subcommand");
     };
-    let output = if output_args.json {
+    // clap enforces `--compact` requires `--json` and `--include-integrity`
+    // requires `--compact`, so compact implies json here.
+    let output = if output_args.compact {
+        QueryOutputMode::Compact {
+            include_integrity: *include_integrity,
+        }
+    } else if output_args.json {
         QueryOutputMode::Json
     } else if *pretty {
         QueryOutputMode::Pretty

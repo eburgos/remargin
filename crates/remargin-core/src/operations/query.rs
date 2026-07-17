@@ -16,6 +16,7 @@ use chrono::{DateTime, FixedOffset};
 use os_shim::System;
 use regex::{Regex, RegexBuilder};
 use serde::Serialize;
+use serde_json::{Value, json};
 use tixschema::model_schema;
 
 use crate::document::allowlist;
@@ -23,6 +24,50 @@ use crate::kind::matches_kind_filter;
 use crate::parser::{self, Acknowledgment, AuthorType};
 use crate::parser::{acknowledgment_schema, author_type_schema};
 use crate::reactions::ReactionEntry;
+
+/// Compact comment-row column names, `content` last.
+///
+/// Emitted once per response in the envelope's `comment_cols` header;
+/// [`to_compact_row`] fills the positions in this order. The verbose
+/// per-comment `checksum` / `signature` and the redundant `file` are
+/// dropped.
+pub const COMMENT_COLS: [&str; 14] = [
+    "id",
+    "line",
+    "author",
+    "author_type",
+    "ts",
+    "reply_to",
+    "thread",
+    "to",
+    "ack",
+    "reactions",
+    "remargin_kind",
+    "edited_at",
+    "attachments",
+    "content",
+];
+
+/// [`COMMENT_COLS`] widened with `checksum`, `signature` inserted
+/// immediately before `content`. Selected when `include_integrity` is set.
+pub const COMMENT_COLS_INTEGRITY: [&str; 16] = [
+    "id",
+    "line",
+    "author",
+    "author_type",
+    "ts",
+    "reply_to",
+    "thread",
+    "to",
+    "ack",
+    "reactions",
+    "remargin_kind",
+    "edited_at",
+    "attachments",
+    "checksum",
+    "signature",
+    "content",
+];
 
 /// Filter for cross-document queries.
 ///
@@ -252,6 +297,126 @@ pub struct QueryResult {
     /// `None` when no recipients have outstanding acks.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_for: Option<Vec<String>>,
+}
+
+/// One compact comment row: positional columns named by [`COMMENT_COLS`].
+///
+/// Only the base (14-column) arity is codegen'd; the integrity form adds
+/// `checksum`, `signature` before `content` at runtime, and the
+/// self-describing `comment_cols` header covers the widened shape. Acks
+/// compact to `author@ts` strings; `author_type` keeps its verbose
+/// serialization; `reactions` stays a map. Nullable columns (`reply_to`,
+/// `thread`, `remargin_kind`, `edited_at`) serialize as `null`.
+#[model_schema(name = "CompactCommentRow")]
+pub type CompactCommentRow = (
+    String,
+    usize,
+    String,
+    AuthorType,
+    DateTime<FixedOffset>,
+    Option<String>,
+    Option<String>,
+    Vec<String>,
+    Vec<String>,
+    BTreeMap<String, Vec<ReactionEntry>>,
+    Option<Vec<String>>,
+    Option<DateTime<FixedOffset>>,
+    Vec<String>,
+    String,
+);
+
+/// Schema anchor for the compact per-file query result.
+///
+/// Mirrors [`QueryResult`] but its `comments` are positional
+/// [`CompactCommentRow`]s. Exists so xtask emits the TS / Zod types the
+/// LLM consumer reads; the runtime builds the shape in [`to_compact_result`]
+/// and the enclosing envelope (`base_path`, `comment_cols`, `results`) is
+/// assembled by each surface.
+// A 14-element `CompactCommentRow` exceeds std's `Debug` impls (max arity
+// 12); this schema anchor is never printed, so `Debug` is omitted.
+#[model_schema]
+#[derive(Serialize)]
+#[non_exhaustive]
+pub struct CompactQueryResult {
+    pub comment_count: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comments: Option<Vec<CompactCommentRow>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_activity: Option<DateTime<FixedOffset>>,
+    pub path: PathBuf,
+    pub pending_count: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_for: Option<Vec<String>>,
+}
+
+/// Column header naming the [`to_compact_row`] positions, widened when
+/// `include_integrity` is set.
+#[must_use]
+pub const fn comment_cols(include_integrity: bool) -> &'static [&'static str] {
+    if include_integrity {
+        &COMMENT_COLS_INTEGRITY
+    } else {
+        &COMMENT_COLS
+    }
+}
+
+/// Project one verbose [`ExpandedComment`] onto its compact positional row.
+///
+/// `checksum` / `signature` are added before `content` only when
+/// `include_integrity` is set; the redundant `file` is always dropped.
+#[must_use]
+pub fn to_compact_row(comment: &ExpandedComment, include_integrity: bool) -> Value {
+    let ack: Vec<String> = comment
+        .ack
+        .iter()
+        .map(|a| format!("{}@{}", a.author, a.ts.to_rfc3339()))
+        .collect();
+    let mut row = vec![
+        json!(comment.id),
+        json!(comment.line),
+        json!(comment.author),
+        json!(comment.author_type),
+        json!(comment.ts),
+        json!(comment.reply_to),
+        json!(comment.thread),
+        json!(comment.to),
+        json!(ack),
+        json!(comment.reactions),
+        json!(comment.remargin_kind),
+        json!(comment.edited_at),
+        json!(comment.attachments),
+    ];
+    if include_integrity {
+        row.push(json!(comment.checksum));
+        row.push(json!(comment.signature));
+    }
+    row.push(json!(comment.content));
+    Value::Array(row)
+}
+
+/// Project one verbose [`QueryResult`] onto the compact per-file shape:
+/// summary fields stay named, comments become positional rows. Comments
+/// are omitted in summary mode (mirrors the verbose skip).
+#[must_use]
+pub fn to_compact_result(result: &QueryResult, include_integrity: bool) -> Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert(String::from("path"), json!(result.path));
+    obj.insert(String::from("comment_count"), json!(result.comment_count));
+    obj.insert(String::from("pending_count"), json!(result.pending_count));
+    if let Some(pending_for) = &result.pending_for {
+        obj.insert(String::from("pending_for"), json!(pending_for));
+    }
+    if let Some(last_activity) = &result.last_activity {
+        obj.insert(String::from("last_activity"), json!(last_activity));
+    }
+    if let Some(comments) = &result.comments {
+        let rows: Vec<Value> = comments
+            .iter()
+            .map(|comment| to_compact_row(comment, include_integrity))
+            .collect();
+        obj.insert(String::from("comments"), Value::Array(rows));
+    }
+    Value::Object(obj)
 }
 
 /// Query across documents in a directory tree.

@@ -625,6 +625,10 @@ pub enum Commands {
         /// Case-insensitive match for `--content-regex`.
         #[arg(long, short = 'i')]
         ignore_case: bool,
+        /// Add checksum + signature columns to the compact comment rows.
+        /// Requires `--compact`.
+        #[arg(long, requires = "compact")]
+        include_integrity: bool,
         /// Only documents with pending (unacked) comments. Matches
         /// both directed (unacked recipients) and broadcast (no acks
         /// at all) shapes.

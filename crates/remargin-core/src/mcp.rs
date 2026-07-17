@@ -754,7 +754,16 @@ fn desc_identity_create() -> ToolDesc {
 fn desc_query() -> ToolDesc {
     ToolDesc {
         name: "query",
-        description: "Search across documents for comments. \
+        description: "Search across documents for comments. Returns a compact, minified \
+             columnar payload: `{base_path, comment_cols, results}`, where each result is \
+             `{path, comment_count, pending_count, pending_for, last_activity, comments}` and \
+             every comment is a positional row named by `comment_cols` \
+             (`[id, line, author, author_type, ts, reply_to, thread, to, ack, reactions, \
+             remargin_kind, edited_at, attachments, content]`, `content` last). Acks compact to \
+             `author@ts` strings. The verbose `checksum` / `signature` and the redundant \
+             per-comment `file` are dropped; pass `include_integrity: true` to add `checksum`, \
+             `signature` columns immediately before `content`. Nullable columns (`reply_to`, \
+             `thread`, `remargin_kind`, `edited_at`) are `null` when absent. \
              Pending filters (`pending`, `pending_for`, `pending_for_me`, `pending_broadcast`) \
              compose as a union when more than one is set. `pending` (broad form) includes \
              both directed comments with unacked recipients AND broadcast (no-`to`) comments \
@@ -768,6 +777,7 @@ fn desc_query() -> ToolDesc {
                 "content_regex": { "type": "string", "description": "Regex applied to comment content; composes with metadata filters" },
                 "expanded": { "type": "boolean", "description": "Include individual matching comments in each result (default: true via non-summary mode)", "default": false },
                 "ignore_case": { "type": "boolean", "description": "Case-insensitive match for content_regex", "default": false },
+                "include_integrity": { "type": "boolean", "description": "Add checksum + signature columns to each comment row, immediately before content.", "default": false },
                 "pending": { "type": "boolean", "description": "Only documents with pending (unacked) comments. Matches both directed and broadcast shapes.", "default": false },
                 "pending_broadcast": { "type": "boolean", "description": "Only surface broadcast (no-`to`) comments the server identity has not acked yet.", "default": false },
                 "pending_for": { "type": "string", "description": "Only pending for this recipient" },
@@ -1256,10 +1266,10 @@ fn tool_result_success_min(content: &Value) -> Value {
 }
 
 /// Tools whose success payload is the compact columnar contract, wrapped
-/// minified. Only `get` today; the follow-up search / query / activity
+/// minified. `get` and `query` today; the follow-up search / activity
 /// tasks extend this set.
 fn tool_emits_minified(tool_name: &str) -> bool {
-    matches!(tool_name, "get")
+    matches!(tool_name, "get" | "query")
 }
 
 /// Build an MCP tool result (error).
@@ -2469,12 +2479,21 @@ fn handle_query(
     params: &Map<String, Value>,
 ) -> Result<Value> {
     let path_str = optional_str(params, "path").unwrap_or(".");
+    let include_integrity = optional_bool(params, "include_integrity");
     let filter = build_query_filter_from_params(params, config.identity.clone())?;
     let results = query::query(system, &base_dir.join(path_str), &filter)?;
 
+    // Compact columnar shape, hardcoded on the MCP surface: comments become
+    // positional rows named by `comment_cols`, dropping checksum / signature
+    // / file. Serialized minified by `tool_result_success_min`.
+    let compact: Vec<Value> = results
+        .iter()
+        .map(|result| query::to_compact_result(result, include_integrity))
+        .collect();
     Ok(json!({
         "base_path": format!("{}/", path_str.trim_end_matches('/')),
-        "results": results,
+        "comment_cols": query::comment_cols(include_integrity),
+        "results": compact,
     }))
 }
 

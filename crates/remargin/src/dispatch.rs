@@ -157,12 +157,12 @@ const fn plan_action_output(action: &PlanAction) -> &OutputArgs {
 
 /// Reject `--compact` on subcommands that do not emit the compact
 /// columnar contract. `OutputArgs` is flattened everywhere, so a single
-/// gate here keeps the flag from being silently ignored. Only `get`
-/// wires compact today; the follow-up search / query / activity tasks
+/// gate here keeps the flag from being silently ignored. `get` and
+/// `query` wire compact today; the follow-up search / activity tasks
 /// extend the allow-set.
 fn reject_unsupported_compact(cmd: &Commands) -> Result<()> {
     let compact = subcommand_output(cmd).is_some_and(|o| o.compact);
-    if compact && !matches!(cmd, Commands::Get { .. }) {
+    if compact && !matches!(cmd, Commands::Get { .. } | Commands::Query { .. }) {
         bail!("--compact is not supported for this subcommand");
     }
     Ok(())

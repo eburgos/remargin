@@ -1841,3 +1841,102 @@ fn query_file_path_relative_is_file_name() {
         assert_eq!(cm.file.to_str().unwrap(), "review.md");
     }
 }
+
+// Compact projection: comments become 14-column positional rows (no named
+// `file`), acks collapse to the on-disk `author@ts` string, and nullable
+// columns serialize as null.
+#[test]
+fn compact_row_shape_drops_file_and_compacts_acks() {
+    use crate::operations::query::{COMMENT_COLS, to_compact_result};
+
+    let system = setup_expanded_system();
+    let filter = QueryFilter {
+        expanded: true,
+        ..QueryFilter::default()
+    };
+    let results = query(&system, Path::new("/exp/review.md"), &filter).unwrap();
+    assert_eq!(results.len(), 1);
+
+    let compact = to_compact_result(&results[0], false);
+    // Per-file summary fields stay named.
+    assert_eq!(compact["path"].as_str().unwrap(), "review.md");
+    assert_eq!(compact["comment_count"].as_u64().unwrap(), 3);
+
+    assert!(!COMMENT_COLS.contains(&"file"));
+    let rows = compact["comments"].as_array().unwrap();
+    assert_eq!(rows.len(), 3);
+    for row in rows {
+        assert_eq!(row.as_array().unwrap().len(), COMMENT_COLS.len());
+    }
+
+    // c3 (index 2) carries the only ack; it compacts to "author@ts".
+    let c3 = rows[2].as_array().unwrap();
+    assert_eq!(c3[0].as_str().unwrap(), "c3");
+    let ack = c3[8].as_array().unwrap();
+    assert_eq!(ack.len(), 1);
+    assert_eq!(ack[0].as_str().unwrap(), "bob@2026-04-06T15:00:00-04:00");
+    // Nullable columns (reply_to, edited_at) serialize as null.
+    assert!(c3[5].is_null(), "reply_to null: {c3:?}");
+    assert!(c3[11].is_null(), "edited_at null: {c3:?}");
+}
+
+// include_integrity widens each row by two columns — checksum + signature
+// landing immediately before the (last) content column.
+#[test]
+fn compact_row_include_integrity_adds_columns() {
+    use crate::operations::query::{COMMENT_COLS, COMMENT_COLS_INTEGRITY, to_compact_result};
+
+    let system = setup_expanded_system();
+    let filter = QueryFilter {
+        expanded: true,
+        ..QueryFilter::default()
+    };
+    let results = query(&system, Path::new("/exp/review.md"), &filter).unwrap();
+
+    let base = to_compact_result(&results[0], false);
+    let integrity = to_compact_result(&results[0], true);
+
+    let base_row = base["comments"][0].as_array().unwrap();
+    let integrity_row = integrity["comments"][0].as_array().unwrap();
+    assert_eq!(base_row.len(), COMMENT_COLS.len());
+    assert_eq!(integrity_row.len(), COMMENT_COLS_INTEGRITY.len());
+    // checksum from disk; signature null (the fixture comments are unsigned).
+    assert_eq!(integrity_row[13].as_str().unwrap(), "sha256:c1c1");
+    assert!(integrity_row[14].is_null(), "unsigned signature null");
+    // content stays last in both arities.
+    assert_eq!(
+        integrity_row[15],
+        base_row[COMMENT_COLS.len() - 1],
+        "content stays last"
+    );
+}
+
+// Codegen contract: the compact row alias renders its Option tuple columns
+// as nullable in TS and Zod, and the compact payload carries the row by
+// reference (relies on the pinned tixschema nullable-in-tuple support).
+#[test]
+fn compact_comment_row_schema_renders_nullable_columns() {
+    use crate::operations::query::{compact_comment_row_schema, compact_query_result_schema};
+
+    let row_ts = compact_comment_row_schema::Schema::ts_definition();
+    assert!(
+        row_ts.contains("string | null"),
+        "TS nullable columns: {row_ts}"
+    );
+    let row_zod = compact_comment_row_schema::Schema::zod_schema();
+    assert!(
+        row_zod.contains("z.nullable(z.string())"),
+        "Zod nullable columns: {row_zod}"
+    );
+
+    let payload_ts = compact_query_result_schema::Schema::ts_definition();
+    assert!(
+        payload_ts.contains("Array<CompactCommentRow>"),
+        "payload references row type: {payload_ts}"
+    );
+    let payload_zod = compact_query_result_schema::Schema::zod_schema();
+    assert!(
+        payload_zod.contains("z.array(CompactCommentRow$Schema)"),
+        "payload Zod references row schema: {payload_zod}"
+    );
+}

@@ -2331,33 +2331,94 @@ fn mcp_query_expanded_returns_comments() {
         }),
     );
 
+    // Minified: the payload text carries no literal newline.
+    let raw = extract_tool_raw_text(&response);
+    assert!(
+        !raw.contains('\n'),
+        "compact payload must be minified: {raw}"
+    );
+
     let result = extract_tool_text(&response);
+    // Base (no-integrity) columns: 14 names, `content` last, no
+    // checksum / signature / file.
+    let cols = result["comment_cols"].as_array().unwrap();
+    assert_eq!(cols.len(), 14_usize);
+    assert_eq!(cols[0], "id");
+    assert_eq!(cols[13], "content");
+    assert!(
+        !cols
+            .iter()
+            .any(|c| c == "checksum" || c == "signature" || c == "file")
+    );
+
     let results = result["results"].as_array().unwrap();
     assert_eq!(results.len(), 1_usize);
 
     let comments = results[0]["comments"].as_array().unwrap();
     assert_eq!(comments.len(), 2_usize);
 
-    // Verify first comment fields.
-    assert_eq!(comments[0]["id"].as_str().unwrap(), "ex1");
-    assert_eq!(comments[0]["author"].as_str().unwrap(), "alice");
-    assert_eq!(comments[0]["author_type"].as_str().unwrap(), "human");
-    assert_eq!(
-        comments[0]["content"].as_str().unwrap(),
-        "Pending comment from alice."
-    );
-    assert!(
-        comments[0]["to"]
-            .as_array()
-            .unwrap()
-            .contains(&json!("bob"))
-    );
-    assert!(comments[0]["ack"].as_array().unwrap().is_empty());
+    // Rows are positional: [id, line, author, author_type, ts, reply_to,
+    // thread, to, ack, reactions, remargin_kind, edited_at, attachments,
+    // content].
+    let row0 = comments[0].as_array().unwrap();
+    assert_eq!(row0.len(), 14_usize);
+    assert_eq!(row0[0].as_str().unwrap(), "ex1");
+    assert_eq!(row0[2].as_str().unwrap(), "alice");
+    assert_eq!(row0[3].as_str().unwrap(), "human");
+    assert_eq!(row0[13].as_str().unwrap(), "Pending comment from alice.");
+    assert!(row0[7].as_array().unwrap().contains(&json!("bob")));
+    assert!(row0[8].as_array().unwrap().is_empty());
+    // Nullable columns serialize as null, not omitted.
+    assert!(row0[5].is_null(), "reply_to null: {row0:?}");
+    assert!(row0[10].is_null(), "remargin_kind null: {row0:?}");
 
-    // Verify second comment.
-    assert_eq!(comments[1]["id"].as_str().unwrap(), "ex2");
-    assert_eq!(comments[1]["author_type"].as_str().unwrap(), "agent");
-    assert_eq!(comments[1]["ack"].as_array().unwrap().len(), 1_usize);
+    let row1 = comments[1].as_array().unwrap();
+    assert_eq!(row1[0].as_str().unwrap(), "ex2");
+    assert_eq!(row1[3].as_str().unwrap(), "agent");
+    // Acks compact to "author@ts" strings.
+    let acks = row1[8].as_array().unwrap();
+    assert_eq!(acks.len(), 1_usize);
+    assert!(acks[0].as_str().unwrap().contains('@'));
+}
+
+#[test]
+fn mcp_query_compact_include_integrity_widens_rows() {
+    let base = Path::new("/docs");
+    let system = MockSystem::new()
+        .with_file(Path::new("/docs/a.md"), DOC_EXPANDED.as_bytes())
+        .unwrap();
+    let config = test_config();
+
+    let response = call(
+        &system,
+        base,
+        &config,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 1_i32,
+            "method": "tools/call",
+            "params": {
+                "name": "query",
+                "arguments": { "expanded": true, "include_integrity": true }
+            }
+        }),
+    );
+
+    let result = extract_tool_text(&response);
+    // 16 columns: checksum + signature inserted immediately before content.
+    let cols = result["comment_cols"].as_array().unwrap();
+    assert_eq!(cols.len(), 16_usize);
+    assert_eq!(cols[13], "checksum");
+    assert_eq!(cols[14], "signature");
+    assert_eq!(cols[15], "content");
+
+    let comments = result["results"][0]["comments"].as_array().unwrap();
+    let row0 = comments[0].as_array().unwrap();
+    assert_eq!(row0.len(), 16_usize);
+    // checksum carries the on-disk value; signature is null when unsigned.
+    assert_eq!(row0[13].as_str().unwrap(), "sha256:ex1");
+    assert!(row0[14].is_null(), "unsigned signature is null: {row0:?}");
+    assert_eq!(row0[15].as_str().unwrap(), "Pending comment from alice.");
 }
 
 #[test]
@@ -2381,6 +2442,13 @@ fn mcp_query_summary_omits_comments() {
                 "arguments": { "summary": true }
             }
         }),
+    );
+
+    // Summary stays light — still minified, just no comments.
+    let raw = extract_tool_raw_text(&response);
+    assert!(
+        !raw.contains('\n'),
+        "summary payload must be minified: {raw}"
     );
 
     let result = extract_tool_text(&response);
@@ -4161,7 +4229,7 @@ fn mcp_query_pending_includes_broadcast_rem_4j91() {
 
     let result = extract_tool_text(&response);
     let comments = result["results"][0]["comments"].as_array().unwrap();
-    let mut ids: Vec<&str> = comments.iter().map(|c| c["id"].as_str().unwrap()).collect();
+    let mut ids: Vec<&str> = comments.iter().map(|c| c[0].as_str().unwrap()).collect();
     ids.sort_unstable();
     // Expected pending: brd_open (broadcast, no acks), dir_me, dir_other.
     // brd_mine is NOT pending (tester's ack closes the broadcast).
@@ -4198,7 +4266,7 @@ fn mcp_query_pending_for_me_uses_server_identity() {
 
     let result = extract_tool_text(&response);
     let comments = result["results"][0]["comments"].as_array().unwrap();
-    let ids: Vec<&str> = comments.iter().map(|c| c["id"].as_str().unwrap()).collect();
+    let ids: Vec<&str> = comments.iter().map(|c| c[0].as_str().unwrap()).collect();
     assert_eq!(ids, vec!["dir_me"]);
 }
 
@@ -4233,7 +4301,7 @@ fn mcp_query_pending_broadcast_only_surfaces_unacked_broadcasts() {
 
     let result = extract_tool_text(&response);
     let comments = result["results"][0]["comments"].as_array().unwrap();
-    let ids: Vec<&str> = comments.iter().map(|c| c["id"].as_str().unwrap()).collect();
+    let ids: Vec<&str> = comments.iter().map(|c| c[0].as_str().unwrap()).collect();
     assert_eq!(ids, vec!["brd_open"]);
 }
 
@@ -4268,7 +4336,7 @@ fn mcp_query_pending_for_me_and_broadcast_union() {
 
     let result = extract_tool_text(&response);
     let comments = result["results"][0]["comments"].as_array().unwrap();
-    let mut ids: Vec<&str> = comments.iter().map(|c| c["id"].as_str().unwrap()).collect();
+    let mut ids: Vec<&str> = comments.iter().map(|c| c[0].as_str().unwrap()).collect();
     ids.sort_unstable();
     assert_eq!(ids, vec!["brd_open", "dir_me"]);
 }
@@ -4725,7 +4793,7 @@ fn mcp_query_kind_filter_or_semantics() {
                 .as_array()
                 .unwrap()
                 .iter()
-                .map(|c| c["id"].as_str().unwrap())
+                .map(|c| c[0].as_str().unwrap())
         })
         .collect();
     ids.sort_unstable();

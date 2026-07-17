@@ -641,7 +641,7 @@ remargin [OPTIONS] <COMMAND>
 
 | Command | Description |
 |---------|-------------|
-| `query` | Search across documents for comments (filter by `--pending`, `--pending-for`, `--pending-for-me`, `--pending-broadcast`, `--author`, `--since`, `--comment-id`, `--kind`; `--expanded` for inline comment details) |
+| `query` | Search across documents for comments (filter by `--pending`, `--pending-for`, `--pending-for-me`, `--pending-broadcast`, `--author`, `--since`, `--comment-id`, `--kind`; `--expanded` for inline comment details; `--json --compact` for a minified columnar payload, `--include-integrity` to add checksum/signature columns — see [Compact output](#compact-output)) |
 | `search` | Full-text search across documents (supports `--regex`, `--scope`, `--context`, `--ignore-case`) |
 | `lint` | Run structural lint checks on a document |
 | `verify` | Verify comment integrity (checksums and signatures) |
@@ -703,7 +703,7 @@ Returns a projection of any mutating op (`ack`, `batch`, `comment`, `cp`, `delet
 | `--key <PATH>` | Path to Ed25519 signing key |
 | `--assets-dir <PATH>` | Assets directory path |
 | `--json` | Output as JSON |
-| `--compact` | Compact columnar JSON, minified. Requires `--json`; supported by `get` today (see [Compact output](#compact-output)) |
+| `--compact` | Compact columnar JSON, minified. Requires `--json`; supported by `get` and `query` today (see [Compact output](#compact-output)) |
 | `--verbose` | Enable tracing output |
 
 > To preview a mutating op without writing, use `remargin plan <op>`. The per-op `--dry-run` flag was removed in favour of the uniform `plan` projection.
@@ -715,6 +715,12 @@ Returns a projection of any mutating op (`ack`, `batch`, `comment`, `cp`, `delet
 - **With `--line-numbers`:** `{start_line, lines, links_cols, links}`. `lines` is an array of bare strings; line `i`'s number is `start_line + i` (no per-line `{line, text}` objects).
 - **Without `--line-numbers`:** `{content, links_cols, links}` — `content` is the document text as one string.
 - **`links`** rows are positional arrays named by `links_cols` (`["alias", "lines", "target", "title"]`); `alias` / `title` are `null` when absent. The verbose `count` (always `lines.len()`) and `path` columns are dropped. A link's on-disk path is derivable from `target`: verbatim when it carries a file extension, else `target + ".md"`.
+
+`remargin query ... --json --compact` emits the same token-lean, minified variant of the `query` payload the MCP `query` tool returns unconditionally. Plain `--json` is unchanged (verbose `ExpandedComment` objects).
+
+- Shape: `{base_path, comment_cols, results}`, where each result is `{path, comment_count, pending_count, pending_for, last_activity, comments}`.
+- **`comments`** rows are positional arrays named once by the envelope's `comment_cols` header: `["id", "line", "author", "author_type", "ts", "reply_to", "thread", "to", "ack", "reactions", "remargin_kind", "edited_at", "attachments", "content"]` (`content` last). Acks compact to `author@ts` strings; the verbose per-comment `checksum` / `signature` and the redundant `file` are dropped. Nullable columns (`reply_to`, `thread`, `remargin_kind`, `edited_at`) are `null` when absent.
+- **`--include-integrity`** (requires `--compact`) re-adds `checksum`, `signature` as columns immediately before `content`, widening both `comment_cols` and every row. On the MCP surface this is the `include_integrity: true` boolean.
 
 ## Tracking change
 

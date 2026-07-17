@@ -224,6 +224,12 @@ remargin batch --ops '[
 
 **CLI fallback:** when you must drop to the CLI (MCP unreachable), pass **`--json --compact`** to `remargin get` to obtain the same shape. Plain `remargin get --json` is the older verbose payload (`{line, text}` objects, six-column links) — only use it if a caller explicitly needs the legacy shape.
 
+**`query` returns a compact, minified payload too.** The MCP `query` tool always returns the token-lean columnar shape (no format flag): `{base_path, comment_cols, results}`, each result `{path, comment_count, pending_count, pending_for, last_activity, comments}`.
+
+- `comments` rows are positional arrays named once by the envelope's `comment_cols` = `["id", "line", "author", "author_type", "ts", "reply_to", "thread", "to", "ack", "reactions", "remargin_kind", "edited_at", "attachments", "content"]` (`content` last). Acks are `author@ts` strings; the verbose `checksum` / `signature` and the redundant per-comment `file` are dropped. Nullable columns (`reply_to`, `thread`, `remargin_kind`, `edited_at`) are `null` when absent.
+- Pass `include_integrity: true` (MCP) / `--include-integrity` (CLI, requires `--compact`) to add `checksum`, `signature` columns immediately before `content`.
+- **CLI fallback:** `remargin query ... --json --compact` yields the same shape; plain `--json` is the older verbose `ExpandedComment` objects.
+
 ### Q: The doc references an image. Should I view it?
 
 Yes — always view it before acting on the surrounding text. Markdown is often sparse because the visual is the spec (showing a bug, layout, before/after state, etc.). Skipping the image produces vague or wrong conclusions.

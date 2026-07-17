@@ -89,8 +89,11 @@ pub struct RestrictParams<'cmd> {
 }
 
 /// How `query` results are rendered. Mutually-exclusive successor to the
-/// previous `json_mode` / `pretty` / `summary` bool triple.
+/// previous `json_mode` / `pretty` / `summary` bool triple. `Compact`
+/// carries `include_integrity` in the variant (only reachable under
+/// `--compact`), keeping it off the `QueryParams` bool budget.
 pub enum QueryOutputMode {
+    Compact { include_integrity: bool },
     Json,
     Plain,
     Pretty,
