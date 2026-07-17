@@ -37,7 +37,7 @@ const RELATION_PROPERTIES: &[&str] = &["up", "related"];
 /// A single outbound link from a document, deduped by target.
 ///
 /// One `Link` exists per distinct `target`; every occurrence of that
-/// target in the scanned text contributes its line to `ref_lines` and
+/// target in the scanned text contributes its line to `lines` and
 /// bumps `count`.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[non_exhaustive]
@@ -48,16 +48,16 @@ pub struct Link {
     /// Omitted when the link had no distinct display text.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub alias: Option<String>,
-    /// Number of occurrences (`ref_lines.len()`).
+    /// Number of occurrences (`lines.len()`).
     pub count: usize,
+    /// 1-indexed line of every occurrence of this target. Slice-relative
+    /// when the `get` that produced it was sliced; whole-file-relative
+    /// otherwise.
+    pub lines: Vec<usize>,
     /// Same-folder resolved file. Always present: only locally-resolving
     /// links are returned (external URLs are dropped).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
-    /// 1-indexed line of every occurrence of this target. Slice-relative
-    /// when the `get` that produced it was sliced; whole-file-relative
-    /// otherwise.
-    pub ref_lines: Vec<usize>,
     /// The link target: a note name / relative file for the local link.
     pub target: String,
     /// One-hop metadata: the target document's own title, when the link
@@ -118,8 +118,8 @@ fn dedup_and_resolve(raw: Vec<RawLink>, base_dir: &Path, system: &dyn System) ->
         }
 
         if let Some(existing) = out.iter_mut().find(|link| link.target == occurrence.target) {
-            existing.ref_lines.push(occurrence.line);
-            existing.count = existing.ref_lines.len();
+            existing.lines.push(occurrence.line);
+            existing.count = existing.lines.len();
             if existing.alias.is_none() {
                 existing.alias = occurrence.alias;
             }
@@ -135,8 +135,8 @@ fn dedup_and_resolve(raw: Vec<RawLink>, base_dir: &Path, system: &dyn System) ->
         out.push(Link {
             alias: occurrence.alias,
             count: 1,
+            lines: vec![occurrence.line],
             path,
-            ref_lines: vec![occurrence.line],
             target: occurrence.target,
             title,
         });
