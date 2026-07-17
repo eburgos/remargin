@@ -382,6 +382,18 @@ fn malformed_stdin_fails() {
     assert!(reason.contains("malformed PreToolUse event"));
 }
 
+/// An out-of-realm `trusted_roots` entry makes resolution fail closed;
+/// the hook surfaces it loudly as `Fail` (exit 2) rather than
+/// silent-allowing the touched path.
+#[test]
+fn out_of_realm_trusted_root_fails_loud() {
+    let system = mock_with(&[("/r/.remargin.yaml", &restrict_yaml("/other/secret"))]);
+    let stdin = event_json("Read", "/r", &json!({ "file_path": "/r/foo.md" }));
+    let reason = expect_fail(pretool(&system, &stdin));
+    assert!(reason.contains("permissions resolve failed"), "{reason}");
+    assert!(reason.contains("/other/secret"), "{reason}");
+}
+
 /// Test 15: missing `tool_name` → `Fail`.
 #[test]
 fn missing_tool_name_fails() {

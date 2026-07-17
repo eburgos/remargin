@@ -505,6 +505,44 @@ fn leftover_clean_when_no_projected_or_stale_denies() {
     assert!(report.is_clean(), "expected clean report: {report:#?}");
 }
 
+// --- TrustedRootEscape (out-of-realm entry) unit tests ---
+
+/// An out-of-realm `trusted_roots` entry makes `resolve_permissions` fail
+/// closed. Doctor must still produce a finding — naming the entry and the
+/// resolved anchor, with a move-it-back remedy — rather than crash on the
+/// resolve error it exists to explain.
+#[test]
+fn out_of_realm_trusted_root_emits_finding_without_crashing() {
+    let yaml = "permissions:\n  trusted_roots:\n    - path: /other/secret\n";
+    let system = mock_with_files(&[
+        ("/home/u/.claude/settings.json", &hook_settings_json()),
+        ("/r/.remargin.yaml", yaml),
+    ]);
+    let report = run_doctor(
+        &system,
+        Path::new("/r"),
+        Path::new("/home/u/.claude/settings.json"),
+    )
+    .unwrap();
+    let escapes: Vec<&DoctorFinding> = report
+        .findings
+        .iter()
+        .filter(|f| f.kind == FindingKind::TrustedRootEscape)
+        .collect();
+    assert_eq!(escapes.len(), 1, "expected one escape finding: {report:#?}");
+    assert!(
+        escapes[0].message.contains("/other/secret")
+            && escapes[0].message.contains("/r/.remargin.yaml"),
+        "message names entry and file: {}",
+        escapes[0].message,
+    );
+    assert!(
+        escapes[0].remedy.contains("restrict") || escapes[0].remedy.contains("Move"),
+        "remedy offers a fix: {}",
+        escapes[0].remedy,
+    );
+}
+
 fn leftover_finding_fixture(rule: &str, file: &str) -> DoctorFinding {
     DoctorFinding {
         kind: FindingKind::LeftoverProjectedRule,

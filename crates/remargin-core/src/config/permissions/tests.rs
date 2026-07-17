@@ -493,8 +493,8 @@ fn lint_permissions_returns_empty_when_clean() {
 }
 
 #[test]
-fn absolute_restrict_path_preserved() {
-    let yaml = "permissions:\n  trusted_roots:\n    - path: /etc/secret\n";
+fn in_realm_absolute_restrict_path_preserved() {
+    let yaml = "permissions:\n  trusted_roots:\n    - path: /realm/etc/secret\n";
     let system = MockSystem::new()
         .with_dir(Path::new("/realm"))
         .unwrap()
@@ -503,7 +503,94 @@ fn absolute_restrict_path_preserved() {
     let resolved = resolve_permissions(&system, Path::new("/realm")).unwrap();
     assert_eq!(
         resolved.trusted_roots[0].path,
-        TrustedRootPath::Absolute(PathBuf::from("/etc/secret"))
+        TrustedRootPath::Absolute(PathBuf::from("/realm/etc/secret"))
+    );
+}
+
+/// An absolute entry pointing outside the declaring realm is a
+/// misconfiguration: resolution fails closed, naming the yaml, the entry
+/// as written, and the resolved anchor.
+#[test]
+fn out_of_realm_absolute_entry_fails_resolution() {
+    let yaml = "permissions:\n  trusted_roots:\n    - path: /other/secret\n";
+    let system = MockSystem::new()
+        .with_dir(Path::new("/realm"))
+        .unwrap()
+        .with_file(Path::new("/realm/.remargin.yaml"), yaml.as_bytes())
+        .unwrap();
+    let err = resolve_permissions(&system, Path::new("/realm")).unwrap_err();
+    let chain = format!("{err:#}");
+    assert!(chain.contains("/realm/.remargin.yaml"), "{chain}");
+    assert!(chain.contains("/other/secret"), "{chain}");
+}
+
+/// A relative entry that climbs out via `../` escapes even though it never
+/// looks absolute — the check runs on the resolved anchor.
+#[test]
+fn dotdot_escape_entry_fails_resolution() {
+    let yaml = "permissions:\n  trusted_roots:\n    - path: ../sibling\n";
+    let system = MockSystem::new()
+        .with_dir(Path::new("/realm"))
+        .unwrap()
+        .with_file(Path::new("/realm/.remargin.yaml"), yaml.as_bytes())
+        .unwrap();
+    let err = resolve_permissions(&system, Path::new("/realm")).unwrap_err();
+    let chain = format!("{err:#}");
+    assert!(chain.contains("/realm/.remargin.yaml"), "{chain}");
+    assert!(chain.contains("../sibling"), "{chain}");
+    assert!(chain.contains("/sibling"), "{chain}");
+}
+
+/// A `~` expansion landing outside the realm escapes just like a written
+/// absolute path — driven through `MockSystem`'s HOME.
+#[test]
+fn tilde_expansion_escape_fails_resolution() {
+    let yaml = "permissions:\n  trusted_roots:\n    - ~/notes\n";
+    let system = MockSystem::new()
+        .with_env("HOME", "/home/alice")
+        .unwrap()
+        .with_dir(Path::new("/realm"))
+        .unwrap()
+        .with_file(Path::new("/realm/.remargin.yaml"), yaml.as_bytes())
+        .unwrap();
+    let err = resolve_permissions(&system, Path::new("/realm")).unwrap_err();
+    let chain = format!("{err:#}");
+    assert!(chain.contains("/realm/.remargin.yaml"), "{chain}");
+    assert!(chain.contains("/home/alice/notes"), "{chain}");
+}
+
+/// A `~` expansion that lands inside the realm is contained and resolves.
+#[test]
+fn tilde_expansion_inside_realm_resolves() {
+    let yaml = "permissions:\n  trusted_roots:\n    - ~/notes\n";
+    let system = MockSystem::new()
+        .with_env("HOME", "/realm/home/alice")
+        .unwrap()
+        .with_dir(Path::new("/realm"))
+        .unwrap()
+        .with_file(Path::new("/realm/.remargin.yaml"), yaml.as_bytes())
+        .unwrap();
+    let resolved = resolve_permissions(&system, Path::new("/realm")).unwrap();
+    assert_eq!(
+        resolved.trusted_roots[0].path,
+        TrustedRootPath::Absolute(PathBuf::from("/realm/home/alice/notes"))
+    );
+}
+
+/// Lint reports the out-of-realm entry, naming the entry as written.
+#[test]
+fn lint_reports_out_of_realm_trusted_root() {
+    let yaml = "permissions:\n  trusted_roots:\n    - path: /other/secret\n";
+    let system = MockSystem::new()
+        .with_dir(Path::new("/realm"))
+        .unwrap()
+        .with_file(Path::new("/realm/.remargin.yaml"), yaml.as_bytes())
+        .unwrap();
+    let findings = lint_permissions_in_parents(&system, Path::new("/realm")).unwrap();
+    assert!(
+        findings.iter().any(|f| f.message.contains("/other/secret")
+            && f.message.contains("outside the realm")),
+        "expected out-of-realm finding; got {findings:#?}",
     );
 }
 
@@ -521,28 +608,31 @@ fn trusted_roots_cwd_fallback_when_none_declared() {
 
 #[test]
 fn trusted_roots_use_declared_paths() {
-    let yaml = "permissions:\n  trusted_roots:\n    - /a\n    - /b\n";
+    let yaml = "permissions:\n  trusted_roots:\n    - /realm/a\n    - /realm/b\n";
     let system = MockSystem::new()
         .with_dir(Path::new("/realm"))
         .unwrap()
         .with_file(Path::new("/realm/.remargin.yaml"), yaml.as_bytes())
         .unwrap();
     let resolved = resolve_trusted_roots_for_cwd(&system, Path::new("/realm")).unwrap();
-    assert_eq!(resolved, vec![PathBuf::from("/a"), PathBuf::from("/b")]);
+    assert_eq!(
+        resolved,
+        vec![PathBuf::from("/realm/a"), PathBuf::from("/realm/b")]
+    );
 }
 
 #[test]
 fn trusted_roots_expand_tilde_against_mock_home() {
     let yaml = "permissions:\n  trusted_roots:\n    - ~/notes\n";
     let system = MockSystem::new()
-        .with_env("HOME", "/home/alice")
+        .with_env("HOME", "/realm/home/alice")
         .unwrap()
         .with_dir(Path::new("/realm"))
         .unwrap()
         .with_file(Path::new("/realm/.remargin.yaml"), yaml.as_bytes())
         .unwrap();
     let resolved = resolve_trusted_roots_for_cwd(&system, Path::new("/realm")).unwrap();
-    assert_eq!(resolved, vec![PathBuf::from("/home/alice/notes")]);
+    assert_eq!(resolved, vec![PathBuf::from("/realm/home/alice/notes")]);
 }
 
 // trusted_roots: absent vs explicitly empty list

@@ -19,7 +19,9 @@ use anyhow::Result;
 use os_shim::System;
 use serde::{Deserialize, Serialize};
 
-use crate::config::permissions::resolve::resolve_permissions;
+use crate::config::permissions::resolve::{
+    TrustedRootEscape, find_trusted_root_escapes, resolve_permissions,
+};
 use crate::permissions::claude_sync::{self, RuleSet, canonicalize_rule, hook_covered_rules};
 use crate::permissions::pretool_install::{self, TestOutcome};
 use crate::permissions::session_guard_install::{self, TestOutcome as GuardTestOutcome};
@@ -59,6 +61,10 @@ pub enum FindingKind {
     /// `PATH`) fails open silently — the guard is the fail-open backstop
     /// that surfaces such a failure into the session.
     SessionGuardMissing,
+    /// A `trusted_roots` entry resolves outside the realm that declares
+    /// it. Fail-closed at resolve time; doctor names the file, the entry,
+    /// and the resolved anchor so it can be moved back inside the realm.
+    TrustedRootEscape,
 }
 
 /// A single diagnostic finding from a doctor check.
@@ -201,15 +207,25 @@ pub fn run_doctor(
         });
     }
 
-    let settings_files = [
-        user_settings_file.to_path_buf(),
-        project_settings_file.clone(),
-    ];
-    findings.extend(leftover_projected_rule_findings(
-        system,
-        cwd,
-        &settings_files,
-    )?);
+    // Lint containment before resolving: an out-of-realm entry makes
+    // `resolve_permissions` (which the leftover check walks through)
+    // fail closed, so doctor must name the misconfig here rather than
+    // crash on the very error it exists to explain.
+    let escapes = find_trusted_root_escapes(system, cwd)?;
+    let has_escape = !escapes.is_empty();
+    findings.extend(escapes.iter().map(trusted_root_escape_finding));
+
+    if !has_escape {
+        let settings_files = [
+            user_settings_file.to_path_buf(),
+            project_settings_file.clone(),
+        ];
+        findings.extend(leftover_projected_rule_findings(
+            system,
+            cwd,
+            &settings_files,
+        )?);
+    }
 
     Ok(DoctorReport {
         findings,
@@ -282,6 +298,22 @@ fn is_stale_remargin_cli_deny(canonical_rule: &str) -> bool {
         .strip_prefix("Bash(")
         .and_then(|inner| inner.strip_suffix(')'))
         .is_some_and(|inner| inner.split_whitespace().next() == Some("remargin"))
+}
+
+fn trusted_root_escape_finding(escape: &TrustedRootEscape) -> DoctorFinding {
+    DoctorFinding {
+        kind: FindingKind::TrustedRootEscape,
+        message: escape.message(),
+        remedy: format!(
+            "Move the trusted_roots entry `{}` in {} so it resolves at or below {}, or run \
+             `remargin restrict` from the folder that actually contains {}.",
+            escape.entry,
+            escape.source_file.display(),
+            escape.realm_dir.display(),
+            escape.anchor.display(),
+        ),
+        severity: Severity::Warning,
+    }
 }
 
 fn leftover_finding(rule: &str, file: &Path, reason: &LeftoverReason) -> DoctorFinding {

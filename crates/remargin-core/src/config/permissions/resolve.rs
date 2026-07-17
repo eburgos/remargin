@@ -1,7 +1,7 @@
 //! Parent-walk resolver for the `permissions:` block. Pure data — no
 //! enforcement.
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context as _, Result};
 use os_shim::System;
@@ -168,6 +168,48 @@ pub struct ResolvedTrustedRoot {
     pub source_file: PathBuf,
 }
 
+/// A `trusted_roots` entry whose resolved anchor escapes the realm that
+/// declared it.
+///
+/// Covers an out-of-realm absolute path, a `../` escape, or a `~`/`$VAR`
+/// expansion landing outside. Fail-closed at resolve time; also surfaced
+/// by lint and doctor so the misconfig is named, not silently inverted
+/// into protecting a sibling while denying the realm.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct TrustedRootEscape {
+    /// Resolved absolute anchor that fell outside the realm.
+    pub anchor: PathBuf,
+
+    /// The entry exactly as written in the `.remargin.yaml`.
+    pub entry: String,
+
+    /// Directory of the declaring `.remargin.yaml` — the realm the
+    /// anchor had to stay at or below.
+    pub realm_dir: PathBuf,
+
+    /// `.remargin.yaml` that declared the offending entry.
+    pub source_file: PathBuf,
+}
+
+impl TrustedRootEscape {
+    /// Diagnostic naming the file, the entry as written, the resolved
+    /// anchor, and the realm it escaped. Shared verbatim by the
+    /// resolve-time error, the lint finding, and the doctor finding.
+    #[must_use]
+    pub fn message(&self) -> String {
+        format!(
+            "trusted_roots entry `{}` in {} resolves to {}, outside the realm it declares ({}); a \
+             trusted root must resolve at or below the directory of the .remargin.yaml that \
+             declares it",
+            self.entry,
+            self.source_file.display(),
+            self.anchor.display(),
+            self.realm_dir.display(),
+        )
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum TrustedRootPath {
@@ -188,7 +230,18 @@ fn extend_resolved(
     system: &dyn System,
     block: &Permissions,
     source_file: &Path,
-) {
+) -> Result<()> {
+    // Fail closed before recording anything: an out-of-realm anchor must
+    // not silently invert enforcement (protect a sibling, deny the realm's
+    // own files). Named loudly here so the pretool hook maps it to Fail and
+    // the op guard surfaces it as an op error.
+    if let Some(escape) = block_trusted_root_escapes(system, block, source_file)
+        .into_iter()
+        .next()
+    {
+        anyhow::bail!("{}", escape.message());
+    }
+
     let source_dir = source_file.parent().unwrap_or(source_file);
 
     // Nearest-wins: only record the first declaration found (deepest,
@@ -237,6 +290,117 @@ fn extend_resolved(
             source_file: source_file.to_path_buf(),
         });
     }
+
+    Ok(())
+}
+
+/// Every `trusted_roots` entry in `block` whose resolved anchor escapes
+/// the declaring realm. Wildcard entries anchor at the realm root and are
+/// inherently contained, so they are skipped. This is the one containment
+/// engine — resolve (fail-closed), lint, and doctor all consult it.
+fn block_trusted_root_escapes(
+    system: &dyn System,
+    block: &Permissions,
+    source_file: &Path,
+) -> Vec<TrustedRootEscape> {
+    let source_dir = source_file.parent().unwrap_or(source_file);
+    let Some(entries) = block.trusted_roots.as_ref() else {
+        return Vec::new();
+    };
+    entries
+        .iter()
+        .filter_map(|entry| {
+            let raw = entry.path();
+            if raw == TRUSTED_ROOT_WILDCARD {
+                return None;
+            }
+            let anchor = resolve_relative(system, source_dir, raw);
+            (!anchor_within_realm(source_dir, &anchor)).then(|| TrustedRootEscape {
+                anchor,
+                entry: raw.to_owned(),
+                realm_dir: source_dir.to_path_buf(),
+                source_file: source_file.to_path_buf(),
+            })
+        })
+        .collect()
+}
+
+/// `true` when `anchor` resolves at or below `source_dir`. Both sides are
+/// lexically normalized first so a `../` escape survives `MockSystem`'s
+/// join-only `canonicalize` (which never collapses parent traversals).
+fn anchor_within_realm(source_dir: &Path, anchor: &Path) -> bool {
+    let realm = lexical_normalize(source_dir);
+    let candidate = lexical_normalize(anchor);
+    candidate == realm || candidate.starts_with(&realm)
+}
+
+/// Collapse `.` / `..` without touching disk. Leading `..` that cannot be
+/// popped are preserved so an escape above the root never masquerades as
+/// contained.
+fn lexical_normalize(path: &Path) -> PathBuf {
+    let mut parts: Vec<Component<'_>> = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::ParentDir => {
+                if matches!(parts.last(), Some(Component::Normal(_))) {
+                    parts.pop();
+                } else {
+                    parts.push(component);
+                }
+            }
+            Component::CurDir => {}
+            Component::Normal(_) | Component::Prefix(_) | Component::RootDir => {
+                parts.push(component);
+            }
+        }
+    }
+    parts.iter().collect()
+}
+
+/// Walk parents of `start_dir` and collect every out-of-realm
+/// `trusted_roots` entry.
+///
+/// Read-only — parse failures are surfaced by the lint / resolve
+/// surfaces, so a file that fails to parse contributes no escape here.
+/// Lets doctor name the misconfig without triggering the fail-closed
+/// resolve error.
+///
+/// # Errors
+///
+/// I/O failure while walking the parent chain or reading any
+/// `.remargin.yaml` on the path.
+pub fn find_trusted_root_escapes(
+    system: &dyn System,
+    start_dir: &Path,
+) -> Result<Vec<TrustedRootEscape>> {
+    let mut escapes = Vec::new();
+    let mut current = start_dir.to_path_buf();
+
+    loop {
+        let candidate = current.join(CONFIG_FILENAME);
+        let exists = system
+            .exists(&candidate)
+            .with_context(|| format!("checking existence of {}", candidate.display()))?;
+
+        if exists {
+            let raw = system
+                .read_to_string(&candidate)
+                .with_context(|| format!("reading {}", candidate.display()))?;
+            if let Ok(projection) = serde_yaml::from_str::<PermissionsOnly>(&raw) {
+                escapes.extend(block_trusted_root_escapes(
+                    system,
+                    &projection.permissions,
+                    &candidate,
+                ));
+            }
+        }
+
+        if !current.pop() {
+            break;
+        }
+    }
+
+    Ok(escapes)
 }
 
 /// Anchor for a [`ResolvedTrustedRoot`] — its absolute path or its
@@ -319,14 +483,28 @@ pub fn lint_permissions_in_parents(
                 .read_to_string(&candidate)
                 .with_context(|| format!("reading {}", candidate.display()))?;
             collect_legacy_to_findings(&raw, &candidate, &mut findings);
-            if let Err(err) = serde_yaml::from_str::<PermissionsOnly>(&raw) {
-                let location = err.location();
-                findings.push(PermissionsLintError {
-                    column: location.as_ref().map(serde_yaml::Location::column),
-                    line: location.as_ref().map(serde_yaml::Location::line),
-                    message: err.to_string(),
-                    source_file: candidate.clone(),
-                });
+            match serde_yaml::from_str::<PermissionsOnly>(&raw) {
+                Ok(projection) => {
+                    for escape in
+                        block_trusted_root_escapes(system, &projection.permissions, &candidate)
+                    {
+                        findings.push(PermissionsLintError {
+                            column: None,
+                            line: None,
+                            message: escape.message(),
+                            source_file: candidate.clone(),
+                        });
+                    }
+                }
+                Err(err) => {
+                    let location = err.location();
+                    findings.push(PermissionsLintError {
+                        column: location.as_ref().map(serde_yaml::Location::column),
+                        line: location.as_ref().map(serde_yaml::Location::line),
+                        message: err.to_string(),
+                        source_file: candidate.clone(),
+                    });
+                }
             }
         }
 
@@ -393,7 +571,7 @@ pub fn resolve_permissions(system: &dyn System, start_dir: &Path) -> Result<Reso
                 .read_to_string(&candidate)
                 .with_context(|| format!("reading {}", candidate.display()))?;
             let block = parse_permissions_block(&raw, &candidate)?;
-            extend_resolved(&mut acc, system, &block, &candidate);
+            extend_resolved(&mut acc, system, &block, &candidate)?;
         }
 
         if !current.pop() {

@@ -60,6 +60,19 @@ fn scenario_01_no_restrict_allows_everything() {
     pre_mutate_check(&system, "comment", Path::new("/r/foo.md")).unwrap();
 }
 
+/// An out-of-realm `trusted_roots` entry makes resolution fail closed;
+/// the op guard surfaces it as an op error naming the yaml and the
+/// resolved anchor rather than proceeding under the inverted allow-list.
+#[test]
+fn out_of_realm_trusted_root_surfaces_op_error() {
+    let system = realm_with("permissions:\n  trusted_roots:\n    - path: /other/secret\n");
+    let err = pre_mutate_check(&system, "write", Path::new("/r/foo.md")).unwrap_err();
+    let chain = format!("{err:#}");
+    assert!(chain.contains("/r/.remargin.yaml"), "{chain}");
+    assert!(chain.contains("/other/secret"), "{chain}");
+    assert!(chain.contains("outside the realm"), "{chain}");
+}
+
 /// `restrict src/secret` allow-lists that subpath; mutating op INSIDE
 /// the allow-list succeeds.
 #[test]
