@@ -1464,7 +1464,7 @@ fn metadata_returns_document_info() {
 }
 
 #[test]
-fn get_binary_returns_base64_and_mime() {
+fn get_binary_returns_resource_block() {
     let base = Path::new("/docs");
     let system = system_with_doc(base, "pic.png", "fake-png-bytes");
     let config = test_config();
@@ -1484,13 +1484,76 @@ fn get_binary_returns_base64_and_mime() {
         }),
     );
 
-    let result = extract_tool_text(&response);
-    assert_eq!(result["binary"], true);
-    assert_eq!(result["mime"], "image/png");
-    assert!(result["path"].is_string());
-    assert!(result["size_bytes"].is_number());
+    let content = response["result"]["content"].as_array().unwrap();
+    assert_eq!(content.len(), 2, "content is a resource + metadata pair");
+
+    // Block 0: an embedded resource block; Claude Code saves the blob outside the
+    // realm and hands the model the file:// pointer.
+    assert_eq!(content[0]["type"], "resource");
+    let resource = &content[0]["resource"];
+    assert_eq!(resource["mimeType"], "image/png");
+    let uri = resource["uri"].as_str().unwrap();
+    assert!(
+        uri.starts_with("file://"),
+        "uri is a file:// pointer, got {uri}"
+    );
+    let blob = resource["blob"].as_str().unwrap();
+    assert!(!blob.starts_with("data:"), "blob must be bare base64");
     // base64 of "fake-png-bytes"
-    assert_eq!(result["content"], "ZmFrZS1wbmctYnl0ZXM=");
+    assert_eq!(blob, "ZmFrZS1wbmctYnl0ZXM=");
+    let decoded = BASE64_STANDARD.decode(blob).unwrap();
+    assert_eq!(
+        String::from_utf8(decoded).unwrap(),
+        "fake-png-bytes",
+        "blob decodes to the original file bytes"
+    );
+
+    // Block 1: the metadata envelope, carrying the injected elapsed_ms.
+    assert_eq!(content[1]["type"], "text");
+    let metadata: Value = serde_json::from_str(content[1]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(metadata["binary"], true);
+    assert_eq!(metadata["mime"], "image/png");
+    assert!(metadata["path"].is_string());
+    assert!(metadata["size_bytes"].is_number());
+    assert!(metadata.get("elapsed_ms").is_some(), "elapsed_ms injected");
+    assert!(metadata["elapsed_ms"].is_u64());
+}
+
+#[test]
+fn get_binary_records_nonzero_response_size() {
+    let base = Path::new("/docs");
+    // A payload whose base64 blob dwarfs the metadata text: only counting the
+    // nested resource.blob makes last_response_size reach it.
+    let payload = "x".repeat(4096);
+    let system = system_with_doc(base, "blob.png", &payload);
+    let config = test_config();
+    let mut session = super::SessionState::default();
+
+    let response = call_session(
+        &system,
+        base,
+        &config,
+        &mut session,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 1_i32,
+            "method": "tools/call",
+            "params": {
+                "name": "get",
+                "arguments": { "path": "blob.png", "binary": true }
+            }
+        }),
+    );
+
+    let blob_len = response["result"]["content"][0]["resource"]["blob"]
+        .as_str()
+        .unwrap()
+        .len();
+    assert!(
+        session.last_response_size >= blob_len,
+        "size {} should include the base64 resource blob ({blob_len} bytes)",
+        session.last_response_size
+    );
 }
 
 #[test]

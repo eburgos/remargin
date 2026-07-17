@@ -478,7 +478,9 @@ fn desc_get() -> ToolDesc {
         name: "get",
         description: "Read a file's contents. Text mode (default) returns \
              UTF-8 content. Pass `binary: true` to fetch non-markdown files \
-             as bytes; returns `{binary, content (base64), mime, path, \
+             as bytes; returns a content array with an embedded resource block \
+             (a file:// uri, mimeType, and base64 blob the harness saves outside \
+             the realm) plus a text block carrying `{binary, mime, path, \
              size_bytes}`. Rejects `.md` in binary mode. Run `metadata` first \
              to check size before pulling large blobs.",
         schema: json!({
@@ -2018,12 +2020,34 @@ fn handle_edit(
     Ok(responses::comment_edited(comment_id))
 }
 
+/// Build the MCP content array for a binary `get`: an embedded resource block
+/// (which the harness saves outside the realm, keeping the base64 out of
+/// context) plus a trailing text block carrying the metadata. PDFs ride this
+/// same plain-binary path — no rasterization.
+fn binary_resource_result(payload: &document::BinaryPayload) -> Value {
+    let blob = BASE64_STANDARD.encode(&payload.bytes);
+    let uri = format!("file://{}", payload.path.display());
+    let metadata = json!({
+        "binary": true,
+        "mime": payload.mime,
+        "path": payload.path,
+        "size_bytes": payload.size_bytes,
+    });
+    json!({
+        "content": [
+            { "type": "resource", "resource": { "uri": uri, "mimeType": payload.mime, "blob": blob } },
+            { "type": "text", "text": serde_json::to_string_pretty(&metadata).unwrap_or_default() },
+        ]
+    })
+}
+
 /// Handle the `get` tool: read a file's contents.
 ///
 /// When `binary: true`, bytes are read through the shared `read_binary`
-/// core helper (symmetric with CLI `get --binary`) and returned base64-
-/// encoded alongside size + mime. Markdown files are rejected in this mode
-/// so comment-preservation is never bypassed.
+/// core helper (symmetric with CLI `get --binary`) and returned as a content
+/// array: an embedded resource block carrying the base64 blob plus a trailing
+/// text block with size + mime. Markdown files are rejected in this mode so
+/// comment-preservation is never bypassed.
 fn handle_get(
     system: &dyn System,
     base_dir: &Path,
@@ -2047,14 +2071,7 @@ fn handle_get(
         }
         let payload =
             document::read_binary(system, base_dir, target, false, &config.trusted_roots)?;
-        let encoded = BASE64_STANDARD.encode(&payload.bytes);
-        return Ok(json!({
-            "binary": true,
-            "content": encoded,
-            "mime": payload.mime,
-            "path": payload.path,
-            "size_bytes": payload.size_bytes,
-        }));
+        return Ok(binary_resource_result(&payload));
     }
 
     let lines = match (start_line, end_line) {
@@ -2958,8 +2975,9 @@ fn handle_write(
 /// Scanning for the JSON text block (rather than assuming index 0) keeps
 /// `elapsed_ms` on image-/resource-first arrays whose metadata text block trails
 /// a non-text block — an image at index 0 would otherwise swallow it. The size
-/// sums the UTF-8 byte lengths of every emitted `text` and `data` string: an
-/// image-first result carries its weight in the base64 `data` block, which a
+/// sums the UTF-8 byte lengths of every emitted `text` and `data` string plus
+/// the base64 nested under a resource block's `resource.blob`: image- and
+/// resource-first results carry their weight outside the metadata text, which a
 /// content[0]-only measure would miss and record as 0.
 fn inject_elapsed_ms_and_measure(result: &mut Value, elapsed_ms: u64) -> usize {
     let Some(content) = result.get_mut("content").and_then(Value::as_array_mut) else {
@@ -2984,7 +3002,14 @@ fn inject_elapsed_ms_and_measure(result: &mut Value, elapsed_ms: u64) -> usize {
     }
     content
         .iter()
-        .flat_map(|item| [item.get("text"), item.get("data")])
+        .flat_map(|item| {
+            [
+                item.get("text"),
+                item.get("data"),
+                item.get("resource")
+                    .and_then(|resource| resource.get("blob")),
+            ]
+        })
         .flatten()
         .filter_map(Value::as_str)
         .map(str::len)
