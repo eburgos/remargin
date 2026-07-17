@@ -145,7 +145,8 @@ pub fn run_doctor(
     cwd: &Path,
     user_settings_file: &Path,
 ) -> Result<DoctorReport> {
-    let project_settings_file = cwd.join(".claude/settings.local.json");
+    // Same file `install --local` writes, so a local install is visible.
+    let project_settings_file = cwd.join(".claude/settings.json");
 
     let user_outcome = pretool_install::test(system, user_settings_file)?;
     let project_outcome = pretool_install::test(system, &project_settings_file)?;
@@ -216,9 +217,13 @@ pub fn run_doctor(
     findings.extend(escapes.iter().map(trusted_root_escape_finding));
 
     if !has_escape {
+        // Drift lives where the retired projection wrote: restrict emitted
+        // rules into settings.local.json, so that file is scanned alongside
+        // the hook-scope files.
         let settings_files = [
             user_settings_file.to_path_buf(),
             project_settings_file.clone(),
+            cwd.join(".claude/settings.local.json"),
         ];
         findings.extend(leftover_projected_rule_findings(
             system,

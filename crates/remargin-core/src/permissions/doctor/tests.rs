@@ -110,10 +110,11 @@ fn hook_in_user_scope_is_clean() {
     assert!(report.findings.is_empty());
 }
 
-/// Hook present in project-scope → clean report.
+/// Hook present in project-scope → clean report. Project scope is
+/// `.claude/settings.json` — the file `install --local` writes.
 #[test]
 fn hook_in_project_scope_is_clean() {
-    let system = mock_with_file("/r/.claude/settings.local.json", &hook_settings_json());
+    let system = mock_with_file("/r/.claude/settings.json", &hook_settings_json());
     let report = run_doctor(
         &system,
         Path::new("/r"),
@@ -176,7 +177,7 @@ fn hook_missing_finding_names_both_files() {
         finding.message
     );
     assert!(
-        finding.message.contains("/r/.claude/settings.local.json"),
+        finding.message.contains("/r/.claude/settings.json"),
         "message should name project-scope file: {}",
         finding.message
     );
@@ -235,7 +236,7 @@ fn report_includes_correct_settings_file_paths() {
     .unwrap();
     assert_eq!(
         report.project_settings_file,
-        PathBuf::from("/r/.claude/settings.local.json")
+        PathBuf::from("/r/.claude/settings.json")
     );
     assert_eq!(
         report.user_settings_file,
@@ -277,10 +278,7 @@ fn guard_in_project_scope_only_is_clean() {
             "/home/u/.claude/settings.json",
             &pretool_only_settings_json(),
         ),
-        (
-            "/r/.claude/settings.local.json",
-            &guard_only_settings_json(),
-        ),
+        ("/r/.claude/settings.json", &guard_only_settings_json()),
     ]);
     let report = run_doctor(
         &system,
