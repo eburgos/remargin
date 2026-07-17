@@ -28,7 +28,8 @@ const ALLOWED_EXTENSIONS: &[&str] = &[
     "dart", "lua", "r", "pl", "pm", "jl", "hs", "ex", "exs", "clj", "cljs", "cljc", "edn", "ml",
     "mli", "erl", "hrl", "zig", "nim", // Shell / scripting
     "sh", "bash", "zsh", "fish", "ps1", "psm1", "psd1", // SQL
-    "sql",  // Images
+    "sql",  // Infrastructure as code
+    "tf", "tfvars", "hcl", // Images
     "png", "jpg", "jpeg", "gif", "svg", "webp", // Documents
     "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", // Audio
     "mp3", "wav", "ogg", "flac", "m4a", // Video
@@ -56,7 +57,8 @@ const TEXT_EXTENSIONS: &[&str] = &[
     "dart", "lua", "r", "pl", "pm", "jl", "hs", "ex", "exs", "clj", "cljs", "cljc", "edn", "ml",
     "mli", "erl", "hrl", "zig", "nim", // Shell / scripting
     "sh", "bash", "zsh", "fish", "ps1", "psm1", "psd1", // SQL
-    "sql",
+    "sql",  // Infrastructure as code
+    "tf", "tfvars", "hcl",
 ];
 
 /// Check if a path is visible (allowed extension, not a dotfile).
@@ -81,6 +83,29 @@ pub fn is_visible(path: &Path, is_dir: bool) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
         .is_some_and(|ext| ALLOWED_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
+}
+
+/// Build the "not visible" error for a path that failed [`is_visible`].
+///
+/// When the sole reason is an extension outside the allowlist, name the
+/// extension so callers don't read a bare "file not visible" as a
+/// sandbox or permission failure.
+#[must_use]
+pub fn not_visible_message(path: &Path) -> String {
+    let display = path.display();
+    let is_dotfile = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with('.'));
+    if is_dotfile {
+        return format!("file not visible: {display}");
+    }
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some(ext) if !ALLOWED_EXTENSIONS.contains(&ext.to_lowercase().as_str()) => {
+            format!("file not visible: {display} (extension .{ext} is not in the allowlist)")
+        }
+        _ => format!("file not visible: {display}"),
+    }
 }
 
 /// Check if a file extension is text-based (supports `--lines`).
@@ -306,3 +331,6 @@ fn normalize_path(path: &Path) -> PathBuf {
     }
     parts.iter().collect()
 }
+
+#[cfg(test)]
+mod tests;

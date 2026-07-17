@@ -238,6 +238,36 @@ fn allowlist_dotfile_still_hidden_even_for_env() {
 }
 
 #[test]
+fn allowlist_terraform_family_visible_and_text() {
+    for path in &["main.tf", "prod.tfvars", "backend.hcl"] {
+        assert!(
+            allowlist::is_visible(Path::new(path), false),
+            "expected {path} to be visible"
+        );
+        assert!(
+            allowlist::is_text(Path::new(path)),
+            "expected {path} to be text"
+        );
+    }
+}
+
+#[test]
+fn not_visible_message_names_disallowed_extension() {
+    let msg = allowlist::not_visible_message(Path::new("app.exe"));
+    assert!(
+        msg.contains("app.exe") && msg.contains("extension .exe is not in the allowlist"),
+        "extension-only rejection must name the extension, got: {msg}"
+    );
+}
+
+#[test]
+fn not_visible_message_bare_for_dotfile() {
+    // A dotfile is hidden regardless of extension; don't blame the extension.
+    let msg = allowlist::not_visible_message(Path::new(".secret.md"));
+    assert_eq!(msg, "file not visible: .secret.md");
+}
+
+#[test]
 fn ls_visible_files() {
     let system = MockSystem::new()
         .with_current_dir("/project")
@@ -1274,6 +1304,38 @@ fn write_raw_create_new_file() {
 
     let result = system
         .read_to_string(Path::new("/project/new.json"))
+        .unwrap();
+    assert_eq!(result, raw_content);
+}
+
+#[test]
+fn write_raw_create_terraform_file() {
+    // A .tf authored raw+create must land byte-for-byte: no frontmatter
+    // injection, no comment wrapping.
+    let raw_content = "resource \"null_resource\" \"x\" {}\n";
+    let system = MockSystem::new()
+        .with_current_dir("/project")
+        .unwrap()
+        .with_dir(Path::new("/project"))
+        .unwrap();
+
+    let config = open_config();
+    document::write(
+        &system,
+        Path::new("/project"),
+        Path::new("terraform/main.tf"),
+        raw_content,
+        &config,
+        WriteOptions {
+            create: true,
+            raw: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    let result = system
+        .read_to_string(Path::new("/project/terraform/main.tf"))
         .unwrap();
     assert_eq!(result, raw_content);
 }

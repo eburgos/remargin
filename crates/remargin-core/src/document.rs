@@ -469,7 +469,7 @@ pub fn get(
         allowlist::resolve_sandboxed(system, base_dir, path, unrestricted, trusted_roots)?;
 
     if !allowlist::is_visible(&resolved, false) {
-        bail!("file not visible: {}", path.display());
+        bail!("{}", allowlist::not_visible_message(path));
     }
 
     if lines.is_some() && !allowlist::is_text(&resolved) {
@@ -541,7 +541,7 @@ pub fn get_with_links(
         allowlist::resolve_sandboxed(system, base_dir, path, unrestricted, trusted_roots)?;
 
     if !allowlist::is_visible(&resolved, false) {
-        bail!("file not visible: {}", path.display());
+        bail!("{}", allowlist::not_visible_message(path));
     }
 
     if lines.is_some() && !allowlist::is_text(&resolved) {
@@ -660,7 +660,7 @@ pub fn read_binary(
         allowlist::resolve_sandboxed(system, base_dir, path, unrestricted, trusted_roots)?;
 
     if !allowlist::is_visible(&resolved, false) {
-        bail!("file not visible: {}", path.display());
+        bail!("{}", allowlist::not_visible_message(path));
     }
 
     // Never bypass comment-preservation through the binary surface. Symmetric
@@ -758,7 +758,7 @@ pub fn rm(
     }
 
     if !allowlist::is_visible(&resolved, false) {
-        bail!("file not visible: {}", path.display());
+        bail!("{}", allowlist::not_visible_message(path));
     }
 
     // Existence is a filesystem fact — NOT "are the bytes valid UTF-8".
@@ -968,7 +968,7 @@ pub fn write(
     ensure_not_forbidden_target(&resolved)?;
 
     if !allowlist::is_visible(&resolved, false) {
-        bail!("file not visible: {}", path.display());
+        bail!("{}", allowlist::not_visible_message(path));
     }
 
     if opts.binary {
@@ -1192,7 +1192,7 @@ pub fn project_write(
     ensure_not_forbidden_target(&resolved)?;
 
     if !allowlist::is_visible(&resolved, false) {
-        bail!("file not visible: {}", path.display());
+        bail!("{}", allowlist::not_visible_message(path));
     }
 
     if opts.binary {
@@ -1389,7 +1389,7 @@ pub fn metadata(
         allowlist::resolve_sandboxed(system, base_dir, path, unrestricted, trusted_roots)?;
 
     if !allowlist::is_visible(&resolved, false) {
-        bail!("file not visible: {}", path.display());
+        bail!("{}", allowlist::not_visible_message(path));
     }
 
     let mime_type = mime::mime_for_extension(&resolved);

@@ -297,7 +297,7 @@ fn try_replace_one(
     pre_mutate_check_for_caller(system, "replace", resolved, &config.caller_info())?;
 
     if !allowlist::is_visible(resolved, false) {
-        bail!("file not visible: {}", resolved.display());
+        bail!("{}", allowlist::not_visible_message(resolved));
     }
 
     let content = system
