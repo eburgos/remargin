@@ -81,6 +81,11 @@ impl IdentityArgs {
 /// `--json` before the subcommand must now place it after.
 #[derive(clap::Args, Default)]
 pub struct OutputArgs {
+    /// Compact columnar JSON (implies minified output). Requires --json.
+    /// Supported by get, search, query, and activity.
+    #[arg(long, requires = "json")]
+    pub compact: bool,
+
     /// Output as JSON.
     #[arg(long)]
     pub json: bool,

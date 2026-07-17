@@ -19,8 +19,9 @@ use serde_json::{Value, json};
 use crate::ObsidianAction;
 use crate::dispatch::{PERMISSIONS_NOT_RESTRICTED_MARKER, build_identity_flags, tri_state_flag};
 use crate::io::{
-    IoSinks, expand_cli_path, expand_cli_pathbuf, out, out_json, out_raw, parse_line_range,
-    print_output, read_stdin, resolve_doc_path, resolve_purge_path, truncate_content,
+    IoSinks, expand_cli_path, expand_cli_pathbuf, out, out_json, out_json_min, out_raw,
+    parse_line_range, print_output, read_stdin, resolve_doc_path, resolve_purge_path,
+    truncate_content,
 };
 #[cfg(feature = "obsidian")]
 use crate::obsidian;
@@ -543,7 +544,7 @@ pub fn cmd_get(
         _ => None,
     };
 
-    if gp.json_mode && gp.line_numbers {
+    if gp.output.is_json() && gp.line_numbers {
         let result = document::get_with_links(
             system,
             cwd,
@@ -554,17 +555,31 @@ pub fn cmd_get(
             &config.trusted_roots,
         )?;
         let start_num = lines.map_or(1, |(s, _)| s);
-        let json_lines: Vec<Value> = result
-            .content
-            .split('\n')
-            .enumerate()
-            .map(|(i, text)| json!({ "line": start_num + i, "text": text }))
-            .collect();
-        print_output(
-            sinks,
-            true,
-            &json!({ "lines": json_lines, "links": result.links }),
-        )
+        if gp.output.is_compact() {
+            let body_lines: Vec<&str> = result.content.split('\n').collect();
+            let rows = operations::links::to_compact_rows(result.links);
+            out_json_min(
+                sinks,
+                &json!({
+                    "start_line": start_num,
+                    "lines": body_lines,
+                    "links_cols": operations::links::LINK_COLS,
+                    "links": rows,
+                }),
+            )
+        } else {
+            let json_lines: Vec<Value> = result
+                .content
+                .split('\n')
+                .enumerate()
+                .map(|(i, text)| json!({ "line": start_num + i, "text": text }))
+                .collect();
+            print_output(
+                sinks,
+                true,
+                &json!({ "lines": json_lines, "links": result.links }),
+            )
+        }
     } else {
         let result = document::get_with_links(
             system,
@@ -575,7 +590,17 @@ pub fn cmd_get(
             config.unrestricted,
             &config.trusted_roots,
         )?;
-        if gp.json_mode {
+        if gp.output.is_compact() {
+            let rows = operations::links::to_compact_rows(result.links);
+            out_json_min(
+                sinks,
+                &json!({
+                    "content": result.content,
+                    "links_cols": operations::links::LINK_COLS,
+                    "links": rows,
+                }),
+            )
+        } else if gp.output.is_json() {
             print_output(
                 sinks,
                 true,
@@ -665,10 +690,10 @@ pub fn cmd_get_binary(
             "path": payload.path,
             "size_bytes": payload.size_bytes,
         });
-        return print_output(sinks, gp.json_mode, &summary);
+        return print_output(sinks, gp.output.is_json(), &summary);
     }
 
-    if gp.json_mode {
+    if gp.output.is_json() {
         let encoded = BASE64_STANDARD.encode(&payload.bytes);
         return print_output(
             sinks,

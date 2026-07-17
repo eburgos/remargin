@@ -629,7 +629,7 @@ remargin [OPTIONS] <COMMAND>
 
 | Command | Description |
 |---------|-------------|
-| `get` | Read a file's contents (with optional line range and `--line-numbers`/`-n`) |
+| `get` | Read a file's contents (with optional line range and `--line-numbers`/`-n`; `--json --compact` for a minified columnar payload — see [Compact output](#compact-output)) |
 | `ls` | List files and directories |
 | `write` | Write document contents (comment-preserving, `--create` for new files, `--lines START-END` for partial writes) |
 | `metadata` | Get document metadata (frontmatter, comment counts, pending status) |
@@ -703,9 +703,18 @@ Returns a projection of any mutating op (`ack`, `batch`, `comment`, `cp`, `delet
 | `--key <PATH>` | Path to Ed25519 signing key |
 | `--assets-dir <PATH>` | Assets directory path |
 | `--json` | Output as JSON |
+| `--compact` | Compact columnar JSON, minified. Requires `--json`; supported by `get` today (see [Compact output](#compact-output)) |
 | `--verbose` | Enable tracing output |
 
 > To preview a mutating op without writing, use `remargin plan <op>`. The per-op `--dry-run` flag was removed in favour of the uniform `plan` projection.
+
+### Compact output
+
+`remargin get <file> --json --compact` emits a token-lean, minified variant of the `get` payload. It is the shape the MCP `get` tool returns unconditionally (the MCP surface has no format flag). Plain `--json` is unchanged.
+
+- **With `--line-numbers`:** `{start_line, lines, links_cols, links}`. `lines` is an array of bare strings; line `i`'s number is `start_line + i` (no per-line `{line, text}` objects).
+- **Without `--line-numbers`:** `{content, links_cols, links}` — `content` is the document text as one string.
+- **`links`** rows are positional arrays named by `links_cols` (`["alias", "lines", "target", "title"]`); `alias` / `title` are `null` when absent. The verbose `count` (always `lines.len()`) and `path` columns are dropped. A link's on-disk path is derivable from `target`: verbatim when it carries a file extension, else `target + ".md"`.
 
 ## Tracking change
 

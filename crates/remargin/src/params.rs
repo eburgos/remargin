@@ -30,12 +30,36 @@ pub struct CommentParams<'cmd> {
     pub to: &'cmd [String],
 }
 
+/// How `get` renders its result. Mutually-exclusive successor to the
+/// previous `json_mode` / `compact` bool pair. `Compact` and `Json` both
+/// emit JSON (see [`GetOutputMode::is_json`]); `Compact` adds the columnar
+/// minified shape.
+pub enum GetOutputMode {
+    Compact,
+    Json,
+    Text,
+}
+
+impl GetOutputMode {
+    /// `true` only for the compact columnar shape.
+    #[must_use]
+    pub const fn is_compact(&self) -> bool {
+        matches!(self, Self::Compact)
+    }
+
+    /// `true` when the result is serialized as JSON (verbose or compact).
+    #[must_use]
+    pub const fn is_json(&self) -> bool {
+        matches!(self, Self::Compact | Self::Json)
+    }
+}
+
 pub struct GetParams<'cmd> {
     pub binary: bool,
     pub end: Option<usize>,
-    pub json_mode: bool,
     pub line_numbers: bool,
     pub out: Option<&'cmd Path>,
+    pub output: GetOutputMode,
     pub path: &'cmd str,
     pub start: Option<usize>,
 }

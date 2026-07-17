@@ -476,13 +476,21 @@ fn desc_edit() -> ToolDesc {
 fn desc_get() -> ToolDesc {
     ToolDesc {
         name: "get",
-        description: "Read a file's contents. Text mode (default) returns \
-             UTF-8 content. Pass `binary: true` to fetch non-markdown files \
-             as bytes; returns a content array with an embedded resource block \
-             (a file:// uri, mimeType, and base64 blob the harness saves outside \
-             the realm) plus a text block carrying `{binary, mime, path, \
-             size_bytes}`. Rejects `.md` in binary mode. Run `metadata` first \
-             to check size before pulling large blobs.",
+        description: "Read a file's contents. Text mode (default) returns a \
+             compact, minified JSON payload. With `line_numbers: false` \
+             (default): `{content, links_cols, links}`. With `line_numbers: \
+             true`: `{start_line, lines, links_cols, links}` \u{2014} `lines` is an \
+             array of bare strings and line i's number is `start_line + i`. \
+             `links` rows are positional `[alias, lines, target, title]` \
+             (named by `links_cols`); `alias` / `title` are null when absent. \
+             A link's on-disk path is derivable from `target`: verbatim when \
+             it has a file extension, else `target + \".md\"`. Pass `binary: \
+             true` to fetch non-markdown files as bytes; returns a content \
+             array with an embedded resource block (a file:// uri, mimeType, \
+             and base64 blob the harness saves outside the realm) plus a text \
+             block carrying `{binary, mime, path, size_bytes}`. Rejects `.md` \
+             in binary mode. Run `metadata` first to check size before pulling \
+             large blobs.",
         schema: json!({
             "type": "object",
             "properties": {
@@ -1235,6 +1243,25 @@ fn tool_result_success(content: &Value) -> Value {
     })
 }
 
+/// Minified sibling of [`tool_result_success`] for the compact columnar
+/// payloads. The `elapsed_ms` injector is style-preserving, so a payload
+/// serialized minified here stays minified after decoration.
+fn tool_result_success_min(content: &Value) -> Value {
+    json!({
+        "content": [{
+            "type": "text",
+            "text": serde_json::to_string(content).unwrap_or_default()
+        }]
+    })
+}
+
+/// Tools whose success payload is the compact columnar contract, wrapped
+/// minified. Only `get` today; the follow-up search / query / activity
+/// tasks extend this set.
+fn tool_emits_minified(tool_name: &str) -> bool {
+    matches!(tool_name, "get")
+}
+
 /// Build an MCP tool result (error).
 fn tool_result_error(message: &str) -> Value {
     json!({
@@ -1588,9 +1615,12 @@ fn dispatch_tool(
     match result {
         Ok(value) => {
             // If the handler returned a pre-built MCP response (has "content"
-            // array), pass it through unchanged. Otherwise wrap it.
+            // array), pass it through unchanged. Otherwise wrap it —
+            // minified for the compact columnar tools, pretty otherwise.
             if value.get("content").is_some_and(Value::is_array) {
                 value
+            } else if tool_emits_minified(tool_name) {
+                tool_result_success_min(&value)
             } else {
                 tool_result_success(&value)
             }
@@ -2090,17 +2120,27 @@ fn handle_get(
         &config.trusted_roots,
     )?;
 
+    // Compact columnar shape, hardcoded on the MCP surface: rows are
+    // positional `[alias, lines, target, title]`, `count` / `path` dropped
+    // (both derivable). Serialized minified by `tool_result_success_min`.
+    let rows = operations::links::to_compact_rows(result.links);
     if line_numbers {
+        // Line numbers are contiguous, so state the start once and drop the
+        // per-line objects: line i's number is `start_line + i`.
         let start_num = lines.map_or(1, |(s, _)| s);
-        let json_lines: Vec<Value> = result
-            .content
-            .split('\n')
-            .enumerate()
-            .map(|(i, text)| json!({ "line": start_num + i, "text": text }))
-            .collect();
-        Ok(json!({ "lines": json_lines, "links": result.links }))
+        let body_lines: Vec<&str> = result.content.split('\n').collect();
+        Ok(json!({
+            "start_line": start_num,
+            "lines": body_lines,
+            "links_cols": operations::links::LINK_COLS,
+            "links": rows,
+        }))
     } else {
-        Ok(json!({ "content": result.content, "links": result.links }))
+        Ok(json!({
+            "content": result.content,
+            "links_cols": operations::links::LINK_COLS,
+            "links": rows,
+        }))
     }
 }
 
@@ -2998,7 +3038,15 @@ fn inject_elapsed_ms_and_measure(result: &mut Value, elapsed_ms: u64) -> usize {
             continue;
         };
         obj.insert(String::from("elapsed_ms"), Value::from(elapsed_ms));
-        *text_val = Value::String(serde_json::to_string_pretty(&parsed).unwrap_or_default());
+        // Preserve the incoming style: a minified payload (compact tools)
+        // carries no literal newline, a pretty one always does. Re-serialize
+        // with the matching serializer so minified stays minified.
+        let reserialized = if text_str.contains('\n') {
+            serde_json::to_string_pretty(&parsed)
+        } else {
+            serde_json::to_string(&parsed)
+        };
+        *text_val = Value::String(reserialized.unwrap_or_default());
         break;
     }
     content

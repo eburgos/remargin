@@ -259,6 +259,15 @@ fn extract_tool_text(response: &Value) -> Value {
     serde_json::from_str(text).unwrap()
 }
 
+/// Extract the raw, unparsed `text` string from an MCP tool result's first
+/// content block — used to assert minified vs pretty serialization.
+fn extract_tool_raw_text(response: &Value) -> String {
+    response["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
 /// Check that a response is an MCP tool error.
 fn is_tool_error(response: &Value) -> bool {
     response["result"]["isError"].as_bool().unwrap_or(false)
@@ -940,17 +949,168 @@ fn get_returns_links_array() {
     );
 
     let result = extract_tool_text(&response);
-    // Content unchanged (additive).
+    // Content is the whole file as one string.
     assert!(result["content"].as_str().unwrap().contains("[[Target]]"));
-    // Links surfaced from the shared core: one resolved internal link
-    // carrying path + the target's own title.
+    // Columnar links: header names the four surviving columns; rows are
+    // positional [alias, lines, target, title] (count / path dropped).
+    assert_eq!(
+        result["links_cols"],
+        json!(["alias", "lines", "target", "title"])
+    );
     let links = result["links"].as_array().unwrap();
     assert_eq!(links.len(), 1);
-    assert_eq!(links[0]["target"], "Target");
-    assert_eq!(links[0]["path"], "Target.md");
-    assert_eq!(links[0]["title"], "The Target");
-    assert_eq!(links[0]["count"], 1_i32);
-    assert_eq!(links[0]["lines"][0], 1_i32);
+    let row = links[0].as_array().unwrap();
+    assert!(row[0].is_null(), "absent alias is null: {row:?}");
+    assert_eq!(row[1], json!([1_i32]));
+    assert_eq!(row[2], "Target");
+    assert_eq!(row[3], "The Target");
+}
+
+#[test]
+fn get_compact_line_numbers_minified() {
+    let base = Path::new("/docs");
+    let system = MockSystem::new()
+        .with_file(base.join("notes.md"), b"See [[Target]].\nMore text.\n")
+        .unwrap()
+        .with_file(base.join("Target.md"), b"---\ntitle: The Target\n---\n# T")
+        .unwrap();
+    let config = test_config();
+
+    let response = call(
+        &system,
+        base,
+        &config,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 1_i32,
+            "method": "tools/call",
+            "params": {
+                "name": "get",
+                "arguments": { "path": "notes.md", "line_numbers": true }
+            }
+        }),
+    );
+
+    // Minified: the payload text carries no literal newline.
+    let raw = extract_tool_raw_text(&response);
+    assert!(
+        !raw.contains('\n'),
+        "compact payload must be minified: {raw}"
+    );
+
+    let result: Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(result["start_line"], 1_i32);
+    // Bare strings, not {line, text} objects; line i's number = start_line + i.
+    let lines = result["lines"].as_array().unwrap();
+    assert!(lines[0].is_string(), "lines are bare strings: {lines:?}");
+    assert!(lines[0].as_str().unwrap().contains("[[Target]]"));
+    // Columnar links: header + positional [alias, lines, target, title].
+    assert_eq!(
+        result["links_cols"],
+        json!(["alias", "lines", "target", "title"])
+    );
+    let link_rows = result["links"].as_array().unwrap();
+    assert_eq!(link_rows.len(), 1);
+    let row = link_rows[0].as_array().unwrap();
+    assert_eq!(row.len(), 4, "count/path dropped: {row:?}");
+    assert!(row[0].is_null(), "absent alias is null: {row:?}");
+    assert_eq!(row[2], "Target");
+    assert_eq!(row[3], "The Target");
+    // No verbose keys leaked; elapsed_ms survives the injector.
+    assert!(result.get("content").is_none());
+    assert!(result["elapsed_ms"].is_number());
+}
+
+#[test]
+fn get_compact_no_line_numbers_minified() {
+    let base = Path::new("/docs");
+    let system = MockSystem::new()
+        .with_file(base.join("notes.md"), b"See [[Target]].\nMore text.\n")
+        .unwrap()
+        .with_file(base.join("Target.md"), b"---\ntitle: The Target\n---\n# T")
+        .unwrap();
+    let config = test_config();
+
+    let response = call(
+        &system,
+        base,
+        &config,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 1_i32,
+            "method": "tools/call",
+            "params": {
+                "name": "get",
+                "arguments": { "path": "notes.md" }
+            }
+        }),
+    );
+
+    // Minified even though `content` carries embedded newlines (escaped, not
+    // literal, in the serialized text).
+    let raw = extract_tool_raw_text(&response);
+    assert!(
+        !raw.contains('\n'),
+        "compact payload must be minified: {raw}"
+    );
+
+    let result: Value = serde_json::from_str(&raw).unwrap();
+    assert!(result["content"].as_str().unwrap().contains("[[Target]]"));
+    assert_eq!(
+        result["links_cols"],
+        json!(["alias", "lines", "target", "title"])
+    );
+    assert!(result.get("start_line").is_none());
+    assert!(result.get("lines").is_none());
+    let row = result["links"][0].as_array().unwrap();
+    assert_eq!(row[2], "Target");
+    assert!(result["elapsed_ms"].is_number());
+}
+
+/// The `elapsed_ms` injector re-serializes with the payload's own style: a
+/// minified compact `get` stays minified; a pretty tool (`metadata`) stays
+/// pretty. Both keep their injected `elapsed_ms`.
+#[test]
+fn injector_preserves_payload_style() {
+    let base = Path::new("/docs");
+    let system = system_with_doc(base, "notes.md", "Body one.\nBody two.\n");
+    let config = test_config();
+
+    let get_resp = call(
+        &system,
+        base,
+        &config,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 1_i32,
+            "method": "tools/call",
+            "params": { "name": "get", "arguments": { "path": "notes.md" } }
+        }),
+    );
+    let get_raw = extract_tool_raw_text(&get_resp);
+    assert!(!get_raw.contains('\n'), "get stays minified: {get_raw}");
+    assert!(
+        get_raw.contains("\"elapsed_ms\":"),
+        "elapsed_ms injected without pretty spacing: {get_raw}"
+    );
+
+    let meta_resp = call(
+        &system,
+        base,
+        &config,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 2_i32,
+            "method": "tools/call",
+            "params": { "name": "metadata", "arguments": { "path": "notes.md" } }
+        }),
+    );
+    let meta_raw = extract_tool_raw_text(&meta_resp);
+    assert!(meta_raw.contains('\n'), "metadata stays pretty: {meta_raw}");
+    assert!(
+        meta_raw.contains("\"elapsed_ms\""),
+        "elapsed_ms injected into pretty payload: {meta_raw}"
+    );
 }
 
 #[test]

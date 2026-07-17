@@ -320,3 +320,78 @@ fn link_with_none_fields_round_trips() {
     assert!(back.alias.is_none());
     assert!(back.title.is_none());
 }
+
+// `to_compact_rows` projects verbose links onto `[alias, lines, target,
+// title]`, dropping the derivable `count` / `path` columns; `LINK_COLS`
+// names the four survivors in order.
+#[test]
+fn compact_rows_drop_count_and_path() {
+    let sys = vault(&[
+        ("Beta.md", "---\ntitle: Beta Doc\n---\n# H"),
+        ("Plain.md", "no heading"),
+    ]);
+    let verbose_links = run("[[Beta|nick]] and [[Plain]] and [[Plain]] again", &sys);
+    let rows = super::to_compact_rows(verbose_links);
+
+    assert_eq!(super::LINK_COLS, ["alias", "lines", "target", "title"]);
+
+    let (beta_alias, beta_lines, _, beta_title) = rows.iter().find(|r| r.2 == "Beta").unwrap();
+    assert_eq!(beta_alias.as_deref(), Some("nick"));
+    assert_eq!(beta_title.as_deref(), Some("Beta Doc"));
+    assert_eq!(beta_lines, &vec![1]);
+
+    let (plain_alias, plain_lines, _, plain_title) = rows.iter().find(|r| r.2 == "Plain").unwrap();
+    assert_eq!(*plain_alias, None);
+    assert_eq!(*plain_title, None);
+    // Both occurrences on line 1: the dropped `count` was `lines.len()`.
+    assert_eq!(plain_lines, &vec![1, 1]);
+}
+
+// The compact row drops `path`; it is derivable from `target` — verbatim
+// when the target has a file extension, else `target + ".md"`. Confirm the
+// derived value matches the verbose `path` the resolver produced.
+#[test]
+fn compact_row_path_derivable_from_target() {
+    let sys = vault(&[("Note.md", "# Note"), ("img.png", "fakebytes")]);
+    let links = run("[[Note]] and ![[img.png]]", &sys);
+    for link in &links {
+        let derived = if Path::new(&link.target).extension().is_some() {
+            link.target.clone()
+        } else {
+            format!("{}.md", link.target)
+        };
+        assert_eq!(link.path.as_deref(), Some(derived.as_str()));
+    }
+    let rows = super::to_compact_rows(links);
+    assert!(rows.iter().any(|r| r.2 == "Note"));
+    assert!(rows.iter().any(|r| r.2 == "img.png"));
+}
+
+// Codegen contract: the compact-links row alias renders its `Option`
+// tuple columns as nullable in both TS and Zod (relies on the pinned
+// tixschema that maps `Option` in tuple-element position to nullable),
+// and the compact-links payload carries the row type by reference.
+#[test]
+fn compact_links_schema_renders_nullable_columns() {
+    let row_ts = super::compact_link_row_schema::Schema::ts_definition();
+    assert!(
+        row_ts.contains("string | null"),
+        "TS nullable columns: {row_ts}"
+    );
+    let row_zod = super::compact_link_row_schema::Schema::zod_schema();
+    assert!(
+        row_zod.contains("z.nullable(z.string())"),
+        "Zod nullable columns: {row_zod}"
+    );
+
+    let links_ts = super::compact_links_schema::Schema::ts_definition();
+    assert!(
+        links_ts.contains("Array<CompactLinkRow>"),
+        "compact-links payload references the row type: {links_ts}"
+    );
+    let links_zod = super::compact_links_schema::Schema::zod_schema();
+    assert!(
+        links_zod.contains("z.array(CompactLinkRow$Schema)"),
+        "compact-links Zod references the row schema: {links_zod}"
+    );
+}

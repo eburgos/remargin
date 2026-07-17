@@ -34,6 +34,9 @@ use crate::frontmatter;
 /// whose values count as links.
 const RELATION_PROPERTIES: &[&str] = &["up", "related"];
 
+/// Column names for [`CompactLinkRow`], emitted once per response.
+pub const LINK_COLS: [&str; 4] = ["alias", "lines", "target", "title"];
+
 /// A single outbound link from a document, deduped by target.
 ///
 /// One `Link` exists per distinct `target`; every occurrence of that
@@ -66,6 +69,27 @@ pub struct Link {
     pub title: Option<String>,
 }
 
+/// One compact links table row: `[alias, lines, target, title]`.
+///
+/// `count` is `lines.len()` and `path` is derivable from `target`
+/// (verbatim when it has an extension, else `target + ".md"`), so
+/// neither is carried.
+#[model_schema(name = "CompactLinkRow")]
+pub type CompactLinkRow = (Option<String>, Vec<usize>, String, Option<String>);
+
+/// Schema anchor for the compact links payload.
+///
+/// A `links_cols` header plus positional [`CompactLinkRow`] entries;
+/// exists so xtask emits the TS / Zod types the LLM consumer reads. The
+/// runtime builds the shape inline.
+#[model_schema]
+#[derive(Debug, Serialize)]
+#[non_exhaustive]
+pub struct CompactLinks {
+    pub links: Vec<CompactLinkRow>,
+    pub links_cols: Vec<String>,
+}
+
 /// A link occurrence before dedup + resolution.
 struct RawLink {
     alias: Option<String>,
@@ -80,6 +104,16 @@ struct RawLink {
 struct Resolved {
     path: String,
     title: Option<String>,
+}
+
+/// Project verbose [`Link`]s onto the columnar [`CompactLinkRow`] shape,
+/// dropping the derivable `count` / `path` columns.
+#[must_use]
+pub fn to_compact_rows(links: Vec<Link>) -> Vec<CompactLinkRow> {
+    links
+        .into_iter()
+        .map(|l| (l.alias, l.lines, l.target, l.title))
+        .collect()
 }
 
 /// Extract every outbound link from `body`, deduped by target.

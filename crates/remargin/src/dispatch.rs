@@ -18,8 +18,8 @@ use crate::io::{
     resolve_comment_content,
 };
 use crate::params::{
-    AckParams, ActivityParams, CommentParams, CpParams, EditParams, GetImageParams, GetParams,
-    MvParams, PromptSetParams, ReactParams, ReplaceParams, RestrictParams, SearchParams,
+    AckParams, ActivityParams, CommentParams, CpParams, EditParams, GetImageParams, GetOutputMode,
+    GetParams, MvParams, PromptSetParams, ReactParams, ReplaceParams, RestrictParams, SearchParams,
     SignParams, WriteParams,
 };
 use crate::{
@@ -153,6 +153,19 @@ const fn plan_action_output(action: &PlanAction) -> &OutputArgs {
         | PlanAction::Write { output_args, .. } => output_args,
         PlanAction::Claude { action: claude } => plan_claude_action_output(claude),
     }
+}
+
+/// Reject `--compact` on subcommands that do not emit the compact
+/// columnar contract. `OutputArgs` is flattened everywhere, so a single
+/// gate here keeps the flag from being silently ignored. Only `get`
+/// wires compact today; the follow-up search / query / activity tasks
+/// extend the allow-set.
+fn reject_unsupported_compact(cmd: &Commands) -> Result<()> {
+    let compact = subcommand_output(cmd).is_some_and(|o| o.compact);
+    if compact && !matches!(cmd, Commands::Get { .. }) {
+        bail!("--compact is not supported for this subcommand");
+    }
+    Ok(())
 }
 
 fn classify_error(err: &anyhow::Error) -> u8 {
@@ -478,6 +491,8 @@ pub fn run(cli: &Cli, system: &dyn System, cwd: &Path, sinks: &mut IoSinks<'_>) 
 }
 
 fn dispatch(cli: &Cli, system: &dyn System, cwd: &Path, sinks: &mut IoSinks<'_>) -> Result<()> {
+    reject_unsupported_compact(cli.cmd())?;
+
     let output = subcommand_output(cli.cmd());
     let json_mode = output.is_some_and(|o| o.json);
 
@@ -1119,12 +1134,20 @@ fn handle_get(
     else {
         bail!("internal: handle_get called with wrong subcommand");
     };
+    // clap enforces `--compact` requires `--json`, so compact implies json.
+    let output = if output_args.compact {
+        GetOutputMode::Compact
+    } else if output_args.json {
+        GetOutputMode::Json
+    } else {
+        GetOutputMode::Text
+    };
     let gp = GetParams {
         binary: *binary,
         end: *end,
-        json_mode: output_args.json,
         line_numbers: *line_numbers,
         out: out.as_deref(),
+        output,
         path,
         start: *start,
     };

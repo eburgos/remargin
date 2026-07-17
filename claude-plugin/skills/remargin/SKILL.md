@@ -216,6 +216,14 @@ remargin batch --ops '[
 
 **Do not** use `Read` / `Edit` / `Write` / `Bash` shell tools on managed `.md` files. The realm rule has no exceptions.
 
+**`get` returns a compact, minified payload.** The MCP `get` tool always returns the token-lean columnar shape (there is no format flag):
+
+- `line_numbers=false` (default): `{content, links_cols, links}` — `content` is the whole file as one string.
+- `line_numbers=true`: `{start_line, lines, links_cols, links}` — `lines` is an array of bare strings; line `i`'s number is `start_line + i` (no per-line objects).
+- `links` rows are positional arrays named by `links_cols` = `["alias", "lines", "target", "title"]`; `alias` / `title` are `null` when absent. A link's on-disk path is derivable from `target`: verbatim when it has a file extension, else `target + ".md"`.
+
+**CLI fallback:** when you must drop to the CLI (MCP unreachable), pass **`--json --compact`** to `remargin get` to obtain the same shape. Plain `remargin get --json` is the older verbose payload (`{line, text}` objects, six-column links) — only use it if a caller explicitly needs the legacy shape.
+
 ### Q: The doc references an image. Should I view it?
 
 Yes — always view it before acting on the surrounding text. Markdown is often sparse because the visual is the spec (showing a bug, layout, before/after state, etc.). Skipping the image produces vague or wrong conclusions.
