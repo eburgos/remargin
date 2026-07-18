@@ -7,7 +7,7 @@
 
 use core::str;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Output;
 
 use assert_cmd::Command;
@@ -248,5 +248,103 @@ fn json_output_unaffected_by_verbose() {
     assert_eq!(
         plain_val, verbose_val,
         "--json output must be identical with and without --verbose",
+    );
+}
+
+// ---- --check selective-run case -----------------------------------------
+
+/// Settings carrying only the `PreToolUse` hook — enforcement is wired but
+/// the `SessionStart` guard is missing, so a run trips `SessionGuardMissing`
+/// without short-circuiting on a missing hook.
+fn pretool_only_settings_json() -> String {
+    let v = json!({
+        "hooks": {
+            "PreToolUse": [
+                {
+                    "matcher": "Read|Write|Edit|Bash|NotebookEdit",
+                    "hooks": [
+                        { "type": "command", "command": "remargin claude pretool" }
+                    ]
+                }
+            ]
+        }
+    });
+    serde_json::to_string_pretty(&v).unwrap()
+}
+
+/// Collect the `kind` of every finding in a `doctor --json` payload.
+fn finding_kinds(stdout: &str) -> Vec<String> {
+    let val: serde_json::Value = serde_json::from_str(stdout).unwrap();
+    val["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["kind"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+/// A realm that trips both `SessionGuardMissing` (guard absent) and
+/// `LeftoverProjectedRule` (stale `Bash(remargin *)` deny in
+/// `settings.local.json`). Returns the user-settings path to pass through.
+fn two_finding_realm(realm: &Path) -> PathBuf {
+    let user_settings = realm.join("settings.json");
+    fs::write(&user_settings, pretool_only_settings_json()).unwrap();
+    fs::create_dir_all(realm.join(".claude")).unwrap();
+    fs::write(
+        realm.join(".claude/settings.local.json"),
+        json!({ "permissions": { "deny": ["Bash(remargin *)"] } }).to_string(),
+    )
+    .unwrap();
+    user_settings
+}
+
+/// `--check leftover-rules` reports only that check; the `session-guard`
+/// finding the same realm carries under a full run is absent.
+#[test]
+fn check_scopes_run_to_selected() {
+    let realm = TempDir::new().unwrap();
+    let user_settings = two_finding_realm(realm.path());
+
+    let full = run_doctor_with_settings(realm.path(), &user_settings, &["--json"]);
+    assert_status(&full, 1);
+    let full_kinds = finding_kinds(stdout_of(&full));
+    assert!(
+        full_kinds.iter().any(|k| k == "session_guard_missing")
+            && full_kinds.iter().any(|k| k == "leftover_projected_rule"),
+        "full run surfaces both findings: {full_kinds:?}",
+    );
+
+    let scoped = run_doctor_with_settings(
+        realm.path(),
+        &user_settings,
+        &["--check", "leftover-rules", "--json"],
+    );
+    assert_status(&scoped, 1);
+    assert_eq!(
+        finding_kinds(stdout_of(&scoped)),
+        vec![String::from("leftover_projected_rule")],
+        "scoped run reports only the selected check",
+    );
+}
+
+/// An unknown `--check` name is a hard CLI error naming the bad slug and
+/// listing the valid ones — never a silent empty run.
+#[test]
+fn check_unknown_name_errors() {
+    let realm = TempDir::new().unwrap();
+    let settings = realm.path().join("settings.json");
+    fs::write(&settings, hook_settings_json()).unwrap();
+
+    let out = run_doctor_with_settings(realm.path(), &settings, &["--check", "bogus"]);
+    assert!(
+        !out.status.success(),
+        "unknown check must exit non-zero, got:\nstdout: {}\nstderr: {}",
+        stdout_of(&out),
+        stderr_of(&out),
+    );
+    let stderr = stderr_of(&out);
+    assert!(
+        stderr.contains("unknown check `bogus`") && stderr.contains("session-guard"),
+        "stderr must name the bad slug and list valid ones, got:\n{stderr}",
     );
 }

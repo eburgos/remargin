@@ -445,6 +445,12 @@ fn desc_doctor() -> ToolDesc {
         schema: json!({
             "type": "object",
             "properties": {
+                "check": {
+                    "type": "string",
+                    "description": "Comma-separated check names to run (default: all). \
+                                    e.g. \"hook,trusted-root-escape\". The hook-installed \
+                                    gate always runs regardless of this selection."
+                },
                 "user_settings_file": {
                     "type": "string",
                     "description": "Path to the user-scope Claude settings file \
@@ -2578,7 +2584,11 @@ fn handle_doctor(
             },
             PathBuf::from,
         );
-    let report = permissions_doctor::run_doctor(system, base_dir, &user_settings_file)?;
+    let checks = match optional_str(params, "check") {
+        Some(csv) => permissions_doctor::CheckName::parse_set(csv)?,
+        None => permissions_doctor::CheckName::all(),
+    };
+    let report = permissions_doctor::run_doctor(system, base_dir, &user_settings_file, &checks)?;
     serde_json::to_value(&report).context("serializing doctor report")
 }
 

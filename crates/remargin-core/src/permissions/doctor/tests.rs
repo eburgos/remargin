@@ -1,16 +1,29 @@
 //! Unit tests for [`crate::permissions::doctor`].
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use os_shim::System;
 use os_shim::mock::MockSystem;
 use serde_json::json;
 
 use crate::permissions::doctor::{
-    DoctorFinding, DoctorReport, FindingKind, Severity, render_doctor_prompt, render_doctor_text,
-    run_doctor,
+    CheckName, DoctorFinding, DoctorReport, FindingKind, Severity, render_doctor_prompt,
+    render_doctor_text,
 };
 use crate::permissions::pretool_install::{HOOK_COMMAND, HOOK_MATCHER};
 use crate::permissions::session_guard_install::SESSION_HOOK_COMMAND;
+
+/// Test shim: [`run_doctor`](super::run_doctor) with the default (all
+/// checks) selection, so the pre-existing call sites stay byte-identical
+/// while the scoped-selection tests call `super::run_doctor` directly.
+fn run_doctor(
+    system: &dyn System,
+    cwd: &Path,
+    user_settings_file: &Path,
+) -> anyhow::Result<DoctorReport> {
+    super::run_doctor(system, cwd, user_settings_file, &CheckName::all())
+}
 
 /// Settings carrying both enforcement hooks — the fully-configured, clean
 /// state (`PreToolUse` enforcement + `SessionStart` guard).
@@ -1349,4 +1362,148 @@ fn trusted_root_missing_serializes_and_renders() {
         prompt.contains("Point the entry at an existing path"),
         "prompt names the remedy: {prompt}",
     );
+}
+
+// --- --check / CheckName selective-run unit tests ---
+
+/// A realm that trips two independent checks at once: the `SessionStart`
+/// guard is absent (`SessionGuardMissing`) and a stale `Bash(remargin *)`
+/// deny sits in `settings.local.json` (`LeftoverProjectedRule`). The
+/// `PreToolUse` hook is present, so the run does not short-circuit.
+fn guard_missing_and_leftover_mock() -> MockSystem {
+    mock_with_files(&[
+        (
+            "/home/u/.claude/settings.json",
+            &pretool_only_settings_json(),
+        ),
+        (
+            "/r/.claude/settings.local.json",
+            &deny_only_settings_json(&["Bash(remargin *)"]),
+        ),
+    ])
+}
+
+fn kinds(report: &DoctorReport) -> Vec<FindingKind> {
+    report.findings.iter().map(|f| f.kind.clone()).collect()
+}
+
+/// Scenario 1: the default (`CheckName::all`) selection surfaces every
+/// check's findings — here both `SessionGuardMissing` and
+/// `LeftoverProjectedRule`.
+#[test]
+fn default_selection_runs_every_check() {
+    let system = guard_missing_and_leftover_mock();
+    let report = super::run_doctor(
+        &system,
+        Path::new("/r"),
+        Path::new("/home/u/.claude/settings.json"),
+        &CheckName::all(),
+    )
+    .unwrap();
+    let found = kinds(&report);
+    assert!(
+        found.contains(&FindingKind::SessionGuardMissing)
+            && found.contains(&FindingKind::LeftoverProjectedRule),
+        "default run surfaces both findings: {report:#?}",
+    );
+}
+
+/// Scenario 2: a single-check selection reports only that check — the
+/// other, deselected check contributes nothing even though the same realm
+/// would trip it under the default.
+#[test]
+fn single_check_selection_suppresses_other_findings() {
+    let system = guard_missing_and_leftover_mock();
+    let mut checks = HashSet::new();
+    checks.insert(CheckName::LeftoverRules);
+    let report = super::run_doctor(
+        &system,
+        Path::new("/r"),
+        Path::new("/home/u/.claude/settings.json"),
+        &checks,
+    )
+    .unwrap();
+    assert_eq!(
+        kinds(&report),
+        vec![FindingKind::LeftoverProjectedRule],
+        "only the selected check's finding is present: {report:#?}",
+    );
+}
+
+/// Scenario 3: a multi-check selection runs exactly the named checks. Here
+/// `session-guard` is selected but `leftover-rules` is not, so the guard
+/// finding appears and the leftover finding does not.
+#[test]
+fn multiple_check_selection_runs_exactly_those() {
+    let system = guard_missing_and_leftover_mock();
+    let checks: HashSet<CheckName> = [CheckName::Hook, CheckName::SessionGuard]
+        .into_iter()
+        .collect();
+    let report = super::run_doctor(
+        &system,
+        Path::new("/r"),
+        Path::new("/home/u/.claude/settings.json"),
+        &checks,
+    )
+    .unwrap();
+    assert_eq!(
+        kinds(&report),
+        vec![FindingKind::SessionGuardMissing],
+        "only session-guard runs, not leftover: {report:#?}",
+    );
+}
+
+/// Scenario 4: an unknown slug is a hard error whose message names the bad
+/// slug and lists the valid ones — never a silent empty run.
+#[test]
+fn unknown_check_name_errors_and_lists_valid() {
+    let err = CheckName::parse_set("bogus").unwrap_err().to_string();
+    assert!(
+        err.contains("unknown check `bogus`"),
+        "message names the bad slug: {err}",
+    );
+    assert!(
+        err.contains("hook") && err.contains("session-guard"),
+        "message lists valid slugs: {err}",
+    );
+}
+
+/// Scenario 5: the hook-installed gate runs regardless of selection. With
+/// the hook absent from both scopes and `hook` NOT in the selected set, the
+/// report still short-circuits with a single leading `HookMissing`.
+#[test]
+fn hook_gate_runs_even_when_deselected() {
+    let system = mock_with_files(&[]);
+    let mut checks = HashSet::new();
+    checks.insert(CheckName::SessionGuard);
+    let report = super::run_doctor(
+        &system,
+        Path::new("/r"),
+        Path::new("/home/u/.claude/settings.json"),
+        &checks,
+    )
+    .unwrap();
+    assert!(!report.hook_installed, "hook is absent: {report:#?}");
+    assert_eq!(
+        kinds(&report),
+        vec![FindingKind::HookMissing],
+        "gate short-circuits with HookMissing despite hook being deselected: {report:#?}",
+    );
+}
+
+/// `parse_set` trims whitespace, skips empty tokens, and maps slugs to
+/// variants; `all` carries one entry per slug.
+#[test]
+fn parse_set_trims_and_all_is_complete() {
+    let parsed = CheckName::parse_set(" hook , session-guard ,").unwrap();
+    let expected: HashSet<CheckName> = [CheckName::Hook, CheckName::SessionGuard]
+        .into_iter()
+        .collect();
+    assert_eq!(parsed, expected);
+    assert_eq!(
+        CheckName::all().len(),
+        8,
+        "every check has exactly one slug",
+    );
+    assert!(CheckName::parse_set("").unwrap().is_empty());
 }

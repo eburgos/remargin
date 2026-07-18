@@ -338,6 +338,11 @@ pub enum Commands {
         /// user's real home.
         #[arg(long)]
         user_settings: Option<PathBuf>,
+        /// Comma-separated checks to run (e.g. `hook,trusted-root-escape`).
+        /// Runs every check by default. The hook-installed gate always runs,
+        /// so a missing hook is reported even when `hook` is not in the set.
+        #[arg(long, value_name = "SET")]
+        check: Option<String>,
         /// Emit an agent-executable repair prompt instead of the
         /// human-readable report — one imperative instruction per
         /// finding, or a "nothing to do" line when the realm is clean.

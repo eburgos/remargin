@@ -160,18 +160,125 @@ enum LeftoverReason {
     StaleCli,
 }
 
-/// Run `remargin doctor` against the realm at `cwd`.
+/// A named check `run_doctor` can be asked to run.
 ///
-/// Checks (in order):
+/// The `--check` flag / MCP `check` param select a subset by slug; an
+/// unknown slug is an error, never a silent no-op. `Hook` is special: the
+/// hook-installed gate runs regardless of selection because it is
+/// enforcement's source of truth, so including or excluding `Hook` changes
+/// only whether the leading `HookMissing` finding is *reported*, never
+/// whether the gate runs and short-circuits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum CheckName {
+    /// Permissions-schema faults in the realm's parent walk.
+    ConfigSchemaLint,
+    /// The `PreToolUse` enforcement hook — always gates the run.
+    Hook,
+    /// Strict-mode signing-key resolution and agent-key-under-`~/.ssh`.
+    IdentityKey,
+    /// `permissions.deny` rules the hook has made redundant.
+    LeftoverRules,
+    /// The `SessionStart` fail-open backstop guard.
+    SessionGuard,
+    /// `sandbox:` entries whose author is no longer an active participant.
+    StaleSandbox,
+    /// A `trusted_roots` entry resolving outside its declaring realm.
+    TrustedRootEscape,
+    /// A `trusted_roots` entry resolving to a path absent on disk.
+    TrustedRootMissing,
+}
+
+impl CheckName {
+    /// Every check, in a stable order. Single source of truth for
+    /// [`all`](Self::all), [`from_slug`](Self::from_slug), and
+    /// [`valid_slugs`](Self::valid_slugs).
+    const ALL: [Self; 8] = [
+        Self::ConfigSchemaLint,
+        Self::Hook,
+        Self::IdentityKey,
+        Self::LeftoverRules,
+        Self::SessionGuard,
+        Self::StaleSandbox,
+        Self::TrustedRootEscape,
+        Self::TrustedRootMissing,
+    ];
+
+    /// The full set — the default when no selection is given.
+    #[must_use]
+    pub fn all() -> HashSet<Self> {
+        Self::ALL.into_iter().collect()
+    }
+
+    fn from_slug(slug: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|check| check.slug() == slug)
+    }
+
+    /// Parse a comma-separated slug list into a set. Whitespace around each
+    /// slug is trimmed and empty tokens are skipped.
+    ///
+    /// # Errors
+    ///
+    /// Any token that is not a known check slug — the message names the bad
+    /// slug and lists the valid ones, so a typo is a hard error rather than
+    /// a silent no-op run.
+    pub fn parse_set(csv: &str) -> Result<HashSet<Self>> {
+        let mut set = HashSet::new();
+        for raw in csv.split(',') {
+            let slug = raw.trim();
+            if slug.is_empty() {
+                continue;
+            }
+            match Self::from_slug(slug) {
+                Some(check) => {
+                    set.insert(check);
+                }
+                None => anyhow::bail!("unknown check `{slug}`; valid: {}", Self::valid_slugs()),
+            }
+        }
+        Ok(set)
+    }
+
+    /// This check's stable kebab-case slug for the `--check` flag.
+    #[must_use]
+    pub const fn slug(self) -> &'static str {
+        match self {
+            Self::ConfigSchemaLint => "config-schema-lint",
+            Self::Hook => "hook",
+            Self::IdentityKey => "identity-key",
+            Self::LeftoverRules => "leftover-rules",
+            Self::SessionGuard => "session-guard",
+            Self::StaleSandbox => "stale-sandbox",
+            Self::TrustedRootEscape => "trusted-root-escape",
+            Self::TrustedRootMissing => "trusted-root-missing",
+        }
+    }
+
+    fn valid_slugs() -> String {
+        Self::ALL
+            .iter()
+            .map(|check| check.slug())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+/// Run the checks in `checks` against the realm at `cwd`.
 ///
-/// 1. **Hook-installed** — verifies the `PreToolUse` hook is present in
-///    either `user_settings_file` or `project_settings_file`. When
-///    absent from both, emits a `HookMissing` finding and short-circuits
-///    (all subsequent checks would be moot).
-/// 2. **Session-guard-installed** — verifies the `SessionStart` guard
-///    (`remargin claude session-guard`) is present in either scope. When
-///    absent from both, emits a `SessionGuardMissing` finding: without
-///    the guard, a broken enforcement path fails open silently.
+/// `checks` selects which checks contribute findings ([`CheckName::all`]
+/// runs every one — the default). The hook-installed gate is exempt: it
+/// runs regardless of selection, and when the `PreToolUse` hook is absent
+/// from both `user_settings_file` and `project_settings_file` it emits a
+/// `HookMissing` finding and short-circuits — a scoped run that skipped the
+/// gate would report a false-clean, so the gate is never selectable-off.
+///
+/// Two config-safety preconditions are always computed even when their own
+/// findings are deselected: `find_trusted_root_escapes` (an out-of-realm
+/// root) and `config_schema_lint_findings` (a parse/schema fault). The
+/// resolve-dependent checks below walk `resolve_permissions` /
+/// `ResolvedConfig::resolve`, which fail closed on either fault, so they run
+/// only when both preconditions hold — independent of whether the escape /
+/// schema-lint findings were themselves selected for reporting.
 ///
 /// # Errors
 ///
@@ -180,6 +287,7 @@ pub fn run_doctor(
     system: &dyn System,
     cwd: &Path,
     user_settings_file: &Path,
+    checks: &HashSet<CheckName>,
 ) -> Result<DoctorReport> {
     // Same file `install --local` writes, so a local install is visible.
     let project_settings_file = cwd.join(".claude/settings.json");
@@ -225,7 +333,7 @@ pub fn run_doctor(
         });
     }
 
-    if !session_guard_installed {
+    if checks.contains(&CheckName::SessionGuard) && !session_guard_installed {
         findings.push(DoctorFinding {
             kind: FindingKind::SessionGuardMissing,
             message: format!(
@@ -247,10 +355,15 @@ pub fn run_doctor(
     // Lint containment before resolving: an out-of-realm entry makes
     // `resolve_permissions` (which the leftover check walks through)
     // fail closed, so doctor must name the misconfig here rather than
-    // crash on the very error it exists to explain.
+    // crash on the very error it exists to explain. `has_escape` is a
+    // safety precondition for the resolve-dependent block below, so the
+    // escape scan runs even when `TrustedRootEscape` is deselected; only
+    // the findings it contributes are gated on selection.
     let escapes = find_trusted_root_escapes(system, cwd)?;
     let has_escape = !escapes.is_empty();
-    findings.extend(escapes.iter().map(trusted_root_escape_finding));
+    if checks.contains(&CheckName::TrustedRootEscape) {
+        findings.extend(escapes.iter().map(trusted_root_escape_finding));
+    }
 
     // Schema lint reads configs via `lint_permissions_in_parents`, which
     // never resolves or bails, so it is safe on a malformed config — and it
@@ -258,32 +371,45 @@ pub fn run_doctor(
     // is named here rather than swallowed by their fail-closed `?`. Escapes
     // are filtered out (they own `TrustedRootEscape` above), so a non-empty
     // result means a fault that also makes `resolve_permissions` bail.
+    // `config_resolves` is likewise a safety precondition, so the lint runs
+    // regardless of selection; only its findings are gated.
     let schema_lints = config_schema_lint_findings(system, cwd)?;
     let config_resolves = schema_lints.is_empty();
-    findings.extend(schema_lints);
+    if checks.contains(&CheckName::ConfigSchemaLint) {
+        findings.extend(schema_lints);
+    }
 
-    // Leftover and identity both walk `resolve_permissions` /
-    // `ResolvedConfig::resolve`, which fail closed on an out-of-realm root
-    // and bail on any parse/schema fault. Run them only when the config is
-    // clean on both counts, so doctor names the misconfig above instead of
-    // crashing on the very error it exists to explain.
+    // Leftover, identity, sandbox, and trusted-root-missing all walk
+    // `resolve_permissions` / `ResolvedConfig::resolve`, which fail closed
+    // on an out-of-realm root and bail on any parse/schema fault. Run them
+    // only when the config is clean on both counts, so doctor names the
+    // misconfig above instead of crashing on the very error it exists to
+    // explain. Each additionally runs only when its check is selected.
     if !has_escape && config_resolves {
-        // Drift lives where the retired projection wrote: restrict emitted
-        // rules into settings.local.json, so that file is scanned alongside
-        // the hook-scope files.
-        let settings_files = [
-            user_settings_file.to_path_buf(),
-            project_settings_file.clone(),
-            cwd.join(".claude/settings.local.json"),
-        ];
-        findings.extend(leftover_projected_rule_findings(
-            system,
-            cwd,
-            &settings_files,
-        )?);
-        findings.extend(identity_key_findings(system, cwd)?);
-        findings.extend(stale_sandbox_findings(system, cwd)?);
-        findings.extend(trusted_root_missing_findings(system, cwd)?);
+        if checks.contains(&CheckName::LeftoverRules) {
+            // Drift lives where the retired projection wrote: restrict
+            // emitted rules into settings.local.json, so that file is
+            // scanned alongside the hook-scope files.
+            let settings_files = [
+                user_settings_file.to_path_buf(),
+                project_settings_file.clone(),
+                cwd.join(".claude/settings.local.json"),
+            ];
+            findings.extend(leftover_projected_rule_findings(
+                system,
+                cwd,
+                &settings_files,
+            )?);
+        }
+        if checks.contains(&CheckName::IdentityKey) {
+            findings.extend(identity_key_findings(system, cwd)?);
+        }
+        if checks.contains(&CheckName::StaleSandbox) {
+            findings.extend(stale_sandbox_findings(system, cwd)?);
+        }
+        if checks.contains(&CheckName::TrustedRootMissing) {
+            findings.extend(trusted_root_missing_findings(system, cwd)?);
+        }
     }
 
     Ok(DoctorReport {

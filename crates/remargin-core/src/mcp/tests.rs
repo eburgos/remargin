@@ -20,6 +20,7 @@ use crate::config::{Mode, ResolvedConfig};
 use crate::mcp;
 use crate::operations::{CreateCommentParams, create_comment};
 use crate::parser::{self, AuthorType};
+use crate::permissions::pretool_install::{HOOK_COMMAND, HOOK_MATCHER};
 use crate::writer::InsertPosition;
 
 /// Document with two comments for expanded query tests.
@@ -2539,6 +2540,110 @@ fn mcp_query_compact_include_integrity_widens_rows() {
     assert_eq!(row0[13].as_str().unwrap(), "sha256:ex1");
     assert!(row0[14].is_null(), "unsigned signature is null: {row0:?}");
     assert_eq!(row0[15].as_str().unwrap(), "Pending comment from alice.");
+}
+
+/// A realm whose user-scope settings carry only the `PreToolUse` hook (so
+/// enforcement is active but the `SessionStart` guard is missing) and whose
+/// project-local settings carry a stale `Bash(remargin *)` deny. The full
+/// doctor run trips both `SessionGuardMissing` and `LeftoverProjectedRule`.
+fn doctor_two_finding_system() -> MockSystem {
+    let user_settings = json!({
+        "hooks": {
+            "PreToolUse": [
+                { "matcher": HOOK_MATCHER, "hooks": [ { "type": "command", "command": HOOK_COMMAND } ] }
+            ]
+        }
+    })
+    .to_string();
+    let local = json!({ "permissions": { "deny": ["Bash(remargin *)"] } }).to_string();
+    MockSystem::new()
+        .with_dir(Path::new("/r"))
+        .unwrap()
+        .with_dir(Path::new("/r/.claude"))
+        .unwrap()
+        .with_file(
+            Path::new("/home/u/.claude/settings.json"),
+            user_settings.as_bytes(),
+        )
+        .unwrap()
+        .with_file(
+            Path::new("/r/.claude/settings.local.json"),
+            local.as_bytes(),
+        )
+        .unwrap()
+}
+
+fn finding_kinds(report: &Value) -> Vec<String> {
+    report["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["kind"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+fn doctor_call(system: &MockSystem, arguments: &Value) -> Value {
+    let config = test_config();
+    call(
+        system,
+        Path::new("/r"),
+        &config,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 1_i32,
+            "method": "tools/call",
+            "params": { "name": "doctor", "arguments": arguments }
+        }),
+    )
+}
+
+/// MCP parity: omitting `check` runs every check (both findings surface),
+/// while `check: "leftover-rules"` scopes the run to that check alone — the
+/// `session-guard` finding the same realm would otherwise carry is absent.
+#[test]
+fn mcp_doctor_check_scopes_findings() {
+    let system = doctor_two_finding_system();
+
+    let full = extract_tool_text(&doctor_call(
+        &system,
+        &json!({ "user_settings_file": "/home/u/.claude/settings.json" }),
+    ));
+    let full_kinds = finding_kinds(&full);
+    assert!(
+        full_kinds.iter().any(|k| k == "session_guard_missing")
+            && full_kinds.iter().any(|k| k == "leftover_projected_rule"),
+        "default MCP run surfaces both findings: {full_kinds:?}",
+    );
+
+    let scoped = extract_tool_text(&doctor_call(
+        &system,
+        &json!({ "user_settings_file": "/home/u/.claude/settings.json", "check": "leftover-rules" }),
+    ));
+    assert_eq!(
+        finding_kinds(&scoped),
+        vec![String::from("leftover_projected_rule")],
+        "scoped MCP run reports only the selected check",
+    );
+}
+
+/// MCP parity: an unknown `check` slug surfaces as an `isError` tool
+/// response naming the bad slug — not a silent empty run.
+#[test]
+fn mcp_doctor_unknown_check_errors() {
+    let system = doctor_two_finding_system();
+    let response = doctor_call(
+        &system,
+        &json!({ "user_settings_file": "/home/u/.claude/settings.json", "check": "bogus" }),
+    );
+    assert!(
+        response["result"]["isError"].as_bool().unwrap_or(false),
+        "unknown check must be an error response: {response}",
+    );
+    let text = response["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(
+        text.contains("unknown check `bogus`"),
+        "error names the bad slug: {text}",
+    );
 }
 
 /// Assert the three compact change rows (comment, ack, sandbox) carry the

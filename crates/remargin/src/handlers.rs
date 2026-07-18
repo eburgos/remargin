@@ -886,6 +886,7 @@ pub fn cmd_doctor(
 ) -> Result<()> {
     let Commands::Doctor {
         user_settings,
+        check,
         prompt_mode,
         output_args,
     } = command
@@ -897,7 +898,11 @@ pub fn cmd_doctor(
     } else {
         expand_cli_pathbuf(system, Path::new(DEFAULT_USER_SETTINGS))?
     };
-    let report = permissions_doctor::run_doctor(system, cwd, &user_settings_path)?;
+    let checks = match check.as_deref() {
+        Some(csv) => permissions_doctor::CheckName::parse_set(csv)?,
+        None => permissions_doctor::CheckName::all(),
+    };
+    let report = permissions_doctor::run_doctor(system, cwd, &user_settings_path, &checks)?;
     if output_args.json {
         let value = serde_json::to_value(&report).context("serializing doctor report")?;
         print_output(sinks, true, &value)?;
