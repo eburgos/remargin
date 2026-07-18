@@ -25,6 +25,7 @@ use crate::config::permissions::resolve::{
     lint_permissions_in_parents, resolve_permissions,
 };
 use crate::config::{Mode, ResolvedConfig};
+use crate::operations::sandbox;
 use crate::parser::AuthorType;
 use crate::permissions::claude_sync::{self, RuleSet, canonicalize_rule, hook_covered_rules};
 use crate::permissions::pretool_install::{self, TestOutcome};
@@ -82,6 +83,14 @@ pub enum FindingKind {
     /// `PATH`) fails open silently — the guard is the fail-open backstop
     /// that surfaces such a failure into the session.
     SessionGuardMissing,
+    /// A document's `sandbox:` frontmatter carries an `author@timestamp`
+    /// entry whose author is not an active registry participant — a
+    /// retired agent, a revoked identity, or an author dropped when a
+    /// registry was rotated. Sandbox removal is per-identity and never
+    /// garbage-collected, so the entry silently keeps the file "staged"
+    /// for a participant who no longer exists. Names the file and the
+    /// orphaned author.
+    StaleSandboxEntry,
     /// A `trusted_roots` entry resolves outside the realm that declares
     /// it. Fail-closed at resolve time; doctor names the file, the entry,
     /// and the resolved anchor so it can be moved back inside the realm.
@@ -267,6 +276,7 @@ pub fn run_doctor(
             &settings_files,
         )?);
         findings.extend(identity_key_findings(system, cwd)?);
+        findings.extend(stale_sandbox_findings(system, cwd)?);
     }
 
     Ok(DoctorReport {
@@ -520,6 +530,47 @@ fn agent_key_under_ssh_finding(identity: &str, key_path: &Path) -> DoctorFinding
         remedy: String::from(
             "Move the agent's key out of ~/.ssh and update the `key:` field in the realm's \
              `.remargin.yaml`.",
+        ),
+        severity: Severity::Warning,
+    }
+}
+
+/// One [`FindingKind::StaleSandboxEntry`] per realm sandbox entry whose
+/// author is not an active registry participant.
+///
+/// A realm with no registry has no notion of a "live identity" backing an
+/// entry, so it yields nothing. Otherwise every `author@timestamp` across
+/// all identities is scanned; an author that is absent or revoked in the
+/// resolved registry is stale staging that never clears on its own. The
+/// scan reuses the sandbox walk's visibility/parse filtering and skips
+/// unreadable or unparseable files without aborting.
+fn stale_sandbox_findings(system: &dyn System, cwd: &Path) -> Result<Vec<DoctorFinding>> {
+    let config = ResolvedConfig::resolve(system, cwd, &IdentityFlags::default(), None)?;
+    let Some(registry) = config.registry.as_ref() else {
+        return Ok(Vec::new());
+    };
+
+    let mut findings = Vec::new();
+    for entry in sandbox::scan_all_entries(system, cwd)? {
+        if !registry.is_active(&entry.author) {
+            findings.push(stale_sandbox_finding(&entry.path, &entry.author));
+        }
+    }
+    Ok(findings)
+}
+
+fn stale_sandbox_finding(path: &Path, author: &str) -> DoctorFinding {
+    DoctorFinding {
+        kind: FindingKind::StaleSandboxEntry,
+        message: format!(
+            "`{}` carries a sandbox entry for `{author}`, who is not an active registry \
+             participant. The stale staging never clears on its own.",
+            path.display(),
+        ),
+        remedy: format!(
+            "Re-stage as a live identity, or remove the stale `sandbox:` entry for `{author}` \
+             from {}.",
+            path.display(),
         ),
         severity: Severity::Warning,
     }

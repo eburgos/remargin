@@ -12,6 +12,7 @@ use crate::config::{Mode, ResolvedConfig};
 use crate::frontmatter;
 use crate::operations::sandbox::{
     SandboxBulkResult, SandboxFailure, add_to_files, list_for_identity, remove_from_files,
+    scan_all_entries,
 };
 use crate::parser::{self, AuthorType};
 
@@ -362,6 +363,62 @@ fn list_filters_jorge_returns_jorge_only_files() {
     assert_eq!(eduardo.len(), 1);
     assert_eq!(jorge[0].path, Path::new("/root/shared.md"));
     assert_eq!(eduardo[0].path, Path::new("/root/shared.md"));
+}
+
+// ---------------------------------------------------------------------------
+// scan_all_entries — the realm-wide, all-identities enumeration.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn scan_all_entries_enumerates_every_identity() {
+    let system = MockSystem::new();
+    write_file(&system, "/root/shared.md", doc_with_jorge());
+    write_file(&system, "/root/nested/b.md", simple_doc());
+    // A non-markdown file whose text merely looks like sandbox state; the
+    // walk must skip it without aborting.
+    write_file(
+        &system,
+        "/root/notes.txt",
+        "sandbox: ghost@2026-01-01T00:00:00+00:00",
+    );
+
+    // shared.md gains eduardo on top of jorge; b.md gains eduardo.
+    add_to_files(
+        &system,
+        &[
+            PathBuf::from("/root/shared.md"),
+            PathBuf::from("/root/nested/b.md"),
+        ],
+        "eduardo",
+        &open_config(),
+    )
+    .unwrap();
+
+    let scanned = scan_all_entries(&system, Path::new("/root")).unwrap();
+
+    // Both identities on shared.md plus eduardo on b.md — the .txt is skipped.
+    assert_eq!(scanned.len(), 3, "unexpected: {scanned:#?}");
+    let pairs: Vec<(&str, &Path)> = scanned
+        .iter()
+        .map(|e| (e.author.as_str(), e.path.as_path()))
+        .collect();
+    assert!(pairs.contains(&("jorge", Path::new("/root/shared.md"))));
+    assert!(pairs.contains(&("eduardo", Path::new("/root/shared.md"))));
+    assert!(pairs.contains(&("eduardo", Path::new("/root/nested/b.md"))));
+}
+
+#[test]
+fn scan_all_entries_carries_author_and_timestamp() {
+    let system = MockSystem::new();
+    write_file(&system, "/root/d.md", doc_with_jorge());
+
+    let scanned = scan_all_entries(&system, Path::new("/root")).unwrap();
+    assert_eq!(scanned.len(), 1);
+    assert_eq!(scanned[0].author, "jorge");
+    assert_eq!(
+        scanned[0].since,
+        DateTime::parse_from_rfc3339("2026-04-11T12:00:00+00:00").unwrap()
+    );
 }
 
 // ---------------------------------------------------------------------------

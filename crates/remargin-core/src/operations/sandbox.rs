@@ -154,6 +154,17 @@ pub struct SandboxListing {
     pub since: DateTime<FixedOffset>,
 }
 
+/// A single realm-wide sandbox entry: the file, the staging identity, and
+/// its timestamp. Unlike [`SandboxListing`], the author is carried
+/// explicitly because the walk is not scoped to one identity.
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct SandboxScanEntry {
+    pub author: String,
+    pub path: PathBuf,
+    pub since: DateTime<FixedOffset>,
+}
+
 /// Strip `base` from `path` for display; if `path` is not anchored at
 /// `base`, render the full path. Used for adapter-friendly relative
 /// paths in response JSON.
@@ -265,6 +276,31 @@ pub fn list_for_identity(
     root: &Path,
     identity: &str,
 ) -> Result<Vec<SandboxListing>> {
+    Ok(scan_all_entries(system, root)?
+        .into_iter()
+        .filter(|entry| entry.author == identity)
+        .map(|entry| SandboxListing {
+            path: entry.path,
+            since: entry.since,
+        })
+        .collect())
+}
+
+/// Walk `root` for every sandbox entry across all identities.
+///
+/// One record per `author@timestamp` on every visible markdown file.
+/// Shares the visibility/parse filtering of [`list_for_identity`] but does
+/// not scope to a single identity, so drift checks can reason about entries
+/// whose author is no longer a live participant. Unreadable or unparseable
+/// files are skipped silently, matching the caller-scoped walk.
+///
+/// The returned paths are absolute (whatever `walk_dir` yields); callers
+/// that want relative paths should strip the root prefix themselves.
+///
+/// # Errors
+///
+/// Returns an error if `root` cannot be walked.
+pub fn scan_all_entries(system: &dyn System, root: &Path) -> Result<Vec<SandboxScanEntry>> {
     let entries = system
         .walk_dir(root, false, false)
         .with_context(|| format!("walking directory {}", root.display()))?;
@@ -291,10 +327,11 @@ pub fn list_for_identity(
         let Ok(sandbox) = frontmatter::read_sandbox_entries(&doc) else {
             continue;
         };
-        if let Some(entry_for_caller) = sandbox.iter().find(|e| e.author == identity) {
-            out.push(SandboxListing {
+        for sb in sandbox {
+            out.push(SandboxScanEntry {
+                author: sb.author,
                 path: entry.path.clone(),
-                since: entry_for_caller.ts,
+                since: sb.ts,
             });
         }
     }

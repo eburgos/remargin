@@ -1005,3 +1005,214 @@ fn config_schema_lint_serializes_and_renders() {
         "prompt names the remedy: {prompt}",
     );
 }
+
+// --- StaleSandboxEntry (sandbox staging hygiene) unit tests ---
+
+/// A registry with one active human and one revoked agent. Any sandbox
+/// author outside this active set (absent or revoked) is stale.
+fn sandbox_registry() -> &'static str {
+    "participants:\n  \
+     eduardo-burgos:\n    type: human\n    status: active\n  \
+     retired-agent:\n    type: agent\n    status: revoked\n"
+}
+
+/// A markdown document carrying a single `sandbox:` entry for `entry`
+/// (an `author@timestamp` string).
+fn sandbox_doc(entry: &str) -> String {
+    format!("---\ntitle: Roster\nsandbox:\n- {entry}\n---\n\n# Roster\n\nBody.\n")
+}
+
+/// Scenario 1: a doc staged for an author absent from the registry yields
+/// one `StaleSandboxEntry` (Warning) naming the file and the orphaned
+/// author, with a removal remedy.
+#[test]
+fn stale_sandbox_flags_orphaned_author() {
+    let system = mock_with_files(&[
+        ("/home/u/.claude/settings.json", &hook_settings_json()),
+        ("/r/.remargin-registry.yaml", sandbox_registry()),
+        (
+            "/r/notes/roster.md",
+            &sandbox_doc("ghost_agent@2026-01-01T00:00:00+00:00"),
+        ),
+    ]);
+    let report = run_at_r(&system);
+    let stale = findings_of_kind(&report, &FindingKind::StaleSandboxEntry);
+    assert_eq!(stale.len(), 1, "expected one stale finding: {report:#?}");
+    let finding = stale[0];
+    assert_eq!(finding.severity, Severity::Warning);
+    assert!(
+        finding.message.contains("ghost_agent") && finding.message.contains("/r/notes/roster.md"),
+        "message names author and file: {}",
+        finding.message,
+    );
+    assert!(
+        finding.remedy.contains("sandbox:") && finding.remedy.contains("/r/notes/roster.md"),
+        "remedy names removal and file: {}",
+        finding.remedy,
+    );
+}
+
+/// Scenario 2: a doc staged for an active participant yields no finding.
+#[test]
+fn stale_sandbox_active_author_is_clean() {
+    let system = mock_with_files(&[
+        ("/home/u/.claude/settings.json", &hook_settings_json()),
+        ("/r/.remargin-registry.yaml", sandbox_registry()),
+        (
+            "/r/roster.md",
+            &sandbox_doc("eduardo-burgos@2026-01-01T00:00:00+00:00"),
+        ),
+    ]);
+    let report = run_at_r(&system);
+    assert!(
+        findings_of_kind(&report, &FindingKind::StaleSandboxEntry).is_empty(),
+        "active author must not be flagged: {report:#?}",
+    );
+    assert!(report.is_clean(), "expected clean report: {report:#?}");
+}
+
+/// Scenario 3: a doc staged for a present-but-revoked participant is
+/// flagged — a retired identity's staging is exactly the drift this check
+/// exists to surface.
+#[test]
+fn stale_sandbox_revoked_participant_is_flagged() {
+    let system = mock_with_files(&[
+        ("/home/u/.claude/settings.json", &hook_settings_json()),
+        ("/r/.remargin-registry.yaml", sandbox_registry()),
+        (
+            "/r/roster.md",
+            &sandbox_doc("retired-agent@2026-01-01T00:00:00+00:00"),
+        ),
+    ]);
+    let report = run_at_r(&system);
+    let stale = findings_of_kind(&report, &FindingKind::StaleSandboxEntry);
+    assert_eq!(
+        stale.len(),
+        1,
+        "revoked author must be flagged: {report:#?}"
+    );
+    assert!(
+        stale[0].message.contains("retired-agent"),
+        "message names the revoked author: {}",
+        stale[0].message,
+    );
+}
+
+/// Scenario 4: a realm with no registry yields no findings — with no
+/// registry there is no notion of an author "not backed" by a live
+/// identity.
+#[test]
+fn stale_sandbox_no_registry_has_no_findings() {
+    let system = mock_with_files(&[
+        ("/home/u/.claude/settings.json", &hook_settings_json()),
+        (
+            "/r/roster.md",
+            &sandbox_doc("ghost_agent@2026-01-01T00:00:00+00:00"),
+        ),
+    ]);
+    let report = run_at_r(&system);
+    assert!(
+        findings_of_kind(&report, &FindingKind::StaleSandboxEntry).is_empty(),
+        "no registry means no stale findings: {report:#?}",
+    );
+    assert!(report.is_clean(), "expected clean report: {report:#?}");
+}
+
+/// Scenario 5: a stale entry on file A and a live entry on file B produce
+/// exactly one finding, naming file A only. A non-markdown file carrying
+/// sandbox-looking text is skipped, proving the walk continues past it.
+#[test]
+fn stale_sandbox_mixed_files_flags_only_the_stale_one() {
+    let system = mock_with_files(&[
+        ("/home/u/.claude/settings.json", &hook_settings_json()),
+        ("/r/.remargin-registry.yaml", sandbox_registry()),
+        (
+            "/r/a.md",
+            &sandbox_doc("ghost_agent@2026-01-01T00:00:00+00:00"),
+        ),
+        (
+            "/r/b.md",
+            &sandbox_doc("eduardo-burgos@2026-01-01T00:00:00+00:00"),
+        ),
+        (
+            "/r/junk.txt",
+            "sandbox: ghost_agent@2026-01-01T00:00:00+00:00",
+        ),
+    ]);
+    let report = run_at_r(&system);
+    let stale = findings_of_kind(&report, &FindingKind::StaleSandboxEntry);
+    assert_eq!(stale.len(), 1, "expected exactly one finding: {report:#?}");
+    assert!(
+        stale[0].message.contains("/r/a.md") && !stale[0].message.contains("/r/b.md"),
+        "only the stale file is named: {}",
+        stale[0].message,
+    );
+}
+
+/// Scenario 6: the hook is absent → the report leads with `HookMissing`
+/// and the resolve-dependent stale-sandbox check is skipped.
+#[test]
+fn stale_sandbox_skipped_when_hook_missing() {
+    let system = MockSystem::new()
+        .with_dir(Path::new("/r"))
+        .unwrap()
+        .with_dir(Path::new("/r/.claude"))
+        .unwrap()
+        .with_file(
+            Path::new("/r/.remargin-registry.yaml"),
+            sandbox_registry().as_bytes(),
+        )
+        .unwrap()
+        .with_file(
+            Path::new("/r/roster.md"),
+            sandbox_doc("ghost_agent@2026-01-01T00:00:00+00:00").as_bytes(),
+        )
+        .unwrap();
+    let report = run_at_r(&system);
+    assert!(!report.hook_installed);
+    assert_eq!(report.findings.len(), 1, "only HookMissing: {report:#?}");
+    assert_eq!(report.findings[0].kind, FindingKind::HookMissing);
+}
+
+/// The new kind serializes to its `snake_case` wire name, round-trips
+/// through JSON, renders as WARNING in text, and contributes one
+/// prompt-mode instruction.
+#[test]
+fn stale_sandbox_serializes_and_renders() {
+    let report = DoctorReport {
+        findings: vec![DoctorFinding {
+            kind: FindingKind::StaleSandboxEntry,
+            message: String::from(
+                "`notes/roster.md` carries a sandbox entry for `ghost_agent`, who is not active.",
+            ),
+            remedy: String::from(
+                "Re-stage as a live identity, or remove the stale `sandbox:` entry from \
+                 notes/roster.md.",
+            ),
+            severity: Severity::Warning,
+        }],
+        hook_installed: true,
+        session_guard_installed: true,
+        project_settings_file: PathBuf::from("/r/.claude/settings.json"),
+        user_settings_file: PathBuf::from("/home/u/.claude/settings.json"),
+    };
+    let json = serde_json::to_string(&report).unwrap();
+    assert!(
+        json.contains("stale_sandbox_entry"),
+        "wire name present: {json}",
+    );
+    let parsed: DoctorReport = serde_json::from_str(&json).unwrap();
+    assert_eq!(report, parsed);
+
+    let text = render_doctor_text(&report, false);
+    assert!(
+        text.contains("[WARNING]") && text.contains("ghost_agent"),
+        "text renders the stale entry as WARNING: {text}",
+    );
+
+    let prompt = render_doctor_prompt(&report);
+    assert!(
+        prompt.contains("Re-stage as a live identity"),
+        "prompt names the remedy: {prompt}",
+    );
+}
