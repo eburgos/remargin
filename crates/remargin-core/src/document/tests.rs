@@ -50,6 +50,26 @@ Second comment (acked).
 ```
 ";
 
+/// A `/project` realm whose `.remargin.yaml` declares `mode: registered`.
+const REGISTERED_REALM_YAML: &str = "identity: eduardo-burgos\ntype: human\nmode: registered\n";
+
+/// A `/project` realm whose `.remargin.yaml` declares `mode: strict`.
+const STRICT_REALM_YAML: &str = "identity: eduardo-burgos\ntype: human\nmode: strict\n";
+
+/// Registry for the author-gate seam tests: `eduardo-burgos` and `alice`
+/// active; `nobody` absent.
+const AUTHOR_REALM_REGISTRY_YAML: &str = "\
+participants:
+  eduardo-burgos:
+    type: human
+    status: active
+    pubkeys: []
+  alice:
+    type: human
+    status: active
+    pubkeys: []
+";
+
 /// The single-file variant of an [`RmOutcome`], or `None` for a
 /// directory report. Call sites `.unwrap()` to assert the variant.
 fn rm_file(outcome: &RmOutcome) -> Option<&RmResult> {
@@ -3497,6 +3517,283 @@ fn project_write_missing_comment_rejected_like_real_write() {
         before_bytes, after_bytes,
         "project_write rejection must not mutate disk"
     );
+}
+
+// ---------------------------------------------------------------------
+// rem-4l87: document author is authenticated at the write/replace/plan
+// seams. Each seam escalates to the doc's realm (the realm is the sole
+// source of truth for the mode), stamps the caller identity on create,
+// and gates author changes on edit. These tests exercise the escalation
+// end-to-end through a realm staged on disk. (The realm/registry YAML
+// constants live at the top of this module with `DOC_WITH_COMMENTS`.)
+// ---------------------------------------------------------------------
+
+fn caller_config(identity: &str, mode: Mode) -> ResolvedConfig {
+    ResolvedConfig {
+        identity: Some(String::from(identity)),
+        mode,
+        ..open_config()
+    }
+}
+
+/// A `/project` realm whose `.remargin.yaml` declares `realm_yaml`, with a
+/// registry and a `doc.md` seeded with `doc`.
+fn realm_with_doc(realm_yaml: &str, doc: &str) -> MockSystem {
+    MockSystem::new()
+        .with_current_dir("/project")
+        .unwrap()
+        .with_file(Path::new("/project/.remargin.yaml"), realm_yaml.as_bytes())
+        .unwrap()
+        .with_file(
+            Path::new("/project/.remargin-registry.yaml"),
+            AUTHOR_REALM_REGISTRY_YAML.as_bytes(),
+        )
+        .unwrap()
+        .with_file(Path::new("/project/doc.md"), doc.as_bytes())
+        .unwrap()
+}
+
+/// Rows 1 + 2: create stamps the authenticated caller identity and drops a
+/// spoofed `author` from the payload.
+#[test]
+fn write_create_stamps_caller_identity_ignoring_spoof() {
+    let system = MockSystem::new()
+        .with_current_dir("/project")
+        .unwrap()
+        .with_dir(Path::new("/project"))
+        .unwrap();
+    let config = open_config(); // identity `eduardo`, open realm
+
+    document::write(
+        &system,
+        Path::new("/project"),
+        Path::new("new.md"),
+        "---\ntitle: New\nauthor: someone_else\n---\n\n# New\n",
+        &config,
+        WriteOptions {
+            create: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    let disk = system.read_to_string(Path::new("/project/new.md")).unwrap();
+    assert!(disk.contains("author: eduardo"), "got:\n{disk}");
+    assert!(
+        !disk.contains("someone_else"),
+        "spoofed author must be dropped:\n{disk}"
+    );
+}
+
+/// Escalation proof + row 8: an OPEN caller writing into a REGISTERED realm
+/// cannot change the author to an unregistered value — the realm's mode
+/// governs, and the disk is untouched.
+#[test]
+fn write_edit_author_change_to_unregistered_rejected_in_registered_realm() {
+    let doc = "---\ntitle: Doc\nauthor: alice\n---\n\n# Doc\n\nBody.\n";
+    let system = realm_with_doc(REGISTERED_REALM_YAML, doc);
+    let config = caller_config("eduardo-burgos", Mode::Open);
+
+    let err = document::write(
+        &system,
+        Path::new("/project"),
+        Path::new("doc.md"),
+        "---\ntitle: Doc\nauthor: nobody\n---\n\n# Doc\n\nBody.\n",
+        &config,
+        WriteOptions::default(),
+    )
+    .unwrap_err();
+
+    assert!(
+        format!("{err:#}").contains("not an active registry participant"),
+        "got: {err:#}"
+    );
+    assert_eq!(
+        system.read_to_string(Path::new("/project/doc.md")).unwrap(),
+        doc,
+        "rejected write must not mutate disk"
+    );
+}
+
+/// Row 7: a registered-realm edit to an active participant is allowed.
+#[test]
+fn write_edit_author_change_to_active_allowed_in_registered_realm() {
+    let doc = "---\ntitle: Doc\nauthor: alice\n---\n\n# Doc\n\nBody.\n";
+    let system = realm_with_doc(REGISTERED_REALM_YAML, doc);
+    let config = caller_config("eduardo-burgos", Mode::Open);
+
+    document::write(
+        &system,
+        Path::new("/project"),
+        Path::new("doc.md"),
+        "---\ntitle: Doc\nauthor: eduardo-burgos\n---\n\n# Doc\n\nBody.\n",
+        &config,
+        WriteOptions::default(),
+    )
+    .unwrap();
+
+    let disk = system.read_to_string(Path::new("/project/doc.md")).unwrap();
+    assert!(disk.contains("author: eduardo-burgos"), "got:\n{disk}");
+}
+
+/// Row 5 (spec regression test): a strict-realm edit that changes an
+/// existing author is rejected and the disk is untouched.
+#[test]
+fn write_edit_existing_author_immutable_in_strict_realm() {
+    let doc = "---\ntitle: Doc\nauthor: alice\n---\n\n# Doc\n\nBody.\n";
+    let system = realm_with_doc(STRICT_REALM_YAML, doc);
+    // Caller already resolves in strict mode (matching the realm), so
+    // escalation targets the author gate rather than the identity gate.
+    let config = caller_config("eduardo-burgos", Mode::Strict);
+
+    let err = document::write(
+        &system,
+        Path::new("/project"),
+        Path::new("doc.md"),
+        "---\ntitle: Doc\nauthor: eduardo-burgos\n---\n\n# Doc\n\nBody.\n",
+        &config,
+        WriteOptions::default(),
+    )
+    .unwrap_err();
+
+    assert!(
+        err.to_string()
+            .contains("author is immutable in strict mode"),
+        "got: {err}"
+    );
+    assert_eq!(
+        system.read_to_string(Path::new("/project/doc.md")).unwrap(),
+        doc,
+        "rejected write must not mutate disk"
+    );
+}
+
+/// Row 6a: a strict-realm authorless doc may gain an author equal to the
+/// caller identity; the disk gains that author.
+#[test]
+fn write_edit_first_author_matching_caller_allowed_in_strict_realm() {
+    let doc = "---\ntitle: Doc\n---\n\n# Doc\n\nBody.\n";
+    let system = realm_with_doc(STRICT_REALM_YAML, doc);
+    let config = caller_config("eduardo-burgos", Mode::Strict);
+
+    document::write(
+        &system,
+        Path::new("/project"),
+        Path::new("doc.md"),
+        "---\ntitle: Doc\nauthor: eduardo-burgos\n---\n\n# Doc\n\nBody.\n",
+        &config,
+        WriteOptions::default(),
+    )
+    .unwrap();
+
+    let disk = system.read_to_string(Path::new("/project/doc.md")).unwrap();
+    assert!(disk.contains("author: eduardo-burgos"), "got:\n{disk}");
+}
+
+/// Row 6b: a strict-realm authorless doc gaining an author that is not the
+/// caller identity is rejected and the disk is untouched.
+#[test]
+fn write_edit_first_author_mismatch_rejected_in_strict_realm() {
+    let doc = "---\ntitle: Doc\n---\n\n# Doc\n\nBody.\n";
+    let system = realm_with_doc(STRICT_REALM_YAML, doc);
+    let config = caller_config("eduardo-burgos", Mode::Strict);
+
+    let err = document::write(
+        &system,
+        Path::new("/project"),
+        Path::new("doc.md"),
+        "---\ntitle: Doc\nauthor: alice\n---\n\n# Doc\n\nBody.\n",
+        &config,
+        WriteOptions::default(),
+    )
+    .unwrap_err();
+
+    assert!(
+        err.to_string()
+            .contains("a first-time author must be your own identity"),
+        "got: {err}"
+    );
+    assert_eq!(
+        system.read_to_string(Path::new("/project/doc.md")).unwrap(),
+        doc,
+        "rejected write must not mutate disk"
+    );
+}
+
+/// Row 14: the `plan write` projection reports the same author-gate refusal
+/// as a real write and never touches disk.
+#[test]
+fn project_write_author_change_rejected_in_registered_realm() {
+    let doc = "---\ntitle: Doc\nauthor: alice\n---\n\n# Doc\n\nBody.\n";
+    let system = realm_with_doc(REGISTERED_REALM_YAML, doc);
+    let config = caller_config("eduardo-burgos", Mode::Open);
+    let before = read_bytes(&system, Path::new("/project/doc.md"));
+
+    let err = document::project_write(
+        &system,
+        Path::new("/project"),
+        Path::new("doc.md"),
+        "---\ntitle: Doc\nauthor: nobody\n---\n\n# Doc\n\nBody.\n",
+        &config,
+        WriteOptions::default(),
+    )
+    .unwrap_err();
+
+    assert!(
+        format!("{err:#}").contains("not an active registry participant"),
+        "got: {err:#}"
+    );
+    assert_eq!(
+        before,
+        read_bytes(&system, Path::new("/project/doc.md")),
+        "plan projection must not mutate disk"
+    );
+}
+
+/// Replace seam (dry-run): `project_commit_markdown` rejects an author
+/// change under the realm mode, exactly like the live path.
+#[test]
+fn project_commit_markdown_author_change_rejected_in_registered_realm() {
+    let doc = "---\ntitle: Doc\nauthor: alice\n---\n\n# Doc\n\nBody.\n";
+    let system = realm_with_doc(REGISTERED_REALM_YAML, doc);
+    let config = caller_config("eduardo-burgos", Mode::Open);
+
+    let err = document::project_commit_markdown(
+        &system,
+        &config,
+        Path::new("/project/doc.md"),
+        "---\ntitle: Doc\nauthor: nobody\n---\n\n# Doc\n\nBody.\n",
+    )
+    .unwrap_err();
+
+    assert!(
+        format!("{err:#}").contains("not an active registry participant"),
+        "got: {err:#}"
+    );
+}
+
+/// Row 15: a body-only rewrite that leaves the author unchanged commits
+/// cleanly through the replace seam (`commit_markdown`) and preserves the
+/// on-disk author.
+#[test]
+fn commit_markdown_body_only_preserves_author_in_registered_realm() {
+    let doc = "---\ntitle: Doc\nauthor: alice\n---\n\n# Doc\n\nOld body.\n";
+    let system = realm_with_doc(REGISTERED_REALM_YAML, doc);
+    let config = caller_config("eduardo-burgos", Mode::Open);
+
+    let outcome = document::commit_markdown(
+        &system,
+        &config,
+        Path::new("/project/doc.md"),
+        "---\ntitle: Doc\nauthor: alice\n---\n\n# Doc\n\nNew body.\n",
+        false,
+    )
+    .unwrap();
+
+    assert!(!outcome.noop);
+    let disk = system.read_to_string(Path::new("/project/doc.md")).unwrap();
+    assert!(disk.contains("author: alice"), "got:\n{disk}");
+    assert!(disk.contains("New body."), "got:\n{disk}");
 }
 
 // ---------------------------------------------------------------------

@@ -1062,14 +1062,28 @@ pub(crate) fn commit_markdown(
 ) -> Result<WriteOutcome> {
     let new_doc = parser::parse(content_to_parse).context("parsing incoming content")?;
 
-    // Comment preservation: only check when overwriting an existing file.
-    if !create && let Ok(old_content) = system.read_to_string(resolved) {
+    // Realm-mode floor: the doc's realm is the source of truth for the
+    // author gate, exactly as `create_comment` escalates before writing.
+    let realm_cfg = config.escalate_for_doc(system, resolved)?;
+
+    // Comment preservation + on-disk author: only when overwriting.
+    let old_author = if create {
+        None
+    } else if let Ok(old_content) = system.read_to_string(resolved) {
         let old_doc = parser::parse(&old_content).context("parsing existing document")?;
         check_comment_preservation(&old_doc, &new_doc)?;
-    }
+        frontmatter::read_author(&old_doc)?
+    } else {
+        None
+    };
 
     let mut final_doc = new_doc;
-    frontmatter::ensure_frontmatter(&mut final_doc, config)?;
+    frontmatter::ensure_frontmatter_authored(
+        &mut final_doc,
+        &realm_cfg,
+        create,
+        old_author.as_deref(),
+    )?;
 
     // No-op detection: if the canonical output would be
     // byte-identical to what is already on disk, skip both the disk
@@ -1082,7 +1096,7 @@ pub(crate) fn commit_markdown(
         return Ok(WriteOutcome { noop: true });
     }
 
-    commit_with_verify(system, &final_doc, config, resolved, |verified_doc| {
+    commit_with_verify(system, &final_doc, &realm_cfg, resolved, |verified_doc| {
         let serialized = verified_doc.to_markdown()?;
         system
             .write(resolved, serialized.as_bytes())
@@ -1117,13 +1131,27 @@ pub(crate) fn project_commit_markdown(
 ) -> Result<bool> {
     let new_doc = parser::parse(content_to_parse).context("parsing incoming content")?;
 
-    if let Ok(old_content) = system.read_to_string(resolved) {
+    // Realm-mode floor: mirror `commit_markdown`'s escalation so the
+    // dry-run reports the same author-gate refusal a real commit would.
+    let realm_cfg = config.escalate_for_doc(system, resolved)?;
+
+    // `project_commit_markdown` only ever projects an edit (replace never
+    // creates), so read the on-disk author to gate an author change.
+    let old_author = if let Ok(old_content) = system.read_to_string(resolved) {
         let old_doc = parser::parse(&old_content).context("parsing existing document")?;
         check_comment_preservation(&old_doc, &new_doc)?;
-    }
+        frontmatter::read_author(&old_doc)?
+    } else {
+        None
+    };
 
     let mut final_doc = new_doc;
-    frontmatter::ensure_frontmatter(&mut final_doc, config)?;
+    frontmatter::ensure_frontmatter_authored(
+        &mut final_doc,
+        &realm_cfg,
+        false,
+        old_author.as_deref(),
+    )?;
 
     let final_content = final_doc.to_markdown()?;
     if is_byte_identical(system, resolved, final_content.as_bytes()) {
@@ -1133,7 +1161,9 @@ pub(crate) fn project_commit_markdown(
     // Run the subset gate without writing: the no-op closure proves the
     // candidate passes `Q ⊆ P`, so a damaging dry-run reports the same
     // refusal a real commit would.
-    commit_with_verify(system, &final_doc, config, resolved, |_verified_doc| Ok(()))?;
+    commit_with_verify(system, &final_doc, &realm_cfg, resolved, |_verified_doc| {
+        Ok(())
+    })?;
 
     Ok(true)
 }
@@ -1217,21 +1247,37 @@ pub fn project_write(
 
     let new_doc = parser::parse(&content_to_parse).context("parsing incoming content")?;
 
-    let before = if opts.create {
-        parser::parse("").context("parsing empty before-document for create")?
+    // Realm-mode floor: mirror `commit_markdown`'s escalation so the plan
+    // projection reports the same author-gate refusal a real write would.
+    let realm_cfg = config.escalate_for_doc(system, &resolved)?;
+
+    let (before, old_author) = if opts.create {
+        (
+            parser::parse("").context("parsing empty before-document for create")?,
+            None,
+        )
     } else {
         match system.read_to_string(&resolved) {
             Ok(existing) => {
                 let old_doc = parser::parse(&existing).context("parsing existing document")?;
                 check_comment_preservation(&old_doc, &new_doc)?;
-                old_doc
+                let old_author = frontmatter::read_author(&old_doc)?;
+                (old_doc, old_author)
             }
-            Err(_) => parser::parse("").context("parsing empty before-document")?,
+            Err(_) => (
+                parser::parse("").context("parsing empty before-document")?,
+                None,
+            ),
         }
     };
 
     let mut after = new_doc;
-    frontmatter::ensure_frontmatter(&mut after, config)?;
+    frontmatter::ensure_frontmatter_authored(
+        &mut after,
+        &realm_cfg,
+        opts.create,
+        old_author.as_deref(),
+    )?;
 
     let after_bytes = after.to_markdown()?;
     let noop = !opts.create && is_byte_identical(system, &resolved, after_bytes.as_bytes());

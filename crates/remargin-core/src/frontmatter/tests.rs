@@ -7,13 +7,26 @@ use serde_yaml::{Mapping, Value};
 
 use crate::config::{Mode, ResolvedConfig};
 use crate::frontmatter::{
-    add_sandbox_entry_for, ensure_frontmatter, extract_title_from_heading, populate_user_fields,
-    read_sandbox_entries, update_remargin_fields, write_sandbox_entries,
+    add_sandbox_entry_for, ensure_frontmatter, ensure_frontmatter_authored,
+    extract_title_from_heading, populate_user_fields, read_author, read_sandbox_entries,
+    update_remargin_fields, write_sandbox_entries,
 };
 use crate::parser::{
     self, Acknowledgment, AuthorType, Comment, ParsedDocument, SandboxEntry, Segment,
 };
 use crate::reactions::Reactions;
+
+const AUTHOR_GATE_REGISTRY_YAML: &str = "\
+participants:
+  alice:
+    type: human
+    status: active
+    pubkeys: []
+  bob:
+    type: human
+    status: revoked
+    pubkeys: []
+";
 
 /// Create a default `ResolvedConfig` for testing.
 fn test_config() -> ResolvedConfig {
@@ -479,6 +492,203 @@ fn no_identity_no_author() {
         !mapping.contains_key(Value::String(String::from("author"))),
         "author should not be set without identity"
     );
+}
+
+// -------------------------------------------------------------------
+// Authenticated document author gate (`ensure_frontmatter_authored`).
+//
+// The rem-4l87 QA matrix: create stamps the caller identity (ignoring
+// any spoofed value), edits are gated by the realm mode. `config` is
+// assumed already escalated to the doc's realm.
+// -------------------------------------------------------------------
+
+fn strict_config(identity: Option<&str>) -> ResolvedConfig {
+    ResolvedConfig {
+        identity: identity.map(String::from),
+        mode: Mode::Strict,
+        ..test_config()
+    }
+}
+
+fn registered_config(identity: &str) -> ResolvedConfig {
+    ResolvedConfig {
+        identity: Some(String::from(identity)),
+        mode: Mode::Registered,
+        registry: Some(serde_yaml::from_str(AUTHOR_GATE_REGISTRY_YAML).unwrap()),
+        ..test_config()
+    }
+}
+
+/// Row 1: create ignores a spoofed author and stamps the caller.
+#[test]
+fn authored_create_ignores_supplied_author() {
+    let config = test_config(); // identity `eduardo`, open
+    let mut doc = parser::parse("---\nauthor: someone_else\n---\n\n# Doc\n").unwrap();
+    ensure_frontmatter_authored(&mut doc, &config, true, None).unwrap();
+    assert_eq!(read_author(&doc).unwrap().as_deref(), Some("eduardo"));
+}
+
+/// Row 2: create with no supplied author stamps the caller identity.
+#[test]
+fn authored_create_stamps_caller_identity() {
+    let config = test_config();
+    let mut doc = parser::parse("---\ntitle: Doc\n---\n\n# Doc\n").unwrap();
+    ensure_frontmatter_authored(&mut doc, &config, true, None).unwrap();
+    assert_eq!(read_author(&doc).unwrap().as_deref(), Some("eduardo"));
+}
+
+/// Row 3: create with no identity drops the author key entirely.
+#[test]
+fn authored_create_no_identity_drops_author() {
+    let config = ResolvedConfig {
+        identity: None,
+        ..test_config()
+    };
+    let mut doc = parser::parse("---\nauthor: ghost\n---\n\n# Doc\n").unwrap();
+    ensure_frontmatter_authored(&mut doc, &config, true, None).unwrap();
+    assert_eq!(read_author(&doc).unwrap(), None);
+}
+
+/// Row 4: strict edit that leaves the author unchanged passes.
+#[test]
+fn authored_strict_edit_unchanged_author_ok() {
+    let config = strict_config(Some("alice"));
+    let mut doc = parser::parse("---\nauthor: alice\n---\n\n# Doc\n").unwrap();
+    ensure_frontmatter_authored(&mut doc, &config, false, Some("alice")).unwrap();
+    assert_eq!(read_author(&doc).unwrap().as_deref(), Some("alice"));
+}
+
+/// Row 5: strict edit that changes an existing author is rejected.
+#[test]
+fn authored_strict_edit_changed_author_rejected() {
+    let config = strict_config(Some("mallory"));
+    let mut doc = parser::parse("---\nauthor: mallory\n---\n\n# Doc\n").unwrap();
+    let err = ensure_frontmatter_authored(&mut doc, &config, false, Some("alice")).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("author is immutable in strict mode"),
+        "got: {err}"
+    );
+}
+
+/// Row 6a: strict None->Some where the new author equals the caller
+/// identity is allowed (a first-time author may claim only itself).
+#[test]
+fn authored_strict_first_author_matching_caller_allowed() {
+    let config = strict_config(Some("alice"));
+    let mut doc = parser::parse("---\nauthor: alice\n---\n\n# Doc\n").unwrap();
+    ensure_frontmatter_authored(&mut doc, &config, false, None).unwrap();
+    assert_eq!(read_author(&doc).unwrap().as_deref(), Some("alice"));
+}
+
+/// Row 6b: strict None->Some where the new author is not the caller
+/// identity is rejected.
+#[test]
+fn authored_strict_first_author_mismatch_rejected() {
+    let config = strict_config(Some("alice"));
+    let mut doc = parser::parse("---\nauthor: bob\n---\n\n# Doc\n").unwrap();
+    let err = ensure_frontmatter_authored(&mut doc, &config, false, None).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("a first-time author must be your own identity"),
+        "got: {err}"
+    );
+}
+
+/// Strict edits never treat an omitted author as a change: the on-disk
+/// author is preserved rather than rejected.
+#[test]
+fn authored_strict_edit_omit_author_preserved() {
+    let config = strict_config(Some("editor"));
+    let mut doc = parser::parse("---\ntitle: Doc\n---\n\n# Doc\n").unwrap();
+    ensure_frontmatter_authored(&mut doc, &config, false, Some("alice")).unwrap();
+    assert_eq!(read_author(&doc).unwrap().as_deref(), Some("alice"));
+}
+
+/// Row 7: registered edit to an active participant is allowed.
+#[test]
+fn authored_registered_edit_to_active_ok() {
+    let config = registered_config("eduardo");
+    let mut doc = parser::parse("---\nauthor: alice\n---\n\n# Doc\n").unwrap();
+    ensure_frontmatter_authored(&mut doc, &config, false, Some("eduardo")).unwrap();
+    assert_eq!(read_author(&doc).unwrap().as_deref(), Some("alice"));
+}
+
+/// Row 8: registered edit to an unregistered author is rejected.
+#[test]
+fn authored_registered_edit_to_unregistered_rejected() {
+    let config = registered_config("eduardo");
+    let mut doc = parser::parse("---\nauthor: nobody\n---\n\n# Doc\n").unwrap();
+    let err = ensure_frontmatter_authored(&mut doc, &config, false, Some("alice")).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("not an active registry participant"),
+        "got: {err}"
+    );
+}
+
+/// Row 8 (revoked variant): registered edit to a revoked participant is
+/// rejected — `is_active` treats revoked as inactive.
+#[test]
+fn authored_registered_edit_to_revoked_rejected() {
+    let config = registered_config("eduardo");
+    let mut doc = parser::parse("---\nauthor: bob\n---\n\n# Doc\n").unwrap();
+    let err = ensure_frontmatter_authored(&mut doc, &config, false, Some("alice")).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("not an active registry participant"),
+        "got: {err}"
+    );
+}
+
+/// Row 9: open edit may change the author to anything.
+#[test]
+fn authored_open_edit_changed_author_ok() {
+    let config = test_config();
+    let mut doc = parser::parse("---\nauthor: anyone\n---\n\n# Doc\n").unwrap();
+    ensure_frontmatter_authored(&mut doc, &config, false, Some("alice")).unwrap();
+    assert_eq!(read_author(&doc).unwrap().as_deref(), Some("anyone"));
+}
+
+/// Row 10: an edit that omits the author preserves the on-disk value.
+#[test]
+fn authored_edit_omit_author_preserves_on_disk() {
+    let config = test_config();
+    let mut doc = parser::parse("---\ntitle: Doc\n---\n\n# Doc\n").unwrap();
+    ensure_frontmatter_authored(&mut doc, &config, false, Some("alice")).unwrap();
+    assert_eq!(read_author(&doc).unwrap().as_deref(), Some("alice"));
+}
+
+/// An edit that omits the author on an authorless doc leaves it authorless —
+/// the editor's identity must NOT be back-filled (contrast the create path
+/// and the un-authenticated `ensure_frontmatter`).
+#[test]
+fn authored_edit_omit_author_on_authorless_doc_stays_absent() {
+    let config = test_config(); // identity `eduardo` present but not applicable
+    let mut doc = parser::parse("---\ntitle: Doc\n---\n\n# Doc\n").unwrap();
+    ensure_frontmatter_authored(&mut doc, &config, false, None).unwrap();
+    assert_eq!(read_author(&doc).unwrap(), None);
+}
+
+/// The authored path is identical to `ensure_frontmatter` for every field
+/// other than `author`: user fields are preserved, remargin fields recomputed.
+#[test]
+fn authored_preserves_non_author_fields() {
+    let config = test_config();
+    let mut doc = parser::parse("---\ntitle: Custom\nauthor: alice\n---\n\n# Doc\n").unwrap();
+    ensure_frontmatter_authored(&mut doc, &config, false, Some("alice")).unwrap();
+    let markdown = doc.to_markdown().unwrap();
+    assert!(markdown.contains("title: Custom"));
+    assert!(markdown.contains("remargin_pending: 0"));
+}
+
+/// `read_author` returns the string value when present and `None` otherwise.
+#[test]
+fn read_author_reads_value_or_none() {
+    let with = parser::parse("---\nauthor: alice\n---\n\nBody\n").unwrap();
+    assert_eq!(read_author(&with).unwrap().as_deref(), Some("alice"));
+    let without = parser::parse("---\ntitle: Doc\n---\n\nBody\n").unwrap();
+    assert_eq!(read_author(&without).unwrap(), None);
 }
 
 #[test]

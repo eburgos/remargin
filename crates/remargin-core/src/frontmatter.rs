@@ -1,9 +1,12 @@
 //! YAML frontmatter management for `remargin_*` fields.
 //!
-//! User-owned fields (`title`, `description`, `author`, `created`) are
+//! User-owned fields (`title`, `description`, `created`) are
 //! auto-populated on first save but never overwritten. Tool-managed fields
 //! (`remargin_pending`, `remargin_pending_for`, `remargin_last_activity`)
-//! are recomputed on every write operation.
+//! are recomputed on every write operation. `author` is user-owned on the
+//! shared [`ensure_frontmatter`] path but authenticated against the doc's
+//! realm on the write/replace path ([`ensure_frontmatter_authored`]):
+//! stamped from the caller identity on create, gated by mode on edit.
 //!
 //! The `sandbox` key is user-written volatile state: a list of
 //! `author@timestamp` strings identifying participants who have staged the
@@ -18,7 +21,7 @@ use anyhow::{Context as _, Result};
 use chrono::{DateTime, FixedOffset, Utc};
 use serde_yaml::{Mapping, Value};
 
-use crate::config::ResolvedConfig;
+use crate::config::{Mode, ResolvedConfig};
 use crate::parser::{self, Comment, ParsedDocument, SandboxEntry, Segment};
 
 /// The frontmatter key under which sandbox entries are stored.
@@ -51,6 +54,146 @@ pub fn ensure_frontmatter(doc: &mut ParsedDocument, config: &ResolvedConfig) -> 
     write_frontmatter_to_doc(doc, &yaml);
 
     Ok(())
+}
+
+/// Authored-write normalization for the `write`/`replace` seams.
+///
+/// Also covers their plan/dry-run projections. Behaves identically to
+/// [`ensure_frontmatter`] for every field except `author`, which is
+/// authenticated against the realm the document lives in:
+///
+/// - `create`: the caller's supplied `author` is ignored and overwritten
+///   with the authenticated caller identity (dropped entirely when the
+///   caller is anonymous).
+/// - edit: an unchanged or omitted `author` passes; a changed `author` is
+///   gated by [`Mode`] (open allows anything; registered requires an
+///   active participant; strict forbids changing an existing author and
+///   only lets an authorless doc gain the caller's own identity).
+///
+/// `config` MUST already be escalated to the doc's realm so `mode` and
+/// `registry` reflect the realm, not the caller.
+///
+/// # Errors
+///
+/// Returns an error if existing frontmatter YAML cannot be parsed, or if
+/// the author change is rejected by the realm's mode gate.
+pub fn ensure_frontmatter_authored(
+    doc: &mut ParsedDocument,
+    config: &ResolvedConfig,
+    create: bool,
+    old_author: Option<&str>,
+) -> Result<()> {
+    let comments: Vec<&Comment> = doc.comments();
+    let body = extract_body_text(doc);
+
+    let mut mapping = parse_existing_frontmatter(doc)?;
+
+    // Authenticate `author` against the on-disk value BEFORE the generic
+    // fill so a supplied value (or its deliberate absence) is judged as
+    // written rather than silently back-filled from the caller identity.
+    authenticate_author(&mut mapping, config, create, old_author)?;
+    populate_non_author_fields(&mut mapping, &body);
+    update_remargin_fields(&mut mapping, &comments);
+
+    let yaml = Value::Mapping(mapping);
+    write_frontmatter_to_doc(doc, &yaml);
+
+    Ok(())
+}
+
+/// Read the document-level `author` frontmatter value, if any.
+///
+/// Returns `None` when the key is absent or is not a string scalar.
+///
+/// # Errors
+///
+/// Returns an error if existing frontmatter YAML cannot be parsed.
+pub(crate) fn read_author(doc: &ParsedDocument) -> Result<Option<String>> {
+    let mapping = parse_existing_frontmatter(doc)?;
+    Ok(mapping
+        .get("author")
+        .and_then(Value::as_str)
+        .map(str::to_owned))
+}
+
+/// Authenticate the `author` frontmatter key in place.
+///
+/// See [`ensure_frontmatter_authored`] for the full contract. `config`
+/// MUST already be escalated to the doc's realm.
+fn authenticate_author(
+    mapping: &mut Mapping,
+    config: &ResolvedConfig,
+    create: bool,
+    old_author: Option<&str>,
+) -> Result<()> {
+    let key = Value::String(String::from("author"));
+    let supplied = mapping
+        .get("author")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+
+    if create {
+        // Ignore-and-override: authorship is the authenticated caller, never
+        // whatever the payload claimed. Anonymous callers get no author key.
+        match &config.identity {
+            Some(id) => {
+                mapping.insert(key, Value::String(id.clone()));
+            }
+            None => {
+                mapping.remove(&key);
+            }
+        }
+        return Ok(());
+    }
+
+    match supplied {
+        // Omitted on an edit is not a change: preserve the on-disk author.
+        None => {
+            match old_author {
+                Some(prev) => {
+                    mapping.insert(key, Value::String(prev.to_owned()));
+                }
+                None => {
+                    mapping.remove(&key);
+                }
+            }
+            Ok(())
+        }
+        // Unchanged author passes in every mode.
+        Some(new) if old_author == Some(new.as_str()) => Ok(()),
+        Some(new) => match config.mode {
+            Mode::Open => Ok(()),
+            Mode::Registered => {
+                let reg = config
+                    .registry
+                    .as_ref()
+                    .context("mode is registered but no registry found")?;
+                if reg.is_active(&new) {
+                    Ok(())
+                } else {
+                    anyhow::bail!(
+                        "author change to {new:?} rejected: not an active registry participant"
+                    );
+                }
+            }
+            Mode::Strict => match old_author {
+                Some(_) => {
+                    anyhow::bail!("author is immutable in strict mode: {old_author:?} -> {new:?}")
+                }
+                None => {
+                    if config.identity.as_deref() == Some(new.as_str()) {
+                        Ok(())
+                    } else {
+                        anyhow::bail!(
+                            "strict mode: a first-time author must be your own identity: \
+                             {new:?} != caller {:?}",
+                            config.identity
+                        );
+                    }
+                }
+            },
+        },
+    }
 }
 
 /// Read the current `sandbox` frontmatter list as `SandboxEntry` values.
@@ -192,6 +335,23 @@ pub fn remove_sandbox_entry_for(entries: &mut Vec<SandboxEntry>, identity: &str)
 /// - `author`: from config identity if available
 /// - `created`: current timestamp
 pub fn populate_user_fields(mapping: &mut Mapping, doc_body: &str, config: &ResolvedConfig) {
+    populate_non_author_fields(mapping, doc_body);
+
+    // author: from config identity if available and not already set.
+    let author_key = Value::String(String::from("author"));
+    if !mapping.contains_key(&author_key)
+        && let Some(identity) = &config.identity
+    {
+        mapping.insert(author_key, Value::String(identity.clone()));
+    }
+}
+
+/// Auto-populate every user-owned field except `author`.
+///
+/// The authored write path ([`ensure_frontmatter_authored`]) authenticates
+/// `author` separately, so it must not be back-filled from the caller
+/// identity here.
+fn populate_non_author_fields(mapping: &mut Mapping, doc_body: &str) {
     // title: from first # heading, only if not already set.
     let title_key = Value::String(String::from("title"));
     if !mapping.contains_key(&title_key) {
@@ -203,14 +363,6 @@ pub fn populate_user_fields(mapping: &mut Mapping, doc_body: &str, config: &Reso
     let desc_key = Value::String(String::from("description"));
     if !mapping.contains_key(&desc_key) {
         mapping.insert(desc_key, Value::String(String::new()));
-    }
-
-    // author: from config identity if available and not already set.
-    let author_key = Value::String(String::from("author"));
-    if !mapping.contains_key(&author_key)
-        && let Some(identity) = &config.identity
-    {
-        mapping.insert(author_key, Value::String(identity.clone()));
     }
 
     // created: current timestamp if not set.
