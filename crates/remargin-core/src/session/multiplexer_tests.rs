@@ -10,8 +10,9 @@ use std::path::{Path, PathBuf};
 use chrono::{DateTime, Utc};
 
 use super::{
-    Multiplexer, Tab, build_tmux_plan, launch_into_multiplexer, pane_shows_ready_prompt,
-    pane_shows_trust_dialog, session_name,
+    Multiplexer, Tab, build_herdr_plan, build_tmux_plan, default_multiplexer,
+    herdr_unavailable_error, launch_into_multiplexer, pane_shows_ready_prompt,
+    pane_shows_trust_dialog, parse_pane_id, parse_workspace_id, session_name, substitute,
 };
 
 fn at(secs: i64) -> DateTime<Utc> {
@@ -72,28 +73,34 @@ fn session_name_falls_back_when_cwd_has_no_basename() {
 
 #[test]
 fn multiplexer_parses_known_values() {
+    assert_eq!(Multiplexer::parse("herdr").unwrap(), Multiplexer::Herdr);
     assert_eq!(Multiplexer::parse("tmux").unwrap(), Multiplexer::Tmux);
-    assert_eq!(Multiplexer::parse("zellij").unwrap(), Multiplexer::Zellij);
 }
 
 #[test]
 fn multiplexer_parse_rejects_unknown_naming_allowed() {
     let err = Multiplexer::parse("screen").unwrap_err().to_string();
     assert!(err.contains("screen"), "names the offender: {err}");
+    assert!(err.contains("herdr"), "lists herdr: {err}");
     assert!(err.contains("tmux"), "lists tmux: {err}");
-    assert!(err.contains("zellij"), "lists zellij: {err}");
 }
 
 #[test]
 fn attach_hint_is_multiplexer_specific() {
     assert_eq!(
+        Multiplexer::Herdr.attach_hint("demo-abcd"),
+        "herdr session attach demo-abcd"
+    );
+    assert_eq!(
         Multiplexer::Tmux.attach_hint("demo-abcd"),
         "tmux attach -t demo-abcd"
     );
-    assert_eq!(
-        Multiplexer::Zellij.attach_hint("demo-abcd"),
-        "zellij attach demo-abcd"
-    );
+}
+
+#[test]
+fn default_multiplexer_prefers_herdr_when_available() {
+    assert_eq!(default_multiplexer(true), Multiplexer::Herdr);
+    assert_eq!(default_multiplexer(false), Multiplexer::Tmux);
 }
 
 #[test]
@@ -231,18 +238,169 @@ fn launch_rejects_empty_tabs_without_spawning() {
 }
 
 #[test]
-fn zellij_launch_is_gated_pending_a_bead() {
-    // Non-empty tabs so the guard is the zellij gate, not the empty check.
-    // This bails before any process is spawned.
-    let tabs = [tab("root_agent", "/demo", &["claude"], &["/loop 30s"])];
-    let err = launch_into_multiplexer(Multiplexer::Zellij, "demo-abcd", &tabs)
-        .unwrap_err()
-        .to_string();
-    assert!(
-        err.contains("zellij support pending"),
-        "clear pending message: {err}"
+fn herdr_plan_creates_workspace_then_starts_and_seeds_each_tab() {
+    let tabs = [
+        tab("root_agent", "/demo", &["claude", "--foo"], &["/loop 30s"]),
+        tab(
+            "finance",
+            "/demo/finance",
+            &["claude", "-n", "finance"],
+            &["/loop 1h", "/goal reconcile"],
+        ),
+    ];
+
+    let plan = build_herdr_plan("demo-abcd", &tabs);
+
+    // Workspace is created once, rooted at the first tab's cwd.
+    assert_eq!(
+        plan.create_workspace,
+        strs(&[
+            "herdr",
+            "workspace",
+            "create",
+            "--cwd",
+            "/demo",
+            "--label",
+            "demo-abcd",
+            "--no-focus",
+        ])
     );
-    assert!(err.contains("rem-1x1t"), "names the tracking bead: {err}");
+    assert_eq!(plan.tabs.len(), 2);
+
+    // The agent-start argv reuses the launch_argv verbatim after `--`, with a
+    // `<WS>` placeholder for the workspace id resolved at run time.
+    let first = &plan.tabs[0];
+    assert_eq!(first.identity, "root_agent");
+    assert_eq!(
+        first.agent_start,
+        strs(&[
+            "herdr",
+            "agent",
+            "start",
+            "root_agent",
+            "--workspace",
+            "<WS>",
+            "--cwd",
+            "/demo",
+            "--no-focus",
+            "--",
+            "claude",
+            "--foo",
+        ])
+    );
+    let second = &plan.tabs[1];
+    assert_eq!(
+        second.agent_start,
+        strs(&[
+            "herdr",
+            "agent",
+            "start",
+            "finance",
+            "--workspace",
+            "<WS>",
+            "--cwd",
+            "/demo/finance",
+            "--no-focus",
+            "--",
+            "claude",
+            "-n",
+            "finance",
+        ])
+    );
+}
+
+#[test]
+fn herdr_tab_wait_ready_is_trust_then_enter_then_idle() {
+    let tabs = [tab("root_agent", "/demo", &["claude"], &["/loop 30s"])];
+    let plan = build_herdr_plan("demo-abcd", &tabs);
+
+    assert_eq!(
+        plan.tabs[0].wait_ready,
+        vec![
+            strs(&[
+                "herdr",
+                "wait",
+                "output",
+                "<PANE>",
+                "--match",
+                "trust",
+                "--timeout",
+                "20000",
+            ]),
+            strs(&["herdr", "pane", "send-keys", "<PANE>", "enter"]),
+            strs(&[
+                "herdr",
+                "wait",
+                "agent-status",
+                "<PANE>",
+                "--status",
+                "idle",
+                "--timeout",
+                "35000",
+            ]),
+        ]
+    );
+}
+
+#[test]
+fn herdr_seed_sends_each_line_by_name_then_submits() {
+    let tabs = [tab(
+        "root_agent",
+        "/demo",
+        &["claude"],
+        &["/loop 30s", "/goal go"],
+    )];
+    let plan = build_herdr_plan("demo-abcd", &tabs);
+
+    // Addressed by agent name (`agent send root_agent …`), each followed by a
+    // `send-keys <PANE> enter` submit.
+    assert_eq!(
+        plan.tabs[0].seed,
+        vec![
+            strs(&["herdr", "agent", "send", "root_agent", "/loop 30s"]),
+            strs(&["herdr", "pane", "send-keys", "<PANE>", "enter"]),
+            strs(&["herdr", "agent", "send", "root_agent", "/goal go"]),
+            strs(&["herdr", "pane", "send-keys", "<PANE>", "enter"]),
+        ]
+    );
+}
+
+#[test]
+fn parses_workspace_id_from_create_json() {
+    let json = r#"{"result":{"root_pane":{"pane_id":"w4:p1","terminal_id":"term_6570da89722875","workspace_id":"w4"},"workspace":{"workspace_id":"w4","label":"remargin-smoke"}}}"#;
+    assert_eq!(parse_workspace_id(json).unwrap(), "w4");
+}
+
+#[test]
+fn parses_pane_id_from_agent_start_json() {
+    let json =
+        r#"{"result":{"agent":{"pane_id":"w4:p2","terminal_id":"term_abc123","agent":"claude"}}}"#;
+    assert_eq!(parse_pane_id(json).unwrap(), "w4:p2");
+}
+
+#[test]
+fn parse_workspace_id_errors_on_malformed_json() {
+    let err = parse_workspace_id("{not json").unwrap_err().to_string();
+    assert!(err.contains("workspace create"), "names the source: {err}");
+}
+
+#[test]
+fn substitute_replaces_only_exact_placeholder_matches() {
+    let argv = strs(&["herdr", "agent", "start", "<WS>", "--cwd", "<WS>path"]);
+    assert_eq!(
+        substitute(&argv, "<WS>", "w4"),
+        strs(&["herdr", "agent", "start", "w4", "--cwd", "<WS>path"])
+    );
+}
+
+#[test]
+fn herdr_unavailable_error_names_the_fix() {
+    let err = herdr_unavailable_error().to_string();
+    assert!(err.contains("herdr"), "names herdr: {err}");
+    assert!(
+        err.contains("--multiplexer tmux"),
+        "names the tmux fallback: {err}"
+    );
 }
 
 /// The no-supervision invariant (discussion decisions 3 & 5): the engine

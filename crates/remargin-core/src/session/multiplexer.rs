@@ -11,21 +11,21 @@
 //! The module splits cleanly into two halves so the interesting part is
 //! deterministic and unit-testable without spawning anything:
 //!
-//! - **Pure construction** ([`session_name`], [`build_tmux_plan`]) turns a
-//!   `(session_name, tabs)` pair into the exact tmux command argv vectors and
-//!   the full trust-dismiss + seed send-keys sequence. These are asserted
-//!   command-for-command in the tests.
+//! - **Pure construction** ([`session_name`], [`build_tmux_plan`],
+//!   [`build_herdr_plan`]) turns a `(session_name, tabs)` pair into the exact
+//!   multiplexer command argv vectors and the full trust-dismiss + seed
+//!   sequence. These are asserted command-for-command in the tests.
 //! - **Thin execution** ([`launch_into_multiplexer`]) spawns the constructed
-//!   commands via [`std::process::Command`] and does the bounded readiness
-//!   polling between launching a tab and seeding it. It is deliberately kept
-//!   out of the quality gate: it needs a real tmux/`claude` and would be
-//!   flaky, so nothing here calls it.
+//!   commands via [`std::process::Command`]. The tmux path polls `capture-pane`
+//!   for readiness; the herdr path uses herdr's blocking `wait` primitives
+//!   instead. It is deliberately kept out of the quality gate: it needs a real
+//!   tmux/herdr/`claude` and would be flaky, so nothing here calls it.
 //!
-//! zellij is parsed and modelled but its launch path is gated: a live spike
-//! (see the `session-launch` bead this task filed) found the spec's preferred
-//! zellij mechanism unworkable as written, so `--multiplexer zellij` returns
-//! a clear pending error rather than a half-working launch. tmux is the
-//! default and fully works.
+//! herdr is the flagship: an agent-aware workspace manager that addresses
+//! tabs/panes/agents **by name**, exposes blocking `wait` primitives, and
+//! natively detects Claude's state. It is the default when its server is
+//! reachable; tmux is the zero-extra-dependency fallback and stays the choice
+//! on hosts without herdr.
 
 use core::fmt::Write as _;
 use core::time::Duration;
@@ -35,11 +35,19 @@ use std::thread::sleep;
 
 use anyhow::{Context as _, Result, bail};
 use chrono::{DateTime, SecondsFormat, Utc};
+use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
 
-/// The bead tracking the deferred zellij launch path. Surfaced verbatim in
-/// the `--multiplexer zellij` pending error so the operator can find it.
-const ZELLIJ_PENDING_BEAD: &str = "rem-1x1t";
+/// Placeholder tokens the herdr execution layer substitutes with the real ids
+/// parsed from herdr's JSON: `workspace_id` from `workspace create`, `pane_id`
+/// from each `agent start`.
+const HERDR_PANE_PLACEHOLDER: &str = "<PANE>";
+const HERDR_WORKSPACE_PLACEHOLDER: &str = "<WS>";
+
+/// `herdr wait agent-status --timeout` for the idle prompt, in milliseconds.
+const HERDR_IDLE_TIMEOUT_MS: u32 = 35_000;
+/// `herdr wait output --timeout` for the trust dialog, in milliseconds.
+const HERDR_TRUST_TIMEOUT_MS: u32 = 20_000;
 
 /// Bounded readiness poll: at most this many `capture-pane` reads before
 /// seeding proceeds anyway. With [`READINESS_POLL`] this caps the wait near
@@ -52,10 +60,10 @@ const READINESS_POLL: Duration = Duration::from_millis(250);
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum Multiplexer {
-    /// tmux — the default; fully implemented.
+    /// herdr — the flagship: agent-aware, name-addressed, blocking waits.
+    Herdr,
+    /// tmux — the zero-extra-dependency fallback.
     Tmux,
-    /// zellij — parsed but its launch path is currently gated.
-    Zellij,
 }
 
 impl Multiplexer {
@@ -63,17 +71,17 @@ impl Multiplexer {
     #[must_use]
     pub fn attach_hint(self, session_name: &str) -> String {
         match self {
+            Self::Herdr => format!("herdr session attach {session_name}"),
             Self::Tmux => format!("tmux attach -t {session_name}"),
-            Self::Zellij => format!("zellij attach {session_name}"),
         }
     }
 
-    /// Stable lowercase name (`"tmux"` / `"zellij"`).
+    /// Stable lowercase name (`"herdr"` / `"tmux"`).
     #[must_use]
     pub const fn name(self) -> &'static str {
         match self {
+            Self::Herdr => "herdr",
             Self::Tmux => "tmux",
-            Self::Zellij => "zellij",
         }
     }
 
@@ -82,12 +90,12 @@ impl Multiplexer {
     /// # Errors
     ///
     /// Returns an error naming the allowed values when `value` is neither
-    /// `tmux` nor `zellij`.
+    /// `herdr` nor `tmux`.
     pub fn parse(value: &str) -> Result<Self> {
         match value {
+            "herdr" => Ok(Self::Herdr),
             "tmux" => Ok(Self::Tmux),
-            "zellij" => Ok(Self::Zellij),
-            other => bail!("unknown multiplexer {other:?}; allowed: tmux, zellij"),
+            other => bail!("unknown multiplexer {other:?}; allowed: herdr, tmux"),
         }
     }
 }
@@ -158,6 +166,87 @@ pub struct TmuxPlan {
     pub tabs: Vec<TmuxTabSeed>,
 }
 
+/// A fully-constructed herdr launch plan, deterministic given
+/// `(session_name, tabs)`.
+///
+/// Pure: spawns nothing. `<WS>`/`<PANE>` placeholder tokens are substituted by
+/// the thin execution layer from the ids it parses out of herdr's JSON
+/// responses at run time.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub struct HerdrPlan {
+    /// `herdr workspace create …` for the named session.
+    pub create_workspace: Vec<String>,
+    /// Per tab, in order: `agent start` argv + wait/seed choreography.
+    pub tabs: Vec<HerdrTabPlan>,
+}
+
+/// One identity's herdr choreography within a plan.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub struct HerdrTabPlan {
+    /// `herdr agent start <identity> --workspace <WS> --cwd <cwd> --no-focus
+    /// -- <launch_argv>`. `<WS>` is resolved from the create-workspace JSON.
+    pub agent_start: Vec<String>,
+    /// Identity governing the tab; also the herdr agent name.
+    pub identity: String,
+    /// Ordered seed commands: for each seed line, `herdr agent send <identity>
+    /// <line>` then `herdr pane send-keys <PANE> enter`.
+    pub seed: Vec<Vec<String>>,
+    /// Readiness: `herdr wait output <PANE> --match trust`, then `herdr pane
+    /// send-keys <PANE> enter` to dismiss the trust dialog, then `herdr wait
+    /// agent-status <PANE> --status idle` (per task 88).
+    pub wait_ready: Vec<Vec<String>>,
+}
+
+/// Minimal typed view of a `herdr agent start` response: only the agent's
+/// `pane_id`.
+#[derive(Debug, Deserialize)]
+struct HerdrAgent {
+    pane_id: String,
+}
+
+/// Minimal typed view of a `herdr workspace create` response: only the
+/// `workspace_id`.
+#[derive(Debug, Deserialize)]
+struct HerdrWorkspace {
+    workspace_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct HerdrAgentResult {
+    agent: HerdrAgent,
+}
+
+#[derive(Debug, Deserialize)]
+struct HerdrAgentStarted {
+    result: HerdrAgentResult,
+}
+
+#[derive(Debug, Deserialize)]
+struct HerdrWorkspaceCreated {
+    result: HerdrWorkspaceResult,
+}
+
+#[derive(Debug, Deserialize)]
+struct HerdrWorkspaceResult {
+    workspace: HerdrWorkspace,
+}
+
+/// Pick the multiplexer for an unset `--multiplexer`.
+///
+/// herdr when its server is reachable, else tmux. An explicit value is parsed
+/// by [`Multiplexer::parse`] and always wins; this only decides the
+/// unspecified case.
+#[must_use]
+pub const fn default_multiplexer(herdr_available: bool) -> Multiplexer {
+    if herdr_available {
+        Multiplexer::Herdr
+    } else {
+        Multiplexer::Tmux
+    }
+}
+
 /// Derive a unique, human-recognizable session name from `cwd` and `now`.
 ///
 /// The name is `<basename>-<hash>`: the cwd's sanitized basename (multiplexer
@@ -188,7 +277,7 @@ pub fn session_name(cwd: &Path, now: DateTime<Utc>) -> String {
 }
 
 /// Replace every character that is not ASCII alphanumeric, `_`, or `-` with
-/// `_`, so the result is safe as a tmux/zellij session name.
+/// `_`, so the result is safe as a tmux/herdr session name.
 fn sanitize_base(base: &str) -> String {
     base.chars()
         .map(|ch| {
@@ -295,6 +384,134 @@ fn tmux_tab_seed(session_name: &str, tab: &Tab) -> TmuxTabSeed {
     }
 }
 
+/// Construct the full herdr launch plan for `session_name` over `tabs`.
+///
+/// One `workspace create` for the session (rooted at the first tab's cwd),
+/// then per tab an `agent start` carrying a `<WS>` placeholder, the wait-based
+/// readiness choreography, and the ordered name-addressed seed commands (both
+/// carrying a `<PANE>` placeholder). Pure: builds argv vectors and spawns
+/// nothing; the thin execution layer substitutes the real ids parsed from
+/// herdr's JSON.
+#[must_use]
+pub fn build_herdr_plan(session_name: &str, tabs: &[Tab]) -> HerdrPlan {
+    let root = tabs.first().map_or_else(
+        || ".".to_owned(),
+        |tab| tab.cwd.to_string_lossy().into_owned(),
+    );
+    let create_workspace = vec![
+        "herdr".to_owned(),
+        "workspace".to_owned(),
+        "create".to_owned(),
+        "--cwd".to_owned(),
+        root,
+        "--label".to_owned(),
+        session_name.to_owned(),
+        "--no-focus".to_owned(),
+    ];
+    HerdrPlan {
+        create_workspace,
+        tabs: tabs.iter().map(herdr_tab_plan).collect(),
+    }
+}
+
+/// Build one tab's herdr choreography: the `agent start` argv (with a `<WS>`
+/// placeholder), the wait-based readiness sequence, and the ordered
+/// name-addressed seed commands.
+fn herdr_tab_plan(tab: &Tab) -> HerdrTabPlan {
+    let cwd = tab.cwd.to_string_lossy().into_owned();
+    let mut agent_start = vec![
+        "herdr".to_owned(),
+        "agent".to_owned(),
+        "start".to_owned(),
+        tab.identity.clone(),
+        "--workspace".to_owned(),
+        HERDR_WORKSPACE_PLACEHOLDER.to_owned(),
+        "--cwd".to_owned(),
+        cwd,
+        "--no-focus".to_owned(),
+        "--".to_owned(),
+    ];
+    agent_start.extend(tab.launch_argv.iter().cloned());
+
+    let wait_ready = vec![
+        vec![
+            "herdr".to_owned(),
+            "wait".to_owned(),
+            "output".to_owned(),
+            HERDR_PANE_PLACEHOLDER.to_owned(),
+            "--match".to_owned(),
+            "trust".to_owned(),
+            "--timeout".to_owned(),
+            HERDR_TRUST_TIMEOUT_MS.to_string(),
+        ],
+        herdr_send_enter(),
+        vec![
+            "herdr".to_owned(),
+            "wait".to_owned(),
+            "agent-status".to_owned(),
+            HERDR_PANE_PLACEHOLDER.to_owned(),
+            "--status".to_owned(),
+            "idle".to_owned(),
+            "--timeout".to_owned(),
+            HERDR_IDLE_TIMEOUT_MS.to_string(),
+        ],
+    ];
+
+    let mut seed = Vec::with_capacity(tab.seed_inputs.len() * 2);
+    for line in &tab.seed_inputs {
+        seed.push(vec![
+            "herdr".to_owned(),
+            "agent".to_owned(),
+            "send".to_owned(),
+            tab.identity.clone(),
+            line.clone(),
+        ]);
+        seed.push(herdr_send_enter());
+    }
+
+    HerdrTabPlan {
+        agent_start,
+        identity: tab.identity.clone(),
+        seed,
+        wait_ready,
+    }
+}
+
+/// `herdr pane send-keys <PANE> enter` — the submit after a seed line and the
+/// trust-dialog dismissal.
+fn herdr_send_enter() -> Vec<String> {
+    vec![
+        "herdr".to_owned(),
+        "pane".to_owned(),
+        "send-keys".to_owned(),
+        HERDR_PANE_PLACEHOLDER.to_owned(),
+        "enter".to_owned(),
+    ]
+}
+
+/// Extract the agent's `pane_id` from a `herdr agent start` response.
+///
+/// # Errors
+///
+/// Returns an error when `json` is not the expected `herdr agent start` shape.
+fn parse_pane_id(json: &str) -> Result<String> {
+    let parsed: HerdrAgentStarted =
+        serde_json::from_str(json).context("parsing 'herdr agent start' JSON")?;
+    Ok(parsed.result.agent.pane_id)
+}
+
+/// Extract the `workspace_id` from a `herdr workspace create` response.
+///
+/// # Errors
+///
+/// Returns an error when `json` is not the expected `herdr workspace create`
+/// shape.
+fn parse_workspace_id(json: &str) -> Result<String> {
+    let parsed: HerdrWorkspaceCreated =
+        serde_json::from_str(json).context("parsing 'herdr workspace create' JSON")?;
+    Ok(parsed.result.workspace.workspace_id)
+}
+
 /// True when captured pane content shows the workspace-trust dialog.
 ///
 /// Heuristic, used only by the ungated execution layer: the first
@@ -322,19 +539,83 @@ fn pane_shows_ready_prompt(pane: &str) -> bool {
 ///
 /// # Errors
 ///
-/// Returns an error when `tabs` is empty, when the selected multiplexer's
-/// launch path is not yet available (zellij), or when spawning a tmux
-/// command fails.
+/// Returns an error when `tabs` is empty, when the herdr preflight fails
+/// (herdr selected but its server is unreachable), or when spawning a
+/// multiplexer command fails.
 pub fn launch_into_multiplexer(mux: Multiplexer, session_name: &str, tabs: &[Tab]) -> Result<()> {
     if tabs.is_empty() {
         bail!("no sessions to launch");
     }
     match mux {
+        Multiplexer::Herdr => run_herdr_plan(session_name, tabs),
         Multiplexer::Tmux => run_tmux_plan(&build_tmux_plan(session_name, tabs)),
-        Multiplexer::Zellij => bail!(
-            "zellij support pending {ZELLIJ_PENDING_BEAD}; run with the default --multiplexer tmux"
-        ),
     }
+}
+
+/// True when `herdr status` reports a running, reachable server.
+///
+/// Spawns a real `herdr`; used for default-multiplexer selection and is not
+/// exercised by the quality gate.
+#[must_use]
+pub fn herdr_available() -> bool {
+    Command::new("herdr")
+        .arg("status")
+        .output()
+        .is_ok_and(|output| output.status.success())
+}
+
+/// The user-facing error when herdr cannot be used, naming the fix.
+fn herdr_unavailable_error() -> anyhow::Error {
+    anyhow::anyhow!(
+        "herdr is not available: `herdr status` failed. Start the herdr server (`herdr`), \
+         install herdr, or run with --multiplexer tmux"
+    )
+}
+
+/// Fail early when herdr is unusable, with the fix in the message.
+fn herdr_preflight() -> Result<()> {
+    if herdr_available() {
+        Ok(())
+    } else {
+        Err(herdr_unavailable_error())
+    }
+}
+
+/// Execute a herdr plan: preflight, create the workspace, then per tab start
+/// the agent, wait for readiness (dismissing the trust dialog), and seed it —
+/// substituting the real `workspace_id`/`pane_id` parsed from herdr's JSON
+/// into the plan's placeholder tokens. Thin execution: spawns real `herdr`
+/// processes and is not exercised by the quality gate.
+fn run_herdr_plan(session_name: &str, tabs: &[Tab]) -> Result<()> {
+    herdr_preflight()?;
+    let plan = build_herdr_plan(session_name, tabs);
+    let workspace_json = capture_json(&plan.create_workspace)?;
+    let workspace_id = parse_workspace_id(&workspace_json)?;
+    for tab in &plan.tabs {
+        let agent_start = substitute(&tab.agent_start, HERDR_WORKSPACE_PLACEHOLDER, &workspace_id);
+        let agent_json = capture_json(&agent_start)?;
+        let pane_id = parse_pane_id(&agent_json)?;
+        for argv in &tab.wait_ready {
+            run_command(&substitute(argv, HERDR_PANE_PLACEHOLDER, &pane_id))?;
+        }
+        for argv in &tab.seed {
+            run_command(&substitute(argv, HERDR_PANE_PLACEHOLDER, &pane_id))?;
+        }
+    }
+    Ok(())
+}
+
+/// Replace every argv element equal to `placeholder` with `value`.
+fn substitute(argv: &[String], placeholder: &str, value: &str) -> Vec<String> {
+    argv.iter()
+        .map(|part| {
+            if part == placeholder {
+                value.to_owned()
+            } else {
+                part.clone()
+            }
+        })
+        .collect()
 }
 
 /// Spawn a tmux plan's launch commands, then seed each tab once its TUI is
@@ -398,6 +679,19 @@ fn capture_pane(argv: &[String]) -> Result<String> {
         .args(rest)
         .output()
         .with_context(|| format!("spawning {program:?} -- is it installed?"))?;
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Run a herdr command and capture its stdout JSON, failing on a non-zero exit.
+fn capture_json(argv: &[String]) -> Result<String> {
+    let (program, rest) = argv.split_first().context("herdr command argv is empty")?;
+    let output = Command::new(program)
+        .args(rest)
+        .output()
+        .with_context(|| format!("spawning {program:?} -- is it installed?"))?;
+    if !output.status.success() {
+        bail!("command {program:?} exited with {}", output.status);
+    }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 

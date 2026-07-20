@@ -76,7 +76,7 @@ use remargin_core::session::backend::resolve_backend;
 use remargin_core::session::discovery::{DiscoveredSession, discover_sessions};
 #[cfg(feature = "session")]
 use remargin_core::session::multiplexer::{
-    Multiplexer, Tab, launch_into_multiplexer, session_name,
+    Multiplexer, Tab, default_multiplexer, herdr_available, launch_into_multiplexer, session_name,
 };
 #[cfg(feature = "session")]
 use remargin_core::session::spec::build_launch_spec;
@@ -2608,7 +2608,7 @@ pub fn cmd_session(
     if *print {
         return render_session_print(sinks, backend, &sessions);
     }
-    render_session_launch(sinks, cwd, backend, multiplexer, &sessions)
+    render_session_launch(sinks, cwd, backend, multiplexer.as_deref(), &sessions)
 }
 
 /// Launch one interactive session per discovered identity into a new named
@@ -2624,10 +2624,15 @@ fn render_session_launch(
     sinks: &mut IoSinks<'_>,
     cwd: &Path,
     backend_name: &str,
-    multiplexer: &str,
+    multiplexer: Option<&str>,
     sessions: &[DiscoveredSession],
 ) -> Result<()> {
-    let mux = Multiplexer::parse(multiplexer)?;
+    // Explicit `--multiplexer` always wins; an unset flag picks herdr when its
+    // server is reachable, else silently falls back to tmux (no error).
+    let mux = match multiplexer {
+        Some(value) => Multiplexer::parse(value)?,
+        None => default_multiplexer(herdr_available()),
+    };
     if sessions.is_empty() {
         bail!("no launchable identities under {}", cwd.display());
     }

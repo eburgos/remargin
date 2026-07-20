@@ -15,7 +15,7 @@ fn launch(dry_run: bool, print: bool, identity: Vec<String>, json: bool) -> Sess
         backend: String::from("claude"),
         dry_run,
         identity,
-        multiplexer: String::from("tmux"),
+        multiplexer: Some(String::from("tmux")),
         output_args: OutputArgs {
             compact: false,
             json,
@@ -133,7 +133,7 @@ fn bare_launch_rejects_unknown_multiplexer() {
         backend: String::from("claude"),
         dry_run: false,
         identity: Vec::new(),
-        multiplexer: String::from("screen"),
+        multiplexer: Some(String::from("screen")),
         output_args: OutputArgs {
             compact: false,
             json: false,
@@ -148,22 +148,22 @@ fn bare_launch_rejects_unknown_multiplexer() {
         "names the offender: {err:#}"
     );
     assert!(
-        format!("{err:#}").contains("tmux") && format!("{err:#}").contains("zellij"),
+        format!("{err:#}").contains("herdr") && format!("{err:#}").contains("tmux"),
         "lists allowed values: {err:#}"
     );
     assert!(stdout.is_empty(), "no output on a flag error: {stdout}");
 }
 
-/// zellij is parsed but its launch path is gated pending a follow-up; a bare
-/// `--multiplexer zellij` launch surfaces that clearly, spawning nothing.
+/// zellij was removed in favour of herdr; naming it now fails on the flag,
+/// listing the allowed values (herdr, tmux), and spawns nothing.
 #[test]
-fn bare_launch_zellij_is_gated_pending() {
+fn bare_launch_rejects_zellij_now_removed() {
     let system = launchable_tree();
     let action = SessionAction::Launch {
         backend: String::from("claude"),
         dry_run: false,
         identity: Vec::new(),
-        multiplexer: String::from("zellij"),
+        multiplexer: Some(String::from("zellij")),
         output_args: OutputArgs {
             compact: false,
             json: false,
@@ -171,12 +171,17 @@ fn bare_launch_zellij_is_gated_pending() {
         },
         print: false,
     };
-    let (result, _stdout) = run(&system, "/demo", &action);
+    let (result, stdout) = run(&system, "/demo", &action);
     let err = result.unwrap_err();
     assert!(
-        format!("{err:#}").contains("zellij support pending"),
-        "clear pending message: {err:#}"
+        format!("{err:#}").contains("zellij"),
+        "names the offender: {err:#}"
     );
+    assert!(
+        format!("{err:#}").contains("herdr") && format!("{err:#}").contains("tmux"),
+        "lists allowed values: {err:#}"
+    );
+    assert!(stdout.is_empty(), "no output on a flag error: {stdout}");
 }
 
 /// A bare (real) launch builds every identity's spec first, so a missing
@@ -266,7 +271,7 @@ fn print_unknown_backend_lists_known() {
         backend: String::from("bogus"),
         dry_run: false,
         identity: Vec::new(),
-        multiplexer: String::from("tmux"),
+        multiplexer: Some(String::from("tmux")),
         output_args: OutputArgs {
             compact: false,
             json: false,

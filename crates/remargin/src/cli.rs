@@ -1014,9 +1014,10 @@ pub enum SessionAction {
         /// Restrict to these identities (comma-separated).
         #[arg(long, value_delimiter = ',')]
         identity: Vec<String>,
-        /// Terminal multiplexer to launch into. (Task 86.)
-        #[arg(long, value_name = "tmux|zellij", default_value = "tmux")]
-        multiplexer: String,
+        /// Terminal multiplexer to launch into. Unset means auto: herdr when
+        /// its server is reachable, else tmux. (Tasks 86, 89.)
+        #[arg(long, value_name = "herdr|tmux")]
+        multiplexer: Option<String>,
         #[command(flatten)]
         output_args: OutputArgs,
         /// Emit the per-identity commands; spawn nothing. (Task 85.)
