@@ -310,35 +310,42 @@ fn herdr_plan_creates_workspace_then_starts_and_seeds_each_tab() {
 }
 
 #[test]
-fn herdr_tab_wait_ready_is_trust_then_enter_then_idle() {
+fn herdr_tab_readiness_is_besteffort_trust_then_required_idle() {
     let tabs = [tab("root_agent", "/demo", &["claude"], &["/loop 30s"])];
     let plan = build_herdr_plan("demo-abcd", &tabs);
+    let tab_plan = &plan.tabs[0];
 
+    // The trust probe is best-effort (a short-timeout output match); its Enter
+    // is only sent when the probe matches; the idle wait is the required gate.
     assert_eq!(
-        plan.tabs[0].wait_ready,
-        vec![
-            strs(&[
-                "herdr",
-                "wait",
-                "output",
-                "<PANE>",
-                "--match",
-                "trust",
-                "--timeout",
-                "20000",
-            ]),
-            strs(&["herdr", "pane", "send-keys", "<PANE>", "enter"]),
-            strs(&[
-                "herdr",
-                "wait",
-                "agent-status",
-                "<PANE>",
-                "--status",
-                "idle",
-                "--timeout",
-                "35000",
-            ]),
-        ]
+        tab_plan.wait_trust,
+        strs(&[
+            "herdr",
+            "wait",
+            "output",
+            "<PANE>",
+            "--match",
+            "trust",
+            "--timeout",
+            "10000",
+        ])
+    );
+    assert_eq!(
+        tab_plan.dismiss_trust_enter,
+        strs(&["herdr", "pane", "send-keys", "<PANE>", "enter"])
+    );
+    assert_eq!(
+        tab_plan.wait_idle,
+        strs(&[
+            "herdr",
+            "wait",
+            "agent-status",
+            "<PANE>",
+            "--status",
+            "idle",
+            "--timeout",
+            "35000",
+        ])
     );
 }
 

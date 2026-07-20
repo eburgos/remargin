@@ -46,8 +46,10 @@ const HERDR_WORKSPACE_PLACEHOLDER: &str = "<WS>";
 
 /// `herdr wait agent-status --timeout` for the idle prompt, in milliseconds.
 const HERDR_IDLE_TIMEOUT_MS: u32 = 35_000;
-/// `herdr wait output --timeout` for the trust dialog, in milliseconds.
-const HERDR_TRUST_TIMEOUT_MS: u32 = 20_000;
+/// `herdr wait output --timeout` for the trust-dialog probe, in milliseconds.
+/// Best-effort: an already-trusted folder shows no dialog and this simply
+/// expires, so keep it short — the real readiness gate is `wait agent-status`.
+const HERDR_TRUST_TIMEOUT_MS: u32 = 10_000;
 
 /// Bounded readiness poll: at most this many `capture-pane` reads before
 /// seeding proceeds anyway. With [`READINESS_POLL`] this caps the wait near
@@ -188,15 +190,21 @@ pub struct HerdrTabPlan {
     /// `herdr agent start <identity> --workspace <WS> --cwd <cwd> --no-focus
     /// -- <launch_argv>`. `<WS>` is resolved from the create-workspace JSON.
     pub agent_start: Vec<String>,
+    /// `herdr pane send-keys <PANE> enter` — accepts the workspace-trust
+    /// dialog. Sent only when [`Self::wait_trust`] actually matched; on an
+    /// already-trusted folder the dialog never appears and this is skipped.
+    pub dismiss_trust_enter: Vec<String>,
     /// Identity governing the tab; also the herdr agent name.
     pub identity: String,
     /// Ordered seed commands: for each seed line, `herdr agent send <identity>
     /// <line>` then `herdr pane send-keys <PANE> enter`.
     pub seed: Vec<Vec<String>>,
-    /// Readiness: `herdr wait output <PANE> --match trust`, then `herdr pane
-    /// send-keys <PANE> enter` to dismiss the trust dialog, then `herdr wait
-    /// agent-status <PANE> --status idle` (per task 88).
-    pub wait_ready: Vec<Vec<String>>,
+    /// Required readiness gate: `herdr wait agent-status <PANE> --status idle`.
+    pub wait_idle: Vec<String>,
+    /// Best-effort trust probe: `herdr wait output <PANE> --match trust`. A
+    /// timeout here means the folder was already trusted (no dialog appeared) —
+    /// it is NOT fatal; the launch proceeds to [`Self::wait_idle`] regardless.
+    pub wait_trust: Vec<String>,
 }
 
 /// Minimal typed view of a `herdr agent start` response: only the agent's
@@ -433,28 +441,25 @@ fn herdr_tab_plan(tab: &Tab) -> HerdrTabPlan {
     ];
     agent_start.extend(tab.launch_argv.iter().cloned());
 
-    let wait_ready = vec![
-        vec![
-            "herdr".to_owned(),
-            "wait".to_owned(),
-            "output".to_owned(),
-            HERDR_PANE_PLACEHOLDER.to_owned(),
-            "--match".to_owned(),
-            "trust".to_owned(),
-            "--timeout".to_owned(),
-            HERDR_TRUST_TIMEOUT_MS.to_string(),
-        ],
-        herdr_send_enter(),
-        vec![
-            "herdr".to_owned(),
-            "wait".to_owned(),
-            "agent-status".to_owned(),
-            HERDR_PANE_PLACEHOLDER.to_owned(),
-            "--status".to_owned(),
-            "idle".to_owned(),
-            "--timeout".to_owned(),
-            HERDR_IDLE_TIMEOUT_MS.to_string(),
-        ],
+    let wait_trust = vec![
+        "herdr".to_owned(),
+        "wait".to_owned(),
+        "output".to_owned(),
+        HERDR_PANE_PLACEHOLDER.to_owned(),
+        "--match".to_owned(),
+        "trust".to_owned(),
+        "--timeout".to_owned(),
+        HERDR_TRUST_TIMEOUT_MS.to_string(),
+    ];
+    let wait_idle = vec![
+        "herdr".to_owned(),
+        "wait".to_owned(),
+        "agent-status".to_owned(),
+        HERDR_PANE_PLACEHOLDER.to_owned(),
+        "--status".to_owned(),
+        "idle".to_owned(),
+        "--timeout".to_owned(),
+        HERDR_IDLE_TIMEOUT_MS.to_string(),
     ];
 
     let mut seed = Vec::with_capacity(tab.seed_inputs.len() * 2);
@@ -471,9 +476,11 @@ fn herdr_tab_plan(tab: &Tab) -> HerdrTabPlan {
 
     HerdrTabPlan {
         agent_start,
+        dismiss_trust_enter: herdr_send_enter(),
         identity: tab.identity.clone(),
         seed,
-        wait_ready,
+        wait_idle,
+        wait_trust,
     }
 }
 
@@ -595,9 +602,26 @@ fn run_herdr_plan(session_name: &str, tabs: &[Tab]) -> Result<()> {
         let agent_start = substitute(&tab.agent_start, HERDR_WORKSPACE_PLACEHOLDER, &workspace_id);
         let agent_json = capture_json(&agent_start)?;
         let pane_id = parse_pane_id(&agent_json)?;
-        for argv in &tab.wait_ready {
-            run_command(&substitute(argv, HERDR_PANE_PLACEHOLDER, &pane_id))?;
+        // The trust dialog only appears on the first launch in an untrusted
+        // folder. Probe for it best-effort: if it shows, dismiss it; if the
+        // probe times out (already trusted), do NOT fail the launch — an early
+        // draft did, which aborted every later agent. Readiness is `wait_idle`.
+        if run_command_ok(&substitute(
+            &tab.wait_trust,
+            HERDR_PANE_PLACEHOLDER,
+            &pane_id,
+        )) {
+            run_command(&substitute(
+                &tab.dismiss_trust_enter,
+                HERDR_PANE_PLACEHOLDER,
+                &pane_id,
+            ))?;
         }
+        run_command(&substitute(
+            &tab.wait_idle,
+            HERDR_PANE_PLACEHOLDER,
+            &pane_id,
+        ))?;
         for argv in &tab.seed {
             run_command(&substitute(argv, HERDR_PANE_PLACEHOLDER, &pane_id))?;
         }
@@ -670,6 +694,19 @@ fn run_command(argv: &[String]) -> Result<()> {
         bail!("command {program:?} exited with {status}");
     }
     Ok(())
+}
+
+/// Run a constructed command best-effort, returning whether it exited zero.
+/// Never fails the launch — used for the trust-dialog probe, whose timeout
+/// (exit 1) just means the folder was already trusted.
+fn run_command_ok(argv: &[String]) -> bool {
+    let Some((program, rest)) = argv.split_first() else {
+        return false;
+    };
+    Command::new(program)
+        .args(rest)
+        .status()
+        .is_ok_and(|status| status.success())
 }
 
 /// Capture a tmux pane's visible content for readiness polling.
