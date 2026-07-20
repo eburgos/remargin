@@ -7,6 +7,7 @@
 //! `session` Cargo feature; absent from the default build.
 
 pub mod discovery;
+pub mod spec;
 
 #[cfg(test)]
 mod tests;
