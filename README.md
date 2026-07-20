@@ -1,7 +1,7 @@
 # Remargin
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.1.12-7F6DF2.svg)](Cargo.toml)
+[![Version](https://img.shields.io/badge/version-0.1.15-7F6DF2.svg)](Cargo.toml)
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://rustup.rs)
 [![Made by Tixena Labs](https://img.shields.io/badge/made_by-Tixena_Labs-7F6DF2.svg)](https://tixenalabs.com/)
 
@@ -21,6 +21,7 @@ The protocol is a tiny structured comment format inside standard markdown fenced
 - [Quick start](#quick-start)
 - [Scope: what remargin manages](#scope-what-remargin-manages)
 - [Claude Code integration](#claude-code-integration)
+- [Session launch (multi-agent orchestration)](#session-launch-multi-agent-orchestration)
 - [Comment format](#comment-format)
 - [Configuration](#configuration)
 - [Permissions and access control](#permissions-and-access-control)
@@ -168,6 +169,7 @@ remargin query . --pending-for-me --pretty
 - **Structural linting** that validates markdown and comment block integrity
 - **Migration** from older inline comment formats
 - **Dual interface** — works as a standalone CLI or as an MCP server for any MCP client
+- **Session launch (multi-agent orchestration)** — `remargin session launch` discovers every identity down the tree and starts one Claude `/loop` session per identity, each in its own terminal-multiplexer tab (herdr or tmux); gated behind the `session` build feature
 
 ## Installation
 
@@ -316,7 +318,7 @@ remargin mcp install --user
 remargin mcp test
 ```
 
-Once installed, Claude Code gets these tools: `ls`, `get`, `write`, `replace`, `metadata`, `comment`, `comments`, `batch`, `edit`, `delete`, `ack`, `react`, `query`, `search`, `activity`, `lint`, `verify`, `migrate`, `purge`, `plan`, `sandbox_add`, `sandbox_list`, `sandbox_remove`, `prompt_resolve`, `prompt_list`, `permissions_show`, `permissions_check`, `identity_create`, `whoami`, `cp`, `mv`, `rm`.
+Once installed, Claude Code gets these tools: `ls`, `get`, `get_image`, `write`, `replace`, `metadata`, `comment`, `comments`, `batch`, `edit`, `delete`, `ack`, `react`, `query`, `search`, `report_spill`, `activity`, `lint`, `verify`, `migrate`, `purge`, `plan`, `sandbox_add`, `sandbox_list`, `sandbox_remove`, `prompt_resolve`, `prompt_list`, `permissions_show`, `permissions_check`, `identity_create`, `whoami`, `cp`, `mv`, `rm`. (`get_image` returns an image content block for a referenced image; `report_spill` ratchets the search page cap down after an over-limit result.)
 
 ### Plugin
 
@@ -383,6 +385,119 @@ For a multi-agent setup (multiple Claude Code instances sharing a realm):
 4. Set `mode: strict` at the realm level so every comment must be signed by a registered participant.
 
 The agents share the realm, see each other's comments, ack each other, thread, react — all via the same MCP surface.
+
+## Session launch (multi-agent orchestration)
+
+`remargin session launch` turns a tree of identity-scoped realms into a running multi-agent workspace. It walks *down* from the current directory, finds every `.remargin.yaml` that declares its **own** `identity`, and starts **one Claude session per identity** — each in its own terminal-multiplexer tab, with:
+
+- **cwd** set to that identity's folder,
+- a **remargin MCP server** scoped to that folder + identity,
+- the **composed system prompt** (the folder's resolved `system_prompt` plus remargin's operating rules),
+- running under Claude Code's **`/loop`** (the interval) with a **`/goal`** stop condition.
+
+The workflow is: a human stages work (drops a file into an identity's sandbox, leaves a comment) → each identity-bound agent processes its pending work through the document layer on its next `/loop` wake → the human reviews. remargin only *launches*. It writes no PID file, runs no supervisor, and performs no teardown; a session ends when its `/goal` is reached or you kill its tab. Which session handles which work is a matter of how you lay out realms and identities — concurrent writes can't corrupt a file (writes are atomic), so coordination is the workflow owner's design, not something the launcher enforces.
+
+> The `session:` config block and the `session launch` command are gated behind a **`session` Cargo feature**, off by default so a shipped binary stays lean. The default binary has **no** `session` subcommand — build or install remargin with the feature to use it (see [The `session` feature](#the-session-feature) below).
+
+### The `session:` block
+
+Each agent's `.remargin.yaml` declares its launch parameters in an optional `session:` block. `loop` and `goal` are **required to launch** (a session missing either fails to build); the rest is optional.
+
+```yaml
+identity: finance_agent
+key: ~/.remargin/keys/finance
+mode: strict
+system_prompt:
+  name: Finance
+  prompt: "You are the finance agent. Process your pending sandbox work."
+session:
+  loop: 30s                                                       # required — /loop cadence (a duration: 30s, 5min, 1h)
+  goal: "process pending work; stop when the sandbox is empty"    # required — the /goal stop condition
+  claude: { model: claude-opus-4-8, effort: high }                # optional — backend model + effort
+  budget: { max_turns: 20, tokens: 200000 }                       # optional — omit for no cap (e.g. local models)
+```
+
+### Commands and flags
+
+```bash
+remargin session launch                          # launch every discovered identity
+remargin session launch --dry-run                # print the discovery table; spawn nothing
+remargin session launch --print                  # emit the exact per-identity commands; start nothing
+remargin session launch --multiplexer herdr      # force a specific multiplexer (herdr | tmux)
+remargin session launch --identity finance,ops   # only these identities
+```
+
+- **`--dry-run`** walks the tree and prints one row per discovered identity — identity, folder, resolved prompt, `loop`, `goal`, scope — flags any identity missing a required `loop` or `goal`, and exits non-zero when any are unlaunchable. It spawns nothing.
+- **`--print`** emits the exact per-identity launch commands (as runnable `cd <folder> && claude …` lines) and starts nothing — for wiring the sessions into your own setup.
+- **`--multiplexer herdr|tmux`** picks the multiplexer. Unset means auto: herdr when its server is reachable, else tmux. An explicit value always wins.
+- **`--identity a,b`** restricts discovery to the named identities (comma-separated).
+- **`--backend`** selects the session backend (default `claude`).
+
+A `--dry-run` over the six-identity `demo-remargin` tree (`ops` here is missing its `goal`):
+
+```
+$ remargin session launch --dry-run
+IDENTITY             FOLDER                     PROMPT       LOOP  GOAL                         SCOPE
+eburgos_notes_agent  demo-remargin              (default)    30s   process pending; stop empty  demo-remargin
+audience             demo-remargin/audience     Audience     30s   process pending; stop empty  demo-remargin/audience
+content              demo-remargin/content      Content      30s   process pending; stop empty  demo-remargin/content
+coordinator          demo-remargin/coordinator  Coordinator  30s   process pending; stop empty  demo-remargin/coordinator
+finance              demo-remargin/finance      Finance      30s   process pending; stop empty  demo-remargin/finance
+ops                  demo-remargin/ops          Ops          30s   MISSING goal                 demo-remargin/ops
+6 identities; 1 not launchable (missing loop/goal).
+```
+
+A bare launch prints the session name and how to attach:
+
+```
+$ remargin session launch
+Launched 6 session(s) in herdr session: eburgos_notes-demo-4f9c
+Attach with:  herdr session attach eburgos_notes-demo-4f9c
+```
+
+### herdr (flagship) vs tmux (fallback)
+
+[herdr](https://herdr.dev) is an agent-aware terminal workspace manager: it addresses tabs and agents **by name**, exposes blocking `wait` primitives, and natively detects Claude's session state. That makes it the default whenever it is installed and its server is running. tmux is the zero-extra-dependency fallback.
+
+Prerequisites for the herdr path:
+
+- herdr installed and its server running (`herdr status` must succeed).
+- Recommended: `herdr integration install claude`, which sharpens Claude-state detection.
+
+Selection rules:
+
+- **`--multiplexer` unset:** herdr when its server is reachable, else tmux — silently, no error.
+- **`--multiplexer herdr` (explicit) but herdr unavailable:** the launch errors *before* creating anything, naming the fix (start/install herdr, or run with `--multiplexer tmux`).
+- **`--multiplexer tmux`:** always uses tmux.
+
+### Attach and watch
+
+Reattach any time — one tab per identity:
+
+```bash
+herdr session attach <name>     # herdr
+tmux attach -t <name>           # tmux
+```
+
+Watching, focusing, and stopping a session are your multiplexer's job. To stop one, kill its tab (or the whole session); it also stops itself when its `/goal` is reached.
+
+### Launching on a remote host
+
+To launch on a remote machine, **run the launcher on that host** (over SSH) so its multiplexer uses the local socket — machines that share paths and tooling make this clean. `herdr --remote <host>` is **attach-only**: it proxies the TUI so a human can watch from a laptop, and cannot drive a launch.
+
+### The `session` feature
+
+The `session:` config block and the `session launch` command are compiled only when the **`session` Cargo feature** is enabled — off by default so a shipped/installed binary stays lean. The default binary has no `session` subcommand. To use the feature, build or install with it enabled:
+
+```bash
+cargo build -p remargin --features session
+# or, from the workspace root:
+cargo build --features remargin/session
+```
+
+### Permissions
+
+Launched agents run under Claude Code's `--permission-mode auto` so an unattended `/loop` agent can call its remargin MCP tools without stalling on a per-call permission prompt (`acceptEdits` auto-approves only file edits, not MCP tool calls).
 
 ## Comment format
 
@@ -470,6 +585,18 @@ assets_dir: assets
 ignore:
   - "drafts/**"
   - "*.tmp"
+```
+
+### `session:` block — per-agent launch parameters
+
+Consumed by [`remargin session launch`](#session-launch-multi-agent-orchestration). Declares how this folder's identity is launched as a looping Claude session. `loop` and `goal` are required to launch; `claude` and `budget` are optional. The block only parses (and the `session launch` command only exists) when remargin is built with the `session` feature.
+
+```yaml
+session:
+  loop: 30s                                                     # required — /loop cadence (30s, 5min, 1h, …)
+  goal: "process pending work; stop when the sandbox is empty"  # required — the /goal stop condition
+  claude: { model: claude-opus-4-8, effort: high }              # optional — backend model + effort
+  budget: { max_turns: 20, tokens: 200000 }                     # optional — omit for no cap
 ```
 
 ### `.remargin-registry.yaml` — participant registry
@@ -606,6 +733,10 @@ error: comment preservation violation
 exit code: 5
 ```
 
+### Authenticated author frontmatter
+
+Document-level `author` frontmatter is authenticated on every write, so a caller cannot spoof authorship. On **create**, remargin stamps the authenticated caller's identity, dropping any `author` supplied in the payload. On **edit**, an unchanged or omitted author is preserved; changing it is gated by the realm mode — `open` allows any value, `registered` requires an active participant, and `strict` rejects changing an existing author (an authorless document may only gain the caller's own identity).
+
 ## CLI reference
 
 ```
@@ -629,7 +760,7 @@ remargin [OPTIONS] <COMMAND>
 
 | Command | Description |
 |---------|-------------|
-| `get` | Read a file's contents (with optional line range and `--line-numbers`/`-n`; `--json --compact` for a minified columnar payload — see [Compact output](#compact-output)) |
+| `get` | Read a file's contents (with optional line range and `--line-numbers`/`-n`; `--binary` fetches a non-markdown file as bytes — base64 under `--json`, an MCP embedded-resource block on the MCP surface; `--json --compact` for a minified columnar payload — see [Compact output](#compact-output)) |
 | `ls` | List files and directories |
 | `write` | Write document contents (comment-preserving, `--create` for new files, `--lines START-END` for partial writes) |
 | `metadata` | Get document metadata (frontmatter, comment counts, pending status) |
@@ -642,7 +773,7 @@ remargin [OPTIONS] <COMMAND>
 | Command | Description |
 |---------|-------------|
 | `query` | Search across documents for comments (filter by `--pending`, `--pending-for`, `--pending-for-me`, `--pending-broadcast`, `--author`, `--since`, `--comment-id`, `--kind`; `--expanded` for inline comment details; `--json --compact` for a minified columnar payload, `--include-integrity` to add checksum/signature columns — see [Compact output](#compact-output)) |
-| `search` | Full-text search across documents (supports `--regex`, `--scope`, `--context`, `--ignore-case`; `--json --compact` for a minified grouped columnar payload — see [Compact output](#compact-output)) |
+| `search` | Full-text search across documents (supports `--regex`, `--scope`, `--context`, `--ignore-case`, and stateless `--limit`/`--offset` pagination with an exact `total`; `--json --compact` for a minified grouped columnar payload — see [Compact output](#compact-output)) |
 | `lint` | Run structural lint checks on a document |
 | `verify` | Verify comment integrity (checksums and signatures) |
 | `activity` | Show what changed since a cutoff (caller's last action by default) — see [Tracking change](#tracking-change) |
@@ -657,6 +788,12 @@ remargin [OPTIONS] <COMMAND>
 | `prompt set` | Define a folder-scoped system prompt in `.remargin.yaml` |
 | `prompt resolve` | Resolve the nearest folder-scoped prompt for a file |
 | `prompt list` | List all folder-scoped prompts in the realm |
+
+### Session orchestration
+
+| Command | Description |
+|---------|-------------|
+| `session launch` | Launch one Claude session per discovered identity into a multiplexer, one tab each (`--dry-run` discovery table, `--print` commands-only, `--multiplexer herdr\|tmux`, `--identity a,b`, `--backend`). Gated behind the `session` build feature — see [Session launch](#session-launch-multi-agent-orchestration). |
 
 ### Plan (universal dry-run)
 
@@ -688,6 +825,7 @@ Returns a projection of any mutating op (`ack`, `batch`, `comment`, `cp`, `delet
 | `claude plugin install` | Register the marketplace and install the Claude Code plugin |
 | `claude plugin uninstall` | Uninstall the Claude Code plugin |
 | `claude plugin test` | Check plugin installation status |
+| `doctor` | Check realm health: hooks wired, config schema across the realm tree, identity/key resolvability, trusted-root existence, sandbox staging hygiene, project-scope settings. `--check=<set>` runs a named subset of checks |
 | `claude restrict` | Add permission rules (sync to `.claude/settings.local.json` and `~/.claude/settings.json`) |
 | `claude unrestrict` | Reverse a previous `restrict` cleanly |
 | `registry show` | Display the participant registry |
