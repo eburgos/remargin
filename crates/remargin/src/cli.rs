@@ -798,6 +798,13 @@ pub enum Commands {
         #[command(flatten)]
         output_args: OutputArgs,
     },
+    /// Launch one agent session per discovered identity under cwd.
+    #[cfg(feature = "session")]
+    Session {
+        /// Subcommand: `launch`.
+        #[command(subcommand)]
+        action: SessionAction,
+    },
     /// Back-sign missing-signature comments authored by the current
     /// identity.
     ///
@@ -987,6 +994,34 @@ pub enum ClaudeAction {
         user_settings: Option<PathBuf>,
         #[command(flatten)]
         output_args: OutputArgs,
+    },
+}
+
+/// `remargin session` subcommands. Nested-subcommand bucket mirroring
+/// [`ClaudeAction`]; `launch` discovers identities under cwd and (later)
+/// launches one session each.
+#[cfg(feature = "session")]
+#[derive(clap::Subcommand)]
+pub enum SessionAction {
+    /// Discover identities under cwd and (later) launch one session each.
+    Launch {
+        /// Session backend. (Task 85.)
+        #[arg(long, default_value = "claude")]
+        backend: String,
+        /// List what would launch; spawn nothing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Restrict to these identities (comma-separated).
+        #[arg(long, value_delimiter = ',')]
+        identity: Vec<String>,
+        /// Terminal multiplexer to launch into. (Task 86.)
+        #[arg(long, value_name = "tmux|zellij", default_value = "tmux")]
+        multiplexer: String,
+        #[command(flatten)]
+        output_args: OutputArgs,
+        /// Emit the per-identity commands; spawn nothing. (Task 85.)
+        #[arg(long)]
+        print: bool,
     },
 }
 

@@ -1,8 +1,10 @@
 # Cargo features the quality gate turns on beyond crate defaults. The
-# `session` feature (remargin-core) is off by default so a shipped/installed
-# binary stays lean and dep-free; the gate enables it here so the `session:`
-# config-block code and its tests are actually compiled, linted, and run.
-gate_features := "remargin-core/session"
+# `session` feature is off by default so a shipped/installed binary stays
+# lean and dep-free; the gate enables it here so the session code and its
+# tests are actually compiled, linted, and run. Enabling the `remargin`
+# crate's `session` feature transitively turns on `remargin-core/session`,
+# so both crates' session code is exercised under `just all`.
+gate_features := "remargin/session"
 
 # Default: list recipes.
 default:

@@ -17,6 +17,8 @@ use serde_json::{Value, json};
 
 #[cfg(feature = "obsidian")]
 use crate::ObsidianAction;
+#[cfg(feature = "session")]
+use crate::SessionAction;
 use crate::dispatch::{PERMISSIONS_NOT_RESTRICTED_MARKER, build_identity_flags, tri_state_flag};
 use crate::io::{
     IoSinks, expand_cli_path, expand_cli_pathbuf, out, out_json, out_json_min, out_raw,
@@ -68,6 +70,8 @@ use remargin_core::permissions::restrict as permissions_restrict;
 use remargin_core::permissions::session_guard_install;
 use remargin_core::permissions::unprotect as permissions_unprotect;
 use remargin_core::responses;
+#[cfg(feature = "session")]
+use remargin_core::session::discovery::{DiscoveredSession, discover_sessions};
 use remargin_core::writer::InsertPosition;
 
 const fn author_type_str(at: &parser::AuthorType) -> &'static str {
@@ -2566,6 +2570,178 @@ pub fn cmd_mcp(
             }
         }
     }
+}
+
+/// Discover sessions under `cwd` and render the launch plan.
+///
+/// This task ships only the read-only `--dry-run` slice. A bare
+/// `session launch` (no `--dry-run`, no `--print`) reports that launch is
+/// not yet available rather than spawning anything.
+#[cfg(feature = "session")]
+pub fn cmd_session(
+    sinks: &mut IoSinks<'_>,
+    system: &dyn System,
+    cwd: &Path,
+    action: &SessionAction,
+) -> Result<()> {
+    let SessionAction::Launch {
+        dry_run,
+        identity,
+        output_args,
+        print,
+        ..
+    } = action;
+    let mut sessions = discover_sessions(system, cwd)?;
+    if !identity.is_empty() {
+        sessions.retain(|session| identity.contains(&session.identity));
+    }
+    if *dry_run {
+        return render_dry_run(sinks, cwd, &sessions, output_args.json);
+    }
+    if *print {
+        bail!("`--print` arrives with task 85");
+    }
+    bail!("launch is not available yet -- run with --dry-run");
+}
+
+/// A session is launchable only once both its `loop` cadence and `goal`
+/// stop-condition are declared; the launch builder (task 84) hard-enforces
+/// this, dry-run only flags it.
+#[cfg(feature = "session")]
+fn session_loop(session: &DiscoveredSession) -> Option<&str> {
+    session.session.as_ref()?.loop_interval.as_deref()
+}
+
+#[cfg(feature = "session")]
+fn session_goal(session: &DiscoveredSession) -> Option<&str> {
+    session.session.as_ref()?.goal.as_deref()
+}
+
+#[cfg(feature = "session")]
+fn session_launchable(session: &DiscoveredSession) -> bool {
+    session_loop(session).is_some() && session_goal(session).is_some()
+}
+
+/// Render the discovered sessions as a table (or `--json` array), flagging
+/// any that cannot launch because `loop`/`goal` is missing. Bails after
+/// rendering when at least one is not launchable so the process exits
+/// non-zero: the table/array is the payload, the non-zero code is the
+/// signal.
+#[cfg(feature = "session")]
+fn render_dry_run(
+    sinks: &mut IoSinks<'_>,
+    cwd: &Path,
+    sessions: &[DiscoveredSession],
+    json_mode: bool,
+) -> Result<()> {
+    let not_launchable = sessions.iter().filter(|s| !session_launchable(s)).count();
+
+    if json_mode {
+        let array = Value::Array(sessions.iter().map(|s| session_json(s, cwd)).collect());
+        out_json(sinks, &array)?;
+    } else {
+        render_dry_run_table(sinks, cwd, sessions)?;
+        let summary = if not_launchable == 0 {
+            format!("{} identities; all launchable.", sessions.len())
+        } else {
+            format!(
+                "{} identities; {not_launchable} not launchable (missing loop/goal).",
+                sessions.len()
+            )
+        };
+        out(sinks, &summary)?;
+    }
+
+    if not_launchable > 0 {
+        bail!("{not_launchable} session(s) not launchable (missing loop/goal)");
+    }
+    Ok(())
+}
+
+/// One `--json` object per discovered session.
+#[cfg(feature = "session")]
+fn session_json(session: &DiscoveredSession, cwd: &Path) -> Value {
+    json!({
+        "identity": session.identity,
+        "folder": display_path(&session.folder, cwd),
+        "prompt": session.system_prompt.name,
+        "loop": session_loop(session),
+        "goal": session_goal(session),
+        "scope": display_path(&session.scope_root, cwd),
+        "launchable": session_launchable(session),
+    })
+}
+
+/// The six text cells for one session's row, missing `loop`/`goal` rendered
+/// as `MISSING loop` / `MISSING goal` flags.
+#[cfg(feature = "session")]
+fn session_cells(session: &DiscoveredSession, cwd: &Path) -> Vec<String> {
+    let prompt = if session.system_prompt.is_default {
+        String::from("(default)")
+    } else {
+        session.system_prompt.name.clone()
+    };
+    vec![
+        session.identity.clone(),
+        display_path(&session.folder, cwd),
+        prompt,
+        session_loop(session).map_or_else(|| String::from("MISSING loop"), String::from),
+        session_goal(session).map_or_else(|| String::from("MISSING goal"), String::from),
+        display_path(&session.scope_root, cwd),
+    ]
+}
+
+/// Print the header row plus one row per session, each column padded to the
+/// widest cell in that column.
+#[cfg(feature = "session")]
+fn render_dry_run_table(
+    sinks: &mut IoSinks<'_>,
+    cwd: &Path,
+    sessions: &[DiscoveredSession],
+) -> Result<()> {
+    let headers: Vec<String> = ["IDENTITY", "FOLDER", "PROMPT", "LOOP", "GOAL", "SCOPE"]
+        .into_iter()
+        .map(String::from)
+        .collect();
+    let body: Vec<Vec<String>> = sessions.iter().map(|s| session_cells(s, cwd)).collect();
+
+    let mut widths: Vec<usize> = headers.iter().map(String::len).collect();
+    for row in &body {
+        for (index, cell) in row.iter().enumerate() {
+            if let Some(width) = widths.get_mut(index) {
+                *width = (*width).max(cell.len());
+            }
+        }
+    }
+
+    out(sinks, &format_table_row(&headers, &widths))?;
+    for row in &body {
+        out(sinks, &format_table_row(row, &widths))?;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "session")]
+fn format_table_row(cells: &[String], widths: &[usize]) -> String {
+    let mut parts: Vec<String> = Vec::with_capacity(cells.len());
+    for (index, cell) in cells.iter().enumerate() {
+        let width = widths.get(index).copied().unwrap_or(0);
+        parts.push(format!("{cell:<width$}"));
+    }
+    parts.join("  ").trim_end().to_owned()
+}
+
+/// Render a discovered folder relative to `cwd`'s parent, so the root
+/// session shows its own folder name (e.g. `demo-remargin`) and nested
+/// realms show their path beneath it (`demo-remargin/finance`). Falls back
+/// to the full path when it does not sit under that base.
+#[cfg(feature = "session")]
+fn display_path(path: &Path, cwd: &Path) -> String {
+    let base = cwd.parent().unwrap_or(cwd);
+    path.strip_prefix(base)
+        .unwrap_or(path)
+        .display()
+        .to_string()
 }
 
 fn recipients_display(status: &RecipientStatus) -> String {

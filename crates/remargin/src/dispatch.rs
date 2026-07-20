@@ -12,6 +12,8 @@ use anyhow::{Context as _, Result, bail};
 use os_shim::System;
 use serde_json::json;
 
+#[cfg(feature = "session")]
+use crate::SessionAction;
 use crate::handlers;
 use crate::io::{
     IoSinks, expand_cli_path, expand_cli_pathbuf, inject_elapsed_ms, parse_line_range,
@@ -101,7 +103,17 @@ pub const fn subcommand_output(cmd: &Commands) -> Option<&OutputArgs> {
         Commands::Claude { action } => Some(claude_action_output(action)),
         Commands::Permissions { action } => Some(permissions_action_output(action)),
         Commands::Plan { action, .. } => Some(plan_action_output(action)),
+        #[cfg(feature = "session")]
+        Commands::Session { action } => Some(session_action_output(action)),
         Commands::Version => None,
+    }
+}
+
+/// Pull the per-action [`OutputArgs`] from a [`SessionAction`] variant.
+#[cfg(feature = "session")]
+const fn session_action_output(action: &SessionAction) -> &OutputArgs {
+    match action {
+        SessionAction::Launch { output_args, .. } => output_args,
     }
 }
 
@@ -271,6 +283,8 @@ const fn subcommand_is_config_free(cmd: &Commands) -> bool {
         | Commands::Keygen { .. } => true,
         #[cfg(feature = "obsidian")]
         Commands::Obsidian { .. } => true,
+        #[cfg(feature = "session")]
+        Commands::Session { .. } => true,
         Commands::Ack { .. }
         | Commands::Batch { .. }
         | Commands::Comment { .. }
@@ -346,6 +360,8 @@ const fn subcommand_identity(cmd: &Commands) -> Option<&IdentityArgs> {
         | Commands::Version => None,
         #[cfg(feature = "obsidian")]
         Commands::Obsidian { .. } => None,
+        #[cfg(feature = "session")]
+        Commands::Session { .. } => None,
     }
 }
 
@@ -390,6 +406,8 @@ const fn subcommand_assets(cmd: &Commands) -> Option<&AssetsArgs> {
         | Commands::Write { .. } => None,
         #[cfg(feature = "obsidian")]
         Commands::Obsidian { .. } => None,
+        #[cfg(feature = "session")]
+        Commands::Session { .. } => None,
     }
 }
 
@@ -450,6 +468,8 @@ const fn subcommand_unrestricted(cmd: &Commands) -> Option<&UnrestrictedArgs> {
         | Commands::Version => None,
         #[cfg(feature = "obsidian")]
         Commands::Obsidian { .. } => None,
+        #[cfg(feature = "session")]
+        Commands::Session { .. } => None,
     }
 }
 
@@ -566,6 +586,8 @@ fn try_dispatch_config_free(
             handlers::cmd_permissions(sinks, system, cwd, action).map(Some)
         }
         Commands::Claude { action } => handle_claude(action, sinks, system, cwd).map(Some),
+        #[cfg(feature = "session")]
+        Commands::Session { action } => handlers::cmd_session(sinks, system, cwd, action).map(Some),
         _ => {
             debug_assert!(
                 !subcommand_is_config_free(cli.cmd()),
@@ -946,6 +968,8 @@ fn dispatch_with_config(
         | Commands::ResolveMode { .. } => Ok(()),
         #[cfg(feature = "obsidian")]
         Commands::Obsidian { .. } => Ok(()),
+        #[cfg(feature = "session")]
+        Commands::Session { .. } => Ok(()),
     }
 }
 

@@ -10,6 +10,8 @@ mod io;
 mod params;
 mod render;
 
+#[cfg(feature = "session")]
+pub(crate) use cli::SessionAction;
 pub(crate) use cli::{
     AssetsArgs, ClaudeAction, Cli, Commands, IdentityAction, IdentityArgs, McpAction,
     ObsidianAction, OutputArgs, PermissionsAction, PlanAction, PlanClaudeAction, PluginAction,
@@ -80,3 +82,7 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[cfg(feature = "session")]
+mod tests_session;

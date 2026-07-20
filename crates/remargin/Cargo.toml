@@ -30,6 +30,10 @@ jsonschema = ["remargin-core/jsonschema"]
 # release (`obsidian-v{CARGO_PKG_VERSION}`) at runtime, so no TypeScript
 # build is required to compile the CLI.
 obsidian = ["dep:ureq"]
+# `remargin session launch` grammar + dry-run discovery table. Off by
+# default so a shipped binary stays lean; enabling it turns on the
+# downward session discovery in remargin-core (`remargin-core/session`).
+session = ["remargin-core/session"]
 
 [dependencies]
 remargin-core.workspace = true
