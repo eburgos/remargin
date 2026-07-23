@@ -558,7 +558,7 @@ Sandbox staging is a per-identity, per-file marker stored in document frontmatte
 - `obsidian` — install/uninstall the Obsidian vault plugin.
 - `registry` — manage the participant registry file.
 - `resolve-mode` — resolve the effective enforcement mode.
-- `session` — launch one Claude session per discovered identity into a multiplexer (herdr/tmux); gated behind the `session` build feature. See the README.
+- `session` — `session launch [<name>]` starts one Claude `/loop` session per identity (every identity discovered under cwd, or a named `sessions:` manifest fleet) into a multiplexer (herdr/tmux); gated behind the `session` build feature. See the README.
 - `skill` — manage the Claude Code skill (this file).
 - `identity` — print configured identity. `identity create --identity NAME --type human|agent [--key PATH]` prints YAML to stdout.
 - `version` — print version info.

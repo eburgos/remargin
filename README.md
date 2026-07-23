@@ -169,7 +169,7 @@ remargin query . --pending-for-me --pretty
 - **Structural linting** that validates markdown and comment block integrity
 - **Migration** from older inline comment formats
 - **Dual interface** — works as a standalone CLI or as an MCP server for any MCP client
-- **Session launch (multi-agent orchestration)** — `remargin session launch` discovers every identity down the tree and starts one Claude `/loop` session per identity, each in its own terminal-multiplexer tab (herdr or tmux); gated behind the `session` build feature
+- **Session launch (multi-agent orchestration)** — `remargin session launch` starts one Claude `/loop` session per identity — every identity discovered down the tree, or a named fleet from a `sessions:` manifest — each in its own terminal-multiplexer tab (herdr or tmux); gated behind the `session` build feature
 
 ## Installation
 
@@ -395,6 +395,8 @@ The agents share the realm, see each other's comments, ack each other, thread, r
 - the **composed system prompt** (the folder's resolved `system_prompt` plus remargin's operating rules),
 - running under Claude Code's **`/loop`** (the interval) with a **`/goal`** stop condition.
 
+Beyond this downward discovery, a **`sessions:` manifest** names explicit fleets — rosters of agent folders anywhere on disk, launched by name (see [Named sessions](#named-sessions-sessions-manifest)). Discovery stays the zero-config default: with no manifest governing the launch, `session launch` is exactly the tree walk above.
+
 The workflow is: a human stages work (drops a file into an identity's sandbox, leaves a comment) → each identity-bound agent processes its pending work through the document layer on its next `/loop` wake → the human reviews. remargin only *launches*. It writes no PID file, runs no supervisor, and performs no teardown; a session ends when its `/goal` is reached or you kill its tab. Which session handles which work is a matter of how you lay out realms and identities — concurrent writes can't corrupt a file (writes are atomic), so coordination is the workflow owner's design, not something the launcher enforces.
 
 > The `session:` config block and the `session launch` command are gated behind a **`session` Cargo feature**, off by default so a shipped binary stays lean. The default binary has **no** `session` subcommand — build or install remargin with the feature to use it (see [The `session` feature](#the-session-feature) below).
@@ -417,21 +419,54 @@ session:
   budget: { max_turns: 20 }                                       # optional — omit for no cap (e.g. local models)
 ```
 
+### Named sessions (`sessions:` manifest)
+
+Downward discovery launches whatever identities happen to live under `cwd`. A `sessions:` manifest instead names explicit fleets — rosters of agent folders anywhere on disk — that a launch selects by name. Declare it in the `.remargin.yaml` that governs the launch directory:
+
+```yaml
+identity: eval_workspace
+sessions:
+  default: evaluation
+  evaluation:
+    agents:
+      - path: ./product
+        goal: "evaluate the feature brief; stop when eduardo-burgos declares the evaluation closed"
+        loop: 2m
+      - path: ~/src/tixena/prodoctivity/notes/agents/researcher
+        goal: "research prior art for the feature; stop when the evaluation closes"
+  implementation:
+    agents:
+      - path: ~/src/tixena/prodoctivity/repo
+        goal: "process the staged work orders; stop when the sandbox is empty"
+        loop: 10m
+        claude: { model: claude-opus-4-8, effort: high }
+        budget: { max_turns: 20 }
+```
+
+- **Selection and the default rule.** `remargin session launch evaluation` launches the named session; a bare `remargin session launch` uses `default` when it is declared, else the sole session when exactly one is defined, else errors listing the defined names. `default` is a **reserved** key — its value names a defined session, so no session may itself be named `default`.
+- **Entry paths** resolve against the manifest file's own folder (never `cwd`), with `~` and `$VAR` expansion; each resolved folder's own `.remargin.yaml` must declare an `identity`.
+- **Per-entry overrides.** An entry's `goal` / `loop` / `claude` / `budget` override the target folder's own `session:` block field-for-field; anything the entry omits falls through to that block.
+- **Union and dedup.** The manifest roster is unioned with downward discovery — discovered identities still launch — except where an entry already claims the same `(identity, folder)`, where the entry wins. Manifest entries precede discovered agents.
+
 ### Commands and flags
 
+The command is `remargin session launch [<name>]`: an optional manifest session name, plus these flags.
+
 ```bash
-remargin session launch                          # launch every discovered identity
-remargin session launch --dry-run                # print the discovery table; spawn nothing
+remargin session launch                          # bare: the manifest default, else pure discovery
+remargin session launch evaluation               # a named session from the sessions: manifest
+remargin session launch --dry-run                # print the launch table; spawn nothing
 remargin session launch --print                  # emit the exact per-identity commands; start nothing
 remargin session launch --multiplexer herdr      # force a specific multiplexer (herdr | tmux)
 remargin session launch --identity finance,ops   # only these identities
 ```
 
-- **`--dry-run`** walks the tree and prints one row per discovered identity — identity, folder, resolved prompt, `loop`, `goal`, scope — shows the defaulted `5m (default)` cadence for any identity that omits `loop`, flags any missing a required `goal`, and exits non-zero when any are unlaunchable. It spawns nothing.
+- **`--dry-run`** prints one row per session in the resolved fleet (discovered identities plus any manifest entries) — identity, folder, resolved prompt, `loop`, `goal`, scope — shows the defaulted `5m (default)` cadence for any that omits `loop`, flags any missing a required `goal`, and exits non-zero when any are unlaunchable. It spawns nothing.
 - **`--print`** emits the exact per-identity launch commands (as runnable `cd <folder> && claude …` lines) and starts nothing — for wiring the sessions into your own setup.
 - **`--multiplexer herdr|tmux`** picks the multiplexer. Unset means auto: herdr when its server is reachable, else tmux. An explicit value always wins.
-- **`--identity a,b`** restricts discovery to the named identities (comma-separated).
-- **`--backend`** selects the session backend (default `claude`).
+- **`--identity a,b`** restricts the fleet to the named identities (comma-separated).
+
+There is no backend flag: each agent's backend is inferred from the params block its config declares — a `claude:` block, or no params block at all, selects the `claude` backend.
 
 A `--dry-run` over the six-identity `demo-remargin` tree (`ops` here is missing its `goal`):
 
@@ -444,7 +479,7 @@ content              demo-remargin/content      Content      30s   process pendi
 coordinator          demo-remargin/coordinator  Coordinator  30s   process pending; stop empty  demo-remargin/coordinator
 finance              demo-remargin/finance      Finance      30s   process pending; stop empty  demo-remargin/finance
 ops                  demo-remargin/ops          Ops          30s   MISSING goal                 demo-remargin/ops
-6 identities; 1 not launchable (missing loop/goal).
+6 identities; 1 not launchable (missing goal).
 ```
 
 A bare launch prints the session name and how to attach:
@@ -454,6 +489,10 @@ $ remargin session launch
 Launched 6 session(s) in herdr session: eburgos_notes-demo-4f9c
 Attach with:  herdr session attach eburgos_notes-demo-4f9c
 ```
+
+### Strict by construction
+
+Every block in the session schema — `session:`, `sessions:`, each manifest entry, `claude:`, and `budget:` — rejects unknown keys: a mistyped or stale field fails the parse by name rather than being silently ignored. And a launch is **all-or-nothing**: every member's spec is built, its backend resolved, and its command rendered *before* the first multiplexer action, so any single configuration error aborts the whole launch with zero agents started. A fleet never comes up half-formed.
 
 ### herdr (flagship) vs tmux (fallback)
 
@@ -597,6 +636,30 @@ session:
   goal: "process pending work; stop when the sandbox is empty"  # required — the /goal stop condition
   claude: { model: claude-opus-4-8, effort: high }              # optional — backend model + effort
   budget: { max_turns: 20 }                                     # optional — omit for no cap
+```
+
+### `sessions:` block — named session manifests
+
+Consumed by [`remargin session launch <name>`](#session-launch-multi-agent-orchestration). `default` is a reserved key naming the session a bare launch uses. Entry paths resolve against this file's folder; each entry's `goal` / `loop` / `claude` / `budget` override the target agent's own `session:` block. Strict: unknown keys reject the parse.
+
+```yaml
+identity: eval_workspace
+sessions:
+  default: evaluation
+  evaluation:
+    agents:
+      - path: ./product
+        goal: "evaluate the feature brief; stop when eduardo-burgos declares the evaluation closed"
+        loop: 2m
+      - path: ~/src/tixena/prodoctivity/notes/agents/researcher
+        goal: "research prior art for the feature; stop when the evaluation closes"
+  implementation:
+    agents:
+      - path: ~/src/tixena/prodoctivity/repo
+        goal: "process the staged work orders; stop when the sandbox is empty"
+        loop: 10m
+        claude: { model: claude-opus-4-8, effort: high }
+        budget: { max_turns: 20 }
 ```
 
 ### `.remargin-registry.yaml` — participant registry
@@ -793,7 +856,7 @@ remargin [OPTIONS] <COMMAND>
 
 | Command | Description |
 |---------|-------------|
-| `session launch` | Launch one Claude session per discovered identity into a multiplexer, one tab each (`--dry-run` discovery table, `--print` commands-only, `--multiplexer herdr\|tmux`, `--identity a,b`, `--backend`). Gated behind the `session` build feature — see [Session launch](#session-launch-multi-agent-orchestration). |
+| `session launch [<name>]` | Launch one Claude session per identity — every identity discovered under cwd, or the named `sessions:` manifest fleet — into a multiplexer, one tab each (`--dry-run` launch table, `--print` commands-only, `--multiplexer herdr\|tmux`, `--identity a,b`). Gated behind the `session` build feature — see [Session launch](#session-launch-multi-agent-orchestration). |
 
 ### Plan (universal dry-run)
 
