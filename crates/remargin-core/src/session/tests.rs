@@ -7,6 +7,7 @@ use os_shim::mock::MockSystem;
 
 use super::backend::{ClaudeBackend, SessionBackend as _, resolve_backend};
 use super::discovery::{DiscoveredSession, discover_sessions};
+use super::manifest::resolve_fleet;
 use super::spec::build_launch_spec;
 
 /// Build a `demo-remargin`-shaped tree: a root that declares its own
@@ -453,4 +454,307 @@ fn resolve_backend_known_and_unknown() {
     let err = resolve_backend("bogus").err().unwrap().to_string();
     assert!(err.contains("bogus"), "names the offender: {err}");
     assert!(err.contains("claude"), "lists known backends: {err}");
+}
+
+// --- Manifest fleet resolution (task 93) ---------------------------------
+
+/// Workspace whose `.remargin.yaml` carries only a `sessions:` block (no
+/// identity of its own, so downward discovery from `/ws` is empty) plus two
+/// out-of-tree agent folders that entries point at by absolute path.
+fn manifest_workspace(root_yaml: &str) -> MockSystem {
+    MockSystem::new()
+        .with_file(Path::new("/ws/.remargin.yaml"), root_yaml.as_bytes())
+        .unwrap()
+        .with_file(
+            Path::new("/agents/a/.remargin.yaml"),
+            b"identity: a_id\nsession:\n  goal: base a goal\n  loop: 9s\n",
+        )
+        .unwrap()
+        .with_file(Path::new("/agents/b/.remargin.yaml"), b"identity: b_id\n")
+        .unwrap()
+}
+
+fn identities(fleet: &[DiscoveredSession]) -> Vec<&str> {
+    fleet.iter().map(|s| s.identity.as_str()).collect()
+}
+
+#[test]
+fn resolve_fleet_without_manifest_matches_discovery() {
+    let system = demo_tree();
+
+    let via_fleet = resolve_fleet(&system, Path::new("/demo"), None).unwrap();
+    let via_discovery = discover_sessions(&system, Path::new("/demo")).unwrap();
+
+    let project = |fleet: &[DiscoveredSession]| {
+        fleet
+            .iter()
+            .map(|s| (s.identity.clone(), s.folder.clone()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(project(&via_fleet), project(&via_discovery));
+    // The finance realm's session: block still rides along untouched.
+    assert!(via_fleet[4].session.is_some());
+}
+
+#[test]
+fn resolve_fleet_named_without_manifest_errors() {
+    let system = demo_tree();
+
+    let err = resolve_fleet(&system, Path::new("/demo"), Some("ghost"))
+        .unwrap_err()
+        .to_string();
+
+    assert!(err.contains("ghost"), "names the requested session: {err}");
+}
+
+#[test]
+fn select_default_session_when_declared() {
+    let system = manifest_workspace(
+        "sessions:\n  default: alpha\n  \
+         alpha:\n    agents:\n      - path: /agents/a\n  \
+         beta:\n    agents:\n      - path: /agents/b\n",
+    );
+
+    let fleet = resolve_fleet(&system, Path::new("/ws"), None).unwrap();
+
+    assert_eq!(identities(&fleet), ["a_id"]);
+}
+
+#[test]
+fn select_single_session_when_no_default() {
+    let system = manifest_workspace("sessions:\n  alpha:\n    agents:\n      - path: /agents/a\n");
+
+    let fleet = resolve_fleet(&system, Path::new("/ws"), None).unwrap();
+
+    assert_eq!(identities(&fleet), ["a_id"]);
+}
+
+#[test]
+fn select_ambiguous_without_default_errors() {
+    let system = manifest_workspace(
+        "sessions:\n  \
+         alpha:\n    agents:\n      - path: /agents/a\n  \
+         beta:\n    agents:\n      - path: /agents/b\n",
+    );
+
+    let err = resolve_fleet(&system, Path::new("/ws"), None)
+        .unwrap_err()
+        .to_string();
+
+    assert!(err.contains("alpha"), "lists alpha: {err}");
+    assert!(err.contains("beta"), "lists beta: {err}");
+}
+
+#[test]
+fn unknown_requested_name_errors_listing_defined() {
+    let system = manifest_workspace(
+        "sessions:\n  \
+         alpha:\n    agents:\n      - path: /agents/a\n  \
+         beta:\n    agents:\n      - path: /agents/b\n",
+    );
+
+    let err = resolve_fleet(&system, Path::new("/ws"), Some("gamma"))
+        .unwrap_err()
+        .to_string();
+
+    assert!(err.contains("gamma"), "names the unknown request: {err}");
+    assert!(
+        err.contains("alpha") && err.contains("beta"),
+        "lists the defined names: {err}"
+    );
+}
+
+#[test]
+fn relative_and_tilde_paths_resolve_against_manifest_dir() {
+    let system = MockSystem::new()
+        .with_env("HOME", "/home/user")
+        .unwrap()
+        .with_file(
+            Path::new("/ws/.remargin.yaml"),
+            b"sessions:\n  main:\n    agents:\n      \
+              - path: ./product\n      - path: ~/agents/r\n",
+        )
+        .unwrap()
+        .with_file(
+            Path::new("/ws/product/.remargin.yaml"),
+            b"identity: product\n",
+        )
+        .unwrap()
+        .with_file(
+            Path::new("/home/user/agents/r/.remargin.yaml"),
+            b"identity: r_id\n",
+        )
+        .unwrap()
+        .with_dir(Path::new("/ws/deep/sub"))
+        .unwrap();
+
+    // Launch from a subfolder: paths must anchor on the manifest dir (/ws),
+    // never on cwd.
+    let fleet = resolve_fleet(&system, Path::new("/ws/deep/sub"), None).unwrap();
+
+    assert_eq!(identities(&fleet), ["product", "r_id"]);
+    assert_eq!(fleet[0].folder.as_path(), Path::new("/ws/product"));
+    assert_eq!(fleet[1].folder.as_path(), Path::new("/home/user/agents/r"));
+}
+
+#[test]
+fn missing_entry_folder_is_hard_error() {
+    let system =
+        manifest_workspace("sessions:\n  main:\n    agents:\n      - path: /agents/ghost\n");
+
+    let err = resolve_fleet(&system, Path::new("/ws"), None)
+        .unwrap_err()
+        .to_string();
+
+    assert!(err.contains("main"), "names the session: {err}");
+    assert!(err.contains("/agents/ghost"), "names the entry path: {err}");
+}
+
+#[test]
+fn entry_folder_without_config_is_hard_error() {
+    let system =
+        manifest_workspace("sessions:\n  main:\n    agents:\n      - path: /agents/empty\n")
+            .with_dir(Path::new("/agents/empty"))
+            .unwrap();
+
+    let err = resolve_fleet(&system, Path::new("/ws"), None)
+        .unwrap_err()
+        .to_string();
+
+    assert!(err.contains("main"), "names the session: {err}");
+    assert!(err.contains("/agents/empty"), "names the entry path: {err}");
+}
+
+#[test]
+fn entry_config_without_identity_is_hard_error() {
+    let system =
+        manifest_workspace("sessions:\n  main:\n    agents:\n      - path: /agents/noident\n")
+            .with_file(Path::new("/agents/noident/.remargin.yaml"), b"mode: open\n")
+            .unwrap();
+
+    let err = resolve_fleet(&system, Path::new("/ws"), None)
+        .unwrap_err()
+        .to_string();
+
+    assert!(err.contains("main"), "names the session: {err}");
+    assert!(
+        err.contains("/agents/noident"),
+        "names the entry path: {err}"
+    );
+    assert!(err.contains("identity"), "names the missing field: {err}");
+}
+
+#[test]
+fn bad_entry_yields_no_partial_fleet() {
+    // A good entry precedes a broken one; the whole resolution must fail
+    // rather than return the good half.
+    let system = manifest_workspace(
+        "sessions:\n  mixed:\n    agents:\n      \
+         - path: /agents/a\n      - path: /agents/ghost\n",
+    );
+
+    let result = resolve_fleet(&system, Path::new("/ws"), None);
+
+    assert!(
+        result.is_err(),
+        "all-or-nothing: one bad entry fails the fleet"
+    );
+}
+
+#[test]
+fn entry_overrides_win_per_field() {
+    // Target declares goal + loop + claude; entry overrides goal and adds a
+    // budget. Each field replaces as a whole value, entry wins.
+    let system = MockSystem::new()
+        .with_file(
+            Path::new("/ws/.remargin.yaml"),
+            b"sessions:\n  main:\n    agents:\n      \
+              - path: /agents/a\n        goal: entry goal\n        \
+              budget:\n          max_turns: 5\n",
+        )
+        .unwrap()
+        .with_file(
+            Path::new("/agents/a/.remargin.yaml"),
+            b"identity: a_id\nsession:\n  goal: base goal\n  loop: 30s\n  \
+              claude:\n    model: base-model\n",
+        )
+        .unwrap();
+
+    let fleet = resolve_fleet(&system, Path::new("/ws"), None).unwrap();
+    let session = fleet[0].session.as_ref().unwrap();
+
+    assert_eq!(session.goal.as_deref(), Some("entry goal"));
+    assert_eq!(session.loop_interval.as_deref(), Some("30s"));
+    assert_eq!(
+        session.claude.as_ref().unwrap().model.as_deref(),
+        Some("base-model")
+    );
+    assert_eq!(session.budget.as_ref().unwrap().max_turns, Some(5));
+}
+
+#[test]
+fn union_dedups_by_identity_and_folder_entry_wins() {
+    // The entry points at a folder discovery also finds, overriding its loop.
+    let system = MockSystem::new()
+        .with_file(
+            Path::new("/ws/.remargin.yaml"),
+            b"identity: ws_root\nsessions:\n  main:\n    agents:\n      \
+              - path: ./child\n        loop: 99s\n",
+        )
+        .unwrap()
+        .with_file(
+            Path::new("/ws/child/.remargin.yaml"),
+            b"identity: child_id\nsession:\n  goal: child goal\n  loop: 1s\n",
+        )
+        .unwrap();
+
+    let fleet = resolve_fleet(&system, Path::new("/ws"), None).unwrap();
+
+    let children: Vec<&DiscoveredSession> =
+        fleet.iter().filter(|s| s.identity == "child_id").collect();
+    assert_eq!(children.len(), 1, "deduped by (identity, folder)");
+    assert_eq!(
+        children[0]
+            .session
+            .as_ref()
+            .unwrap()
+            .loop_interval
+            .as_deref(),
+        Some("99s"),
+        "the entry's override survives the dedup"
+    );
+    assert_eq!(fleet[0].identity, "child_id", "entries precede discovery");
+    assert!(
+        identities(&fleet).contains(&"ws_root"),
+        "root discovery is unioned in: {:?}",
+        identities(&fleet)
+    );
+    assert_eq!(fleet.len(), 2);
+}
+
+#[test]
+fn entry_without_overrides_passes_target_session_through() {
+    let system = MockSystem::new()
+        .with_file(
+            Path::new("/ws/.remargin.yaml"),
+            b"sessions:\n  main:\n    agents:\n      - path: /agents/full\n",
+        )
+        .unwrap()
+        .with_file(
+            Path::new("/agents/full/.remargin.yaml"),
+            b"identity: full_id\nsession:\n  goal: keep it\n  loop: 7s\n  \
+              claude:\n    model: cm\n    effort: high\n  \
+              budget:\n    max_turns: 3\n",
+        )
+        .unwrap();
+
+    let fleet = resolve_fleet(&system, Path::new("/ws"), None).unwrap();
+    let session = fleet[0].session.as_ref().unwrap();
+
+    assert_eq!(session.goal.as_deref(), Some("keep it"));
+    assert_eq!(session.loop_interval.as_deref(), Some("7s"));
+    let claude = session.claude.as_ref().unwrap();
+    assert_eq!(claude.model.as_deref(), Some("cm"));
+    assert_eq!(claude.effort.as_deref(), Some("high"));
+    assert_eq!(session.budget.as_ref().unwrap().max_turns, Some(3));
 }
