@@ -3,25 +3,44 @@
 
 use std::path::Path;
 
+use clap::Parser as _;
+use clap::error::ErrorKind;
 use os_shim::mock::MockSystem;
 use serde_json::Value;
 
 use crate::handlers::cmd_session;
 use crate::io::IoSinks;
-use crate::{OutputArgs, SessionAction};
+use crate::{Cli, OutputArgs, SessionAction};
 
 fn launch(dry_run: bool, print: bool, identity: Vec<String>, json: bool) -> SessionAction {
     SessionAction::Launch {
-        backend: String::from("claude"),
         dry_run,
         identity,
         multiplexer: Some(String::from("tmux")),
+        name: None,
         output_args: OutputArgs {
             compact: false,
             json,
             verbose: false,
         },
         print,
+    }
+}
+
+/// Like [`launch`], but names a manifest session. Always a `--dry-run` so the
+/// resolved fleet is rendered without spawning a multiplexer.
+fn launch_named(name: &str, identity: Vec<String>) -> SessionAction {
+    SessionAction::Launch {
+        dry_run: true,
+        identity,
+        multiplexer: Some(String::from("tmux")),
+        name: Some(String::from(name)),
+        output_args: OutputArgs {
+            compact: false,
+            json: false,
+            verbose: false,
+        },
+        print: false,
     }
 }
 
@@ -49,6 +68,32 @@ fn launchable_tree() -> MockSystem {
         .with_file(
             Path::new("/demo/finance/.remargin.yaml"),
             b"identity: finance\nsession:\n  loop: 30s\n  goal: reconcile\n",
+        )
+        .unwrap()
+}
+
+/// A `sessions:` manifest workspace. `/ws` declares two named sessions over
+/// out-of-tree agent folders and no identity of its own, so downward
+/// discovery from `/ws` is empty and the launched fleet is exactly the named
+/// roster the manifest resolves.
+fn manifest_workspace() -> MockSystem {
+    MockSystem::new()
+        .with_file(
+            Path::new("/ws/.remargin.yaml"),
+            b"sessions:\n  default: evaluation\n  \
+              evaluation:\n    agents:\n      \
+              - path: /agents/product\n      - path: /agents/researcher\n  \
+              solo:\n    agents:\n      - path: /agents/product\n",
+        )
+        .unwrap()
+        .with_file(
+            Path::new("/agents/product/.remargin.yaml"),
+            b"identity: product\nsession:\n  loop: 2m\n  goal: evaluate the brief\n",
+        )
+        .unwrap()
+        .with_file(
+            Path::new("/agents/researcher/.remargin.yaml"),
+            b"identity: researcher\nsession:\n  goal: research prior art\n",
         )
         .unwrap()
 }
@@ -184,10 +229,10 @@ fn dry_run_identity_filter_restricts_rows() {
 fn bare_launch_rejects_unknown_multiplexer() {
     let system = launchable_tree();
     let action = SessionAction::Launch {
-        backend: String::from("claude"),
         dry_run: false,
         identity: Vec::new(),
         multiplexer: Some(String::from("screen")),
+        name: None,
         output_args: OutputArgs {
             compact: false,
             json: false,
@@ -214,10 +259,10 @@ fn bare_launch_rejects_unknown_multiplexer() {
 fn bare_launch_rejects_zellij_now_removed() {
     let system = launchable_tree();
     let action = SessionAction::Launch {
-        backend: String::from("claude"),
         dry_run: false,
         identity: Vec::new(),
         multiplexer: Some(String::from("zellij")),
+        name: None,
         output_args: OutputArgs {
             compact: false,
             json: false,
@@ -318,30 +363,70 @@ fn print_surfaces_task84_error_for_missing_goal() {
     );
 }
 
+/// `--backend` was retired: the backend is inferred per agent, so the flag no
+/// longer exists and clap rejects it as an unexpected argument. (Unknown
+/// backend *names* are still covered by `resolve_backend`'s own unit test.)
 #[test]
-fn print_unknown_backend_lists_known() {
-    let system = launchable_tree();
-    let action = SessionAction::Launch {
-        backend: String::from("bogus"),
-        dry_run: false,
-        identity: Vec::new(),
-        multiplexer: Some(String::from("tmux")),
-        output_args: OutputArgs {
-            compact: false,
-            json: false,
-            verbose: false,
-        },
-        print: true,
-    };
-    let (result, _stdout) = run(&system, "/demo", &action);
-    let err = result.unwrap_err();
+fn launch_rejects_retired_backend_flag() {
+    let err = Cli::try_parse_from(["remargin", "session", "launch", "--backend", "claude"])
+        .err()
+        .unwrap();
+    assert_eq!(err.kind(), ErrorKind::UnknownArgument);
     assert!(
-        format!("{err:#}").contains("bogus"),
-        "names offender: {err:#}"
+        err.to_string().contains("--backend"),
+        "names the retired flag: {err}"
+    );
+}
+
+/// Launch by name resolves the manifest's named fleet: `evaluation` rosters
+/// both agents, and the dry-run lists exactly those two identities.
+#[test]
+fn dry_run_by_name_resolves_manifest_fleet() {
+    let system = manifest_workspace();
+    let (result, stdout) = run(&system, "/ws", &launch_named("evaluation", Vec::new()));
+    result.unwrap();
+    assert!(stdout.contains("product"), "stdout: {stdout}");
+    assert!(stdout.contains("researcher"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("2 identities; all launchable."),
+        "summary: {stdout}"
+    );
+}
+
+/// A bare launch over a manifest applies the settled default rule: the
+/// declared `default: evaluation` session is resolved, not empty discovery.
+#[test]
+fn dry_run_bare_over_manifest_uses_default_rule() {
+    let system = manifest_workspace();
+    let (result, stdout) = run(&system, "/ws", &launch(true, false, Vec::new(), false));
+    result.unwrap();
+    assert!(stdout.contains("product"), "stdout: {stdout}");
+    assert!(stdout.contains("researcher"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("2 identities; all launchable."),
+        "default rule resolves the evaluation fleet: {stdout}"
+    );
+}
+
+/// The `--identity` filter applies to the resolved union fleet, not just
+/// downward discovery: naming `researcher` drops `product` from the roster.
+#[test]
+fn dry_run_identity_filter_applies_to_named_fleet() {
+    let system = manifest_workspace();
+    let (result, stdout) = run(
+        &system,
+        "/ws",
+        &launch_named("evaluation", vec![String::from("researcher")]),
+    );
+    result.unwrap();
+    assert!(stdout.contains("researcher"), "stdout: {stdout}");
+    assert!(
+        !stdout.contains("product"),
+        "filter should drop product: {stdout}"
     );
     assert!(
-        format!("{err:#}").contains("claude"),
-        "lists known: {err:#}"
+        stdout.contains("1 identities; all launchable."),
+        "summary: {stdout}"
     );
 }
 

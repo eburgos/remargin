@@ -1005,9 +1005,6 @@ pub enum ClaudeAction {
 pub enum SessionAction {
     /// Discover identities under cwd and (later) launch one session each.
     Launch {
-        /// Session backend. (Task 85.)
-        #[arg(long, default_value = "claude")]
-        backend: String,
         /// List what would launch; spawn nothing.
         #[arg(long)]
         dry_run: bool,
@@ -1018,6 +1015,10 @@ pub enum SessionAction {
         /// its server is reachable, else tmux. (Tasks 86, 89.)
         #[arg(long, value_name = "herdr|tmux")]
         multiplexer: Option<String>,
+        /// Named session from the `sessions:` manifest. Omitted: the
+        /// manifest's default rule, or pure downward discovery when no
+        /// manifest governs cwd.
+        name: Option<String>,
         #[command(flatten)]
         output_args: OutputArgs,
         /// Emit the per-identity commands; spawn nothing. (Task 85.)

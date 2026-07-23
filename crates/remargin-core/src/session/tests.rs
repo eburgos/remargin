@@ -327,6 +327,24 @@ fn build_launch_spec_without_budget_or_claude_has_no_caps() {
 }
 
 #[test]
+fn build_launch_spec_infers_claude_backend_from_declared_block() {
+    let system = launch_demo_tree();
+    let spec = build_launch_spec(&discovered(&system, "finance")).unwrap();
+
+    assert_eq!(spec.backend, "claude");
+}
+
+#[test]
+fn build_launch_spec_infers_claude_backend_without_declared_block() {
+    // `ops` carries a `session:` block but no `claude:` params block: a
+    // declared block and no block at all both infer the claude backend.
+    let system = launch_demo_tree();
+    let spec = build_launch_spec(&discovered(&system, "ops")).unwrap();
+
+    assert_eq!(spec.backend, "claude");
+}
+
+#[test]
 fn mcp_server_spec_scopes_to_cwd_and_identity() {
     let system = launch_demo_tree();
     let finance = discovered(&system, "finance");

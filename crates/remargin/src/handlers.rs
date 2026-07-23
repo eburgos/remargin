@@ -73,7 +73,9 @@ use remargin_core::responses;
 #[cfg(feature = "session")]
 use remargin_core::session::backend::resolve_backend;
 #[cfg(feature = "session")]
-use remargin_core::session::discovery::{DiscoveredSession, discover_sessions};
+use remargin_core::session::discovery::DiscoveredSession;
+#[cfg(feature = "session")]
+use remargin_core::session::manifest;
 #[cfg(feature = "session")]
 use remargin_core::session::multiplexer::{
     Multiplexer, Tab, default_multiplexer, herdr_available, launch_into_multiplexer, session_name,
@@ -2577,11 +2579,12 @@ pub fn cmd_mcp(
     }
 }
 
-/// Discover sessions under `cwd` and either render the launch plan
+/// Resolve the launch fleet for `cwd` (the optional `<name>`'s manifest
+/// roster unioned with downward discovery) and either render the launch plan
 /// (`--dry-run` / `--print`) or launch it.
 ///
 /// A bare `session launch` (no `--dry-run`, no `--print`) launches one
-/// interactive session per discovered identity into a new named multiplexer
+/// interactive session per resolved identity into a new named multiplexer
 /// session via [`render_session_launch`].
 #[cfg(feature = "session")]
 pub fn cmd_session(
@@ -2591,14 +2594,14 @@ pub fn cmd_session(
     action: &SessionAction,
 ) -> Result<()> {
     let SessionAction::Launch {
-        backend,
         dry_run,
         identity,
         multiplexer,
+        name,
         output_args,
         print,
     } = action;
-    let mut sessions = discover_sessions(system, cwd)?;
+    let mut sessions = manifest::resolve_fleet(system, cwd, name.as_deref())?;
     if !identity.is_empty() {
         sessions.retain(|session| identity.contains(&session.identity));
     }
@@ -2606,9 +2609,9 @@ pub fn cmd_session(
         return render_dry_run(sinks, cwd, &sessions, output_args.json);
     }
     if *print {
-        return render_session_print(sinks, backend, &sessions);
+        return render_session_print(sinks, &sessions);
     }
-    render_session_launch(sinks, cwd, backend, multiplexer.as_deref(), &sessions)
+    render_session_launch(sinks, cwd, multiplexer.as_deref(), &sessions)
 }
 
 /// Launch one interactive session per discovered identity into a new named
@@ -2623,7 +2626,6 @@ pub fn cmd_session(
 fn render_session_launch(
     sinks: &mut IoSinks<'_>,
     cwd: &Path,
-    backend_name: &str,
     multiplexer: Option<&str>,
     sessions: &[DiscoveredSession],
 ) -> Result<()> {
@@ -2636,10 +2638,10 @@ fn render_session_launch(
     if sessions.is_empty() {
         bail!("no launchable identities under {}", cwd.display());
     }
-    let backend = resolve_backend(backend_name)?;
     let mut tabs = Vec::with_capacity(sessions.len());
     for session in sessions {
         let spec = build_launch_spec(session)?;
+        let backend = resolve_backend(&spec.backend)?;
         let launch = backend.launch_command(&spec)?;
         let seeds = backend.seed_inputs(&spec);
         tabs.push(Tab::new(spec.identity, spec.cwd, launch, seeds));
@@ -2668,14 +2670,10 @@ fn render_session_launch(
 /// error here rather than printing a broken command. Nothing is launched
 /// and no send-keys happen: `--print` only prints.
 #[cfg(feature = "session")]
-fn render_session_print(
-    sinks: &mut IoSinks<'_>,
-    backend_name: &str,
-    sessions: &[DiscoveredSession],
-) -> Result<()> {
-    let backend = resolve_backend(backend_name)?;
+fn render_session_print(sinks: &mut IoSinks<'_>, sessions: &[DiscoveredSession]) -> Result<()> {
     for session in sessions {
         let spec = build_launch_spec(session)?;
+        let backend = resolve_backend(&spec.backend)?;
         let launch = backend.launch_command(&spec)?;
         out(sinks, &format!("# {}", spec.identity))?;
         out(

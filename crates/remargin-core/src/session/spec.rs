@@ -65,6 +65,9 @@ pub struct McpServerSpec {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct SessionLaunchSpec {
+    /// Backend that renders this session (e.g. `"claude"`), inferred per agent
+    /// by [`build_launch_spec`] from the params block its config declares.
+    pub backend: String,
     /// Per-session resource caps. `None` = no cap.
     pub budget: Option<Budget>,
     /// Working directory the session launches in.
@@ -120,9 +123,17 @@ pub fn build_launch_spec(session: &DiscoveredSession) -> Result<SessionLaunchSpe
         .as_ref()
         .map_or((None, None), |c| (c.model.clone(), c.effort.clone()));
 
+    // Backend inference: the params block an agent declares names its backend.
+    // Only `claude:` exists, so a declared `claude:` block and no block at all
+    // both resolve to `"claude"`. A second params-block type would select its
+    // own backend by presence, and two backend blocks on one agent would be a
+    // config error -- unrepresentable until that second type lands.
+    let backend = String::from("claude");
+
     let prompt = compose_prompt(&session.system_prompt, loop_interval, &goal);
 
     Ok(SessionLaunchSpec {
+        backend,
         budget: s.budget.clone(),
         cwd: session.folder.clone(),
         effort,
