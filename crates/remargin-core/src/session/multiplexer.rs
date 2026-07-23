@@ -39,9 +39,11 @@ use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
 
 /// Placeholder tokens the herdr execution layer substitutes with the real ids
-/// parsed from herdr's JSON: `workspace_id` from `workspace create`, `pane_id`
-/// from each `agent start`.
+/// parsed from herdr's JSON: `workspace_id` from `workspace create`, `tab_id`
+/// from `workspace create`'s default tab (identity 0) or each `tab create`
+/// (identities 1..N), and `pane_id` from each `agent start`.
 const HERDR_PANE_PLACEHOLDER: &str = "<PANE>";
+const HERDR_TAB_PLACEHOLDER: &str = "<TAB>";
 const HERDR_WORKSPACE_PLACEHOLDER: &str = "<WS>";
 
 /// `herdr wait agent-status --timeout` for the idle prompt, in milliseconds.
@@ -70,11 +72,30 @@ pub enum Multiplexer {
 
 impl Multiplexer {
     /// A human-facing hint for reattaching to `session_name`.
+    ///
+    /// The herdr launch creates a **workspace** labeled `session_name` inside
+    /// herdr's **default** session — it is not itself a herdr session, so the
+    /// hint attaches to `default` and names the workspace to open, not
+    /// `herdr session attach <session_name>` (which would not resolve).
     #[must_use]
     pub fn attach_hint(self, session_name: &str) -> String {
         match self {
-            Self::Herdr => format!("herdr session attach {session_name}"),
+            Self::Herdr => {
+                format!("herdr session attach default   # then open workspace {session_name}")
+            }
             Self::Tmux => format!("tmux attach -t {session_name}"),
+        }
+    }
+
+    /// The kind of container the launch creates, for user-facing messages: a
+    /// herdr **workspace** (inside herdr's default session) or a tmux
+    /// **session**. herdr's is a workspace, not a session — calling it a
+    /// session would send users to a `herdr session attach` that fails.
+    #[must_use]
+    pub const fn container_kind(self) -> &'static str {
+        match self {
+            Self::Herdr => "workspace",
+            Self::Tmux => "session",
         }
     }
 
@@ -171,15 +192,17 @@ pub struct TmuxPlan {
 /// A fully-constructed herdr launch plan, deterministic given
 /// `(session_name, tabs)`.
 ///
-/// Pure: spawns nothing. `<WS>`/`<PANE>` placeholder tokens are substituted by
-/// the thin execution layer from the ids it parses out of herdr's JSON
-/// responses at run time.
+/// Pure: spawns nothing. `<WS>`/`<TAB>`/`<PANE>` placeholder tokens are
+/// substituted by the thin execution layer from the ids it parses out of
+/// herdr's JSON responses at run time.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct HerdrPlan {
     /// `herdr workspace create …` for the named session.
     pub create_workspace: Vec<String>,
-    /// Per tab, in order: `agent start` argv + wait/seed choreography.
+    /// Per tab, in order: optional `tab create`, `agent start`, and wait/seed
+    /// choreography. One tab per identity — identity 0 reuses the workspace's
+    /// default tab; identities 1..N create their own.
     pub tabs: Vec<HerdrTabPlan>,
 }
 
@@ -187,8 +210,9 @@ pub struct HerdrPlan {
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct HerdrTabPlan {
-    /// `herdr agent start <identity> --workspace <WS> --cwd <cwd> --no-focus
-    /// -- <launch_argv>`. `<WS>` is resolved from the create-workspace JSON.
+    /// `herdr agent start <identity> --tab <TAB> --cwd <cwd> --no-focus
+    /// -- <launch_argv>`. `<TAB>` is resolved from the workspace's default tab
+    /// (identity 0) or this tab's [`Self::tab_create`] JSON (identities 1..N).
     pub agent_start: Vec<String>,
     /// `herdr pane send-keys <PANE> enter` — accepts the workspace-trust
     /// dialog. Sent only when [`Self::wait_trust`] actually matched; on an
@@ -199,6 +223,10 @@ pub struct HerdrTabPlan {
     /// Ordered seed commands: for each seed line, `herdr agent send <identity>
     /// <line>` then `herdr pane send-keys <PANE> enter`.
     pub seed: Vec<Vec<String>>,
+    /// `herdr tab create --workspace <WS> --cwd <cwd> --label <identity>
+    /// --no-focus` for identities 1..N. Empty for identity 0, which reuses the
+    /// workspace's default tab so no empty leftover pane is created.
+    pub tab_create: Vec<String>,
     /// Required readiness gate: `herdr wait agent-status <PANE> --status idle`.
     pub wait_idle: Vec<String>,
     /// Best-effort trust probe: `herdr wait output <PANE> --match trust`. A
@@ -214,8 +242,14 @@ struct HerdrAgent {
     pane_id: String,
 }
 
-/// Minimal typed view of a `herdr workspace create` response: only the
-/// `workspace_id`.
+/// Minimal typed view of a `herdr tab create` response's `tab`: its `tab_id`.
+#[derive(Debug, Deserialize)]
+struct HerdrTab {
+    tab_id: String,
+}
+
+/// Minimal typed view of a `herdr workspace create` response's `workspace`:
+/// its `workspace_id`.
 #[derive(Debug, Deserialize)]
 struct HerdrWorkspace {
     workspace_id: String,
@@ -231,6 +265,23 @@ struct HerdrAgentStarted {
     result: HerdrAgentResult,
 }
 
+/// The default tab herdr opens with a new workspace, carried in `workspace
+/// create`'s `root_pane`. Reused for identity 0 so no empty pane is left over.
+#[derive(Debug, Deserialize)]
+struct HerdrRootPane {
+    tab_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct HerdrTabCreated {
+    result: HerdrTabResult,
+}
+
+#[derive(Debug, Deserialize)]
+struct HerdrTabResult {
+    tab: HerdrTab,
+}
+
 #[derive(Debug, Deserialize)]
 struct HerdrWorkspaceCreated {
     result: HerdrWorkspaceResult,
@@ -238,6 +289,7 @@ struct HerdrWorkspaceCreated {
 
 #[derive(Debug, Deserialize)]
 struct HerdrWorkspaceResult {
+    root_pane: HerdrRootPane,
     workspace: HerdrWorkspace,
 }
 
@@ -395,11 +447,13 @@ fn tmux_tab_seed(session_name: &str, tab: &Tab) -> TmuxTabSeed {
 /// Construct the full herdr launch plan for `session_name` over `tabs`.
 ///
 /// One `workspace create` for the session (rooted at the first tab's cwd),
-/// then per tab an `agent start` carrying a `<WS>` placeholder, the wait-based
-/// readiness choreography, and the ordered name-addressed seed commands (both
-/// carrying a `<PANE>` placeholder). Pure: builds argv vectors and spawns
-/// nothing; the thin execution layer substitutes the real ids parsed from
-/// herdr's JSON.
+/// then one tab per identity: identity 0 reuses the workspace's default tab
+/// (no `tab create`), identities 1..N each get their own `tab create` carrying
+/// a `<WS>` placeholder. Every identity's `agent start` targets its tab via a
+/// `<TAB>` placeholder, followed by the wait-based readiness choreography and
+/// the ordered name-addressed seed commands (both carrying a `<PANE>`
+/// placeholder). Pure: builds argv vectors and spawns nothing; the thin
+/// execution layer substitutes the real ids parsed from herdr's JSON.
 #[must_use]
 pub fn build_herdr_plan(session_name: &str, tabs: &[Tab]) -> HerdrPlan {
     let root = tabs.first().map_or_else(
@@ -418,22 +472,43 @@ pub fn build_herdr_plan(session_name: &str, tabs: &[Tab]) -> HerdrPlan {
     ];
     HerdrPlan {
         create_workspace,
-        tabs: tabs.iter().map(herdr_tab_plan).collect(),
+        tabs: tabs
+            .iter()
+            .enumerate()
+            .map(|(index, tab)| herdr_tab_plan(index, tab))
+            .collect(),
     }
 }
 
-/// Build one tab's herdr choreography: the `agent start` argv (with a `<WS>`
-/// placeholder), the wait-based readiness sequence, and the ordered
-/// name-addressed seed commands.
-fn herdr_tab_plan(tab: &Tab) -> HerdrTabPlan {
+/// Build one tab's herdr choreography: the `tab create` argv (empty for
+/// identity 0, which reuses the workspace's default tab), the `agent start`
+/// argv (with a `<TAB>` placeholder), the wait-based readiness sequence, and
+/// the ordered name-addressed seed commands.
+fn herdr_tab_plan(index: usize, tab: &Tab) -> HerdrTabPlan {
     let cwd = tab.cwd.to_string_lossy().into_owned();
+    let tab_create = if index == 0 {
+        Vec::new()
+    } else {
+        vec![
+            "herdr".to_owned(),
+            "tab".to_owned(),
+            "create".to_owned(),
+            "--workspace".to_owned(),
+            HERDR_WORKSPACE_PLACEHOLDER.to_owned(),
+            "--cwd".to_owned(),
+            cwd.clone(),
+            "--label".to_owned(),
+            tab.identity.clone(),
+            "--no-focus".to_owned(),
+        ]
+    };
     let mut agent_start = vec![
         "herdr".to_owned(),
         "agent".to_owned(),
         "start".to_owned(),
         tab.identity.clone(),
-        "--workspace".to_owned(),
-        HERDR_WORKSPACE_PLACEHOLDER.to_owned(),
+        "--tab".to_owned(),
+        HERDR_TAB_PLACEHOLDER.to_owned(),
         "--cwd".to_owned(),
         cwd,
         "--no-focus".to_owned(),
@@ -479,6 +554,7 @@ fn herdr_tab_plan(tab: &Tab) -> HerdrTabPlan {
         dismiss_trust_enter: herdr_send_enter(),
         identity: tab.identity.clone(),
         seed,
+        tab_create,
         wait_idle,
         wait_trust,
     }
@@ -496,6 +572,19 @@ fn herdr_send_enter() -> Vec<String> {
     ]
 }
 
+/// Extract the workspace's default `tab_id` from a `herdr workspace create`
+/// response's `root_pane` — the tab identity 0 reuses.
+///
+/// # Errors
+///
+/// Returns an error when `json` is not the expected `herdr workspace create`
+/// shape.
+fn parse_default_tab_id(json: &str) -> Result<String> {
+    let parsed: HerdrWorkspaceCreated =
+        serde_json::from_str(json).context("parsing 'herdr workspace create' JSON")?;
+    Ok(parsed.result.root_pane.tab_id)
+}
+
 /// Extract the agent's `pane_id` from a `herdr agent start` response.
 ///
 /// # Errors
@@ -505,6 +594,17 @@ fn parse_pane_id(json: &str) -> Result<String> {
     let parsed: HerdrAgentStarted =
         serde_json::from_str(json).context("parsing 'herdr agent start' JSON")?;
     Ok(parsed.result.agent.pane_id)
+}
+
+/// Extract the new `tab_id` from a `herdr tab create` response.
+///
+/// # Errors
+///
+/// Returns an error when `json` is not the expected `herdr tab create` shape.
+fn parse_tab_id(json: &str) -> Result<String> {
+    let parsed: HerdrTabCreated =
+        serde_json::from_str(json).context("parsing 'herdr tab create' JSON")?;
+    Ok(parsed.result.tab.tab_id)
 }
 
 /// Extract the `workspace_id` from a `herdr workspace create` response.
@@ -588,18 +688,29 @@ fn herdr_preflight() -> Result<()> {
     }
 }
 
-/// Execute a herdr plan: preflight, create the workspace, then per tab start
-/// the agent, wait for readiness (dismissing the trust dialog), and seed it —
-/// substituting the real `workspace_id`/`pane_id` parsed from herdr's JSON
-/// into the plan's placeholder tokens. Thin execution: spawns real `herdr`
-/// processes and is not exercised by the quality gate.
+/// Execute a herdr plan: preflight, create the workspace, then per identity
+/// place it in its own tab (reusing the workspace's default tab for identity 0,
+/// creating a fresh tab for identities 1..N), start the agent, wait for
+/// readiness (dismissing the trust dialog), and seed it — substituting the real
+/// `workspace_id`/`tab_id`/`pane_id` parsed from herdr's JSON into the plan's
+/// placeholder tokens. Thin execution: spawns real `herdr` processes and is not
+/// exercised by the quality gate.
 fn run_herdr_plan(session_name: &str, tabs: &[Tab]) -> Result<()> {
     herdr_preflight()?;
     let plan = build_herdr_plan(session_name, tabs);
     let workspace_json = capture_json(&plan.create_workspace)?;
     let workspace_id = parse_workspace_id(&workspace_json)?;
+    let default_tab_id = parse_default_tab_id(&workspace_json)?;
     for tab in &plan.tabs {
-        let agent_start = substitute(&tab.agent_start, HERDR_WORKSPACE_PLACEHOLDER, &workspace_id);
+        let tab_id = if tab.tab_create.is_empty() {
+            default_tab_id.clone()
+        } else {
+            let tab_create =
+                substitute(&tab.tab_create, HERDR_WORKSPACE_PLACEHOLDER, &workspace_id);
+            let tab_json = capture_json(&tab_create)?;
+            parse_tab_id(&tab_json)?
+        };
+        let agent_start = substitute(&tab.agent_start, HERDR_TAB_PLACEHOLDER, &tab_id);
         let agent_json = capture_json(&agent_start)?;
         let pane_id = parse_pane_id(&agent_json)?;
         // The trust dialog only appears on the first launch in an untrusted

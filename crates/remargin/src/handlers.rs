@@ -2649,8 +2649,9 @@ fn render_session_launch(
     out(
         sinks,
         &format!(
-            "Launched {count} session(s) in {mux_name} session: {name}",
+            "Launched {count} session(s) in {mux_name} {kind}: {name}",
             count = tabs.len(),
+            kind = mux.container_kind(),
             mux_name = mux.name(),
         ),
     )?;

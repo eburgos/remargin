@@ -12,8 +12,13 @@ use chrono::{DateTime, Utc};
 use super::{
     Multiplexer, Tab, build_herdr_plan, build_tmux_plan, default_multiplexer,
     herdr_unavailable_error, launch_into_multiplexer, pane_shows_ready_prompt,
-    pane_shows_trust_dialog, parse_pane_id, parse_workspace_id, session_name, substitute,
+    pane_shows_trust_dialog, parse_default_tab_id, parse_pane_id, parse_tab_id, parse_workspace_id,
+    session_name, substitute,
 };
+
+/// A realistic `herdr workspace create` response: its `root_pane` carries the
+/// `tab_id` of the default tab identity 0 reuses, alongside the `workspace_id`.
+const WORKSPACE_CREATE_JSON: &str = r#"{"result":{"root_pane":{"pane_id":"w4:p1","tab_id":"w4:t1","terminal_id":"term_6570da89722875","workspace_id":"w4"},"workspace":{"workspace_id":"w4","label":"remargin-smoke"}}}"#;
 
 fn at(secs: i64) -> DateTime<Utc> {
     DateTime::from_timestamp(secs, 0).unwrap()
@@ -87,14 +92,23 @@ fn multiplexer_parse_rejects_unknown_naming_allowed() {
 
 #[test]
 fn attach_hint_is_multiplexer_specific() {
+    // herdr creates a workspace inside the default session, not a session named
+    // for the launch — the hint must attach to `default` and name the workspace
+    // to open, or a copy-paste of `herdr session attach demo-abcd` would fail.
     assert_eq!(
         Multiplexer::Herdr.attach_hint("demo-abcd"),
-        "herdr session attach demo-abcd"
+        "herdr session attach default   # then open workspace demo-abcd"
     );
     assert_eq!(
         Multiplexer::Tmux.attach_hint("demo-abcd"),
         "tmux attach -t demo-abcd"
     );
+}
+
+#[test]
+fn container_kind_is_workspace_for_herdr_session_for_tmux() {
+    assert_eq!(Multiplexer::Herdr.container_kind(), "workspace");
+    assert_eq!(Multiplexer::Tmux.container_kind(), "session");
 }
 
 #[test]
@@ -267,10 +281,16 @@ fn herdr_plan_creates_workspace_then_starts_and_seeds_each_tab() {
     );
     assert_eq!(plan.tabs.len(), 2);
 
-    // The agent-start argv reuses the launch_argv verbatim after `--`, with a
-    // `<WS>` placeholder for the workspace id resolved at run time.
+    // Identity 0 reuses the workspace's default tab: no `tab create`. Its
+    // agent-start reuses the launch_argv verbatim after `--`, with a `<TAB>`
+    // placeholder for the default tab id resolved at run time.
     let first = &plan.tabs[0];
     assert_eq!(first.identity, "root_agent");
+    assert!(
+        first.tab_create.is_empty(),
+        "identity 0 reuses the default tab: {:?}",
+        first.tab_create
+    );
     assert_eq!(
         first.agent_start,
         strs(&[
@@ -278,8 +298,8 @@ fn herdr_plan_creates_workspace_then_starts_and_seeds_each_tab() {
             "agent",
             "start",
             "root_agent",
-            "--workspace",
-            "<WS>",
+            "--tab",
+            "<TAB>",
             "--cwd",
             "/demo",
             "--no-focus",
@@ -288,7 +308,24 @@ fn herdr_plan_creates_workspace_then_starts_and_seeds_each_tab() {
             "--foo",
         ])
     );
+    // Identity 1 gets its own tab (labeled with the identity, `<WS>` resolved at
+    // run time), and its agent starts in that tab via the `<TAB>` placeholder.
     let second = &plan.tabs[1];
+    assert_eq!(
+        second.tab_create,
+        strs(&[
+            "herdr",
+            "tab",
+            "create",
+            "--workspace",
+            "<WS>",
+            "--cwd",
+            "/demo/finance",
+            "--label",
+            "finance",
+            "--no-focus",
+        ])
+    );
     assert_eq!(
         second.agent_start,
         strs(&[
@@ -296,8 +333,8 @@ fn herdr_plan_creates_workspace_then_starts_and_seeds_each_tab() {
             "agent",
             "start",
             "finance",
-            "--workspace",
-            "<WS>",
+            "--tab",
+            "<TAB>",
             "--cwd",
             "/demo/finance",
             "--no-focus",
@@ -314,6 +351,9 @@ fn herdr_tab_readiness_is_besteffort_trust_then_required_idle() {
     let tabs = [tab("root_agent", "/demo", &["claude"], &["/loop 30s"])];
     let plan = build_herdr_plan("demo-abcd", &tabs);
     let tab_plan = &plan.tabs[0];
+
+    // The sole identity reuses the workspace's default tab (no `tab create`).
+    assert!(tab_plan.tab_create.is_empty());
 
     // The trust probe is best-effort (a short-timeout output match); its Enter
     // is only sent when the probe matches; the idle wait is the required gate.
@@ -374,8 +414,15 @@ fn herdr_seed_sends_each_line_by_name_then_submits() {
 
 #[test]
 fn parses_workspace_id_from_create_json() {
-    let json = r#"{"result":{"root_pane":{"pane_id":"w4:p1","terminal_id":"term_6570da89722875","workspace_id":"w4"},"workspace":{"workspace_id":"w4","label":"remargin-smoke"}}}"#;
-    assert_eq!(parse_workspace_id(json).unwrap(), "w4");
+    assert_eq!(parse_workspace_id(WORKSPACE_CREATE_JSON).unwrap(), "w4");
+}
+
+#[test]
+fn parses_default_tab_id_from_create_json() {
+    assert_eq!(
+        parse_default_tab_id(WORKSPACE_CREATE_JSON).unwrap(),
+        "w4:t1"
+    );
 }
 
 #[test]
@@ -386,9 +433,21 @@ fn parses_pane_id_from_agent_start_json() {
 }
 
 #[test]
+fn parses_tab_id_from_tab_create_json() {
+    let json = r#"{"id":"cli:tab:create","result":{"root_pane":{"pane_id":"w9:p5","tab_id":"w9:t2","workspace_id":"w9"},"tab":{"label":"finance","number":2,"pane_count":1,"tab_id":"w9:t2","workspace_id":"w9"},"type":"tab_created"}}"#;
+    assert_eq!(parse_tab_id(json).unwrap(), "w9:t2");
+}
+
+#[test]
 fn parse_workspace_id_errors_on_malformed_json() {
     let err = parse_workspace_id("{not json").unwrap_err().to_string();
     assert!(err.contains("workspace create"), "names the source: {err}");
+}
+
+#[test]
+fn parse_tab_id_errors_on_malformed_json() {
+    let err = parse_tab_id("{not json").unwrap_err().to_string();
+    assert!(err.contains("tab create"), "names the source: {err}");
 }
 
 #[test]
