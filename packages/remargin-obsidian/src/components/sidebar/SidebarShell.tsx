@@ -236,7 +236,6 @@ export function SidebarShell({
               badge={sandboxCount || undefined}
               open={sandboxOpen}
               actions={sandboxActions}
-              variant="sandbox"
             />
             <CollapsibleContent>
               {sandboxContent ?? (

@@ -1,7 +1,5 @@
-import { ChevronDown, ChevronRight, type LucideIcon } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { ChevronDown, type LucideIcon } from "lucide-react";
 import { CollapsibleTrigger } from "@/components/ui/collapsible";
-import { cn } from "@/lib/utils";
 
 interface SectionHeaderProps {
   icon: LucideIcon;
@@ -10,15 +8,15 @@ interface SectionHeaderProps {
   badgeVariant?: "default" | "warning";
   open: boolean;
   actions?: React.ReactNode;
-  /**
-   * Visual treatment. `sandbox` renders the L1 protocol-surface chrome
-   * defined in sandbox-hierarchy.css — brand-purple tinted wash,
-   * mono-uppercase tracked title. `default` keeps the original tonality
-   * for sibling sections (Inbox, Thread, etc).
-   */
-  variant?: "default" | "sandbox";
 }
 
+/**
+ * Top-level section header (Sandbox, Inbox, …). Styled by the `.rmg-l1-head`
+ * rules in sandbox-hierarchy.css — plain, unlayered CSS with defensive
+ * resets, because Obsidian's unlayered `button` styles beat Tailwind v4's
+ * `@layer utilities` regardless of specificity. The chevron is a single
+ * icon that the CSS rotates on `data-open`.
+ */
 export function SectionHeader({
   icon: Icon,
   title,
@@ -26,46 +24,24 @@ export function SectionHeader({
   badgeVariant = "default",
   open,
   actions,
-  variant = "default",
 }: SectionHeaderProps) {
-  const Chevron = open ? ChevronDown : ChevronRight;
+  const badgeClass =
+    badgeVariant === "warning"
+      ? "rmg-l1-head__badge rmg-l1-head__badge--warning"
+      : "rmg-l1-head__badge";
 
   // The trigger (a native <button>) wraps only the non-interactive
   // header content; {actions} render as a sibling so ViewToggle's
   // buttons never nest inside the trigger button.
-  if (variant === "sandbox") {
-    return (
-      <div className="rmg-l1-head" data-open={open ? "true" : "false"}>
-        <CollapsibleTrigger className="rmg-l1-head__trigger">
-          <Chevron className="rmg-l1-head__chev" />
-          <Icon className="rmg-l1-head__icon" />
-          <span className="rmg-l1-head__title">{title}</span>
-          {badge != null && <span className="rmg-l1-head__badge">{badge}</span>}
-        </CollapsibleTrigger>
-        {actions && <span className="rmg-l1-head__actions">{actions}</span>}
-      </div>
-    );
-  }
-
   return (
-    <div className="flex items-center w-full min-w-0 bg-bg-border hover:bg-bg-hover overflow-hidden">
-      {/* justify-start defends against Obsidian's global button centering. */}
-      <CollapsibleTrigger className="flex items-center justify-start gap-1.5 flex-1 min-w-0 px-4 py-2 bg-transparent text-left">
-        <Chevron className="w-3 h-3 text-text-faint shrink-0" />
-        <Icon className="w-3.5 h-3.5 text-text-muted shrink-0" />
-        <span className="text-xs font-medium text-text-muted truncate min-w-0">{title}</span>
-        {badge != null && (
-          <Badge
-            className={cn(
-              "px-1.5 py-0 text-[10px] font-semibold leading-4 rounded-full shrink-0",
-              badgeVariant === "warning" ? "bg-amber-400 text-bg-primary" : "bg-accent text-white"
-            )}
-          >
-            {badge}
-          </Badge>
-        )}
+    <div className="rmg-l1-head" data-open={open ? "true" : "false"}>
+      <CollapsibleTrigger className="rmg-l1-head__trigger">
+        <ChevronDown className="rmg-l1-head__chev" />
+        <Icon className="rmg-l1-head__icon" />
+        <span className="rmg-l1-head__title">{title}</span>
+        {badge != null && <span className={badgeClass}>{badge}</span>}
       </CollapsibleTrigger>
-      {actions && <div className="flex items-center gap-1 pr-4 shrink-0">{actions}</div>}
+      {actions && <span className="rmg-l1-head__actions">{actions}</span>}
     </div>
   );
 }

@@ -18,7 +18,9 @@
  *     panel still feels native when the user flips light/dark themes.
  * ====================================================================== */
 
-.remargin-container .remargin-sandbox {
+/* Tokens live on the sidebar root so the L1 section headers — rendered
+ * outside .remargin-sandbox — resolve them too. */
+.remargin-container {
   /* Brand */
   --rmg-brand: #7f6df2;
   --rmg-brand-strong: #6f5be8;
@@ -48,8 +50,9 @@
     monospace
   );
   --rmg-sans: var(--font-interface, "Inter", system-ui, sans-serif);
+}
 
-  /* Layout */
+.remargin-container .remargin-sandbox {
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -616,11 +619,12 @@
 }
 
 /* ========================================================================
- * L1 head — Sandbox section header (variant of SectionHeader). Tinted
- * brand-purple wash, mono-uppercase tracked title, tray icon retained.
- * This is the visual root of the protocol surface. The row itself is a
+ * L1 head — every top-level section header (Sandbox, Inbox, …). Tinted
+ * brand-purple wash, mono-uppercase tracked title. The row itself is a
  * <div>; the collapsible trigger <button> inside wraps only the
  * chevron/icon/title/badge, with the actions tray as its sibling.
+ * Plain unlayered CSS on purpose: Obsidian's unlayered button styles beat
+ * Tailwind's @layer utilities, so utilities alone cannot style a button.
  * ====================================================================== */
 .remargin-container .rmg-l1-head {
   display: flex;
@@ -643,6 +647,7 @@
 .remargin-container button.rmg-l1-head__trigger {
   display: flex !important;
   align-items: center;
+  justify-content: flex-start !important;
   gap: 8px;
   flex: 1 1 auto;
   min-width: 0;
@@ -702,6 +707,11 @@
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
   line-height: 1;
+}
+.remargin-container .rmg-l1-head__badge--warning {
+  color: var(--rmg-amber);
+  background: var(--rmg-amber-bg);
+  border-color: var(--rmg-amber-border);
 }
 .remargin-container .rmg-l1-head__actions {
   display: inline-flex;
