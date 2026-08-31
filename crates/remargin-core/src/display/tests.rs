@@ -659,7 +659,7 @@ fn query_pretty_header_names_both_counts_under_a_filter() {
     // A comment-level filter kept one of the file's 190 comments.
     result.comment_count = 190;
 
-    let output = format_query_pretty(&[result], Some("alice"));
+    let output = format_query_pretty(&[result], Some("for alice"));
 
     assert!(
         output.contains("docs/design.md (1 of 190 comments, 1 pending for alice)"),
@@ -715,7 +715,7 @@ fn query_pretty_pending_for() {
     let mut result = make_query_result("design.md", vec![cm]);
     result.pending_count = 1;
 
-    let output = format_query_pretty(&[result], Some("alice"));
+    let output = format_query_pretty(&[result], Some("for alice"));
 
     assert!(output.contains("1 pending for alice"));
     // Per-file header also uses the filter name.

@@ -148,13 +148,15 @@ impl Comment {
         is_pending(&self.to, &self.ack)
     }
 
-    /// True for broadcast (`to:` empty) comments that the caller has
-    /// not personally acked. Distinct from [`Self::is_pending_for`]:
-    /// for broadcasts, a personal ack closes the conversation from
-    /// the caller's view even when other participants have not.
+    /// True for broadcast (`to:` empty) comments written by someone
+    /// else that the caller has not personally acked. Distinct from
+    /// [`Self::is_pending_for`]: for broadcasts, a personal ack closes
+    /// the conversation from the caller's view even when other
+    /// participants have not, and the caller's own broadcasts never
+    /// count.
     #[must_use]
     pub fn is_pending_broadcast_for(&self, me: &str) -> bool {
-        is_pending_broadcast_for(&self.to, &self.ack, me)
+        is_pending_broadcast_for(&self.author, &self.to, &self.ack, me)
     }
 
     /// True when `target` is in `to:` and has not acknowledged yet.
@@ -284,11 +286,17 @@ pub fn is_pending_for(to: &[String], ack: &[Acknowledgment], target: &str) -> bo
     to.iter().any(|t| t == target) && !is_acked_by(ack, target)
 }
 
-/// Pending-broadcast-for-`me` predicate: `to` empty and `me` has not
-/// personally acked.
+/// Pending-broadcast-for-`me` predicate: `to` empty, `me` is not the
+/// author, and `me` has not personally acked. Writing a broadcast is
+/// not owing one — the author never sees their own in this set.
 #[must_use]
-pub fn is_pending_broadcast_for(to: &[String], ack: &[Acknowledgment], me: &str) -> bool {
-    to.is_empty() && !is_acked_by(ack, me)
+pub fn is_pending_broadcast_for(
+    author: &str,
+    to: &[String],
+    ack: &[Acknowledgment],
+    me: &str,
+) -> bool {
+    to.is_empty() && author != me && !is_acked_by(ack, me)
 }
 
 /// Parse a markdown string into a structured document.

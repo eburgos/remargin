@@ -187,10 +187,11 @@ fn render_node(
 /// alphabetically). Each file group has a per-file header and footer with
 /// pending counts. A grand footer summarises totals across all files.
 ///
-/// When `filter_name` is provided, pending counts read "pending for <name>";
-/// otherwise just "pending".
+/// When `pending_label` is provided, pending counts read "N pending
+/// <label>" (e.g. "for alice", "broadcast, unacked by alice"); otherwise
+/// just "N pending".
 #[must_use]
-pub fn format_query_pretty(results: &[QueryResult], filter_name: Option<&str>) -> String {
+pub fn format_query_pretty(results: &[QueryResult], pending_label: Option<&str>) -> String {
     let mut out = String::new();
 
     let mut sorted: Vec<&QueryResult> = results.iter().collect();
@@ -212,8 +213,8 @@ pub fn format_query_pretty(results: &[QueryResult], filter_name: Option<&str>) -
         total_pending += pending_count;
 
         let count_label = format_comment_count(result.matched_count, result.comment_count);
-        let pending_label = format_pending_label(pending_count, filter_name);
-        let _ = writeln!(out, "{path_str} ({count_label}, {pending_label})");
+        let file_pending_label = format_pending_label(pending_count, pending_label);
+        let _ = writeln!(out, "{path_str} ({count_label}, {file_pending_label})");
 
         let mut comments: Vec<&ExpandedComment> = comments_slice.iter().collect();
         comments.sort_by_key(|cm| cm.line);
@@ -223,10 +224,10 @@ pub fn format_query_pretty(results: &[QueryResult], filter_name: Option<&str>) -
         }
 
         let _ = writeln!(out, "\n\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}");
-        let _ = write!(out, "{pending_label}");
+        let _ = write!(out, "{file_pending_label}");
     }
 
-    let grand_pending_label = format_pending_label(total_pending, filter_name);
+    let grand_pending_label = format_pending_label(total_pending, pending_label);
     let file_label = plural(file_count, "file");
     let _ = write!(
         out,
@@ -293,10 +294,10 @@ fn is_pending_expanded(cm: &ExpandedComment) -> bool {
     parser::is_pending(&cm.to, &cm.ack)
 }
 
-fn format_pending_label(count: usize, filter_name: Option<&str>) -> String {
-    filter_name.map_or_else(
+fn format_pending_label(count: usize, pending_label: Option<&str>) -> String {
+    pending_label.map_or_else(
         || format!("{count} pending"),
-        |name| format!("{count} pending for {name}"),
+        |label| format!("{count} pending {label}"),
     )
 }
 

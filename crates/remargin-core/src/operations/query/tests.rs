@@ -2182,3 +2182,95 @@ fn plain_header_says_one_comment_for_a_single_comment_file() {
     let output = render_query_plain(&results);
     assert_eq!(output, "pending.md (1 comment, 1 pending)\n");
 }
+
+fn doc_two_broadcasts() -> &'static str {
+    "\
+---
+title: Two Broadcasts
+---
+
+```remargin
+---
+id: brd_by_alice
+author: alice
+type: human
+ts: 2026-04-06T09:00:00-04:00
+checksum: sha256:c0
+---
+Alice's own broadcast, zero acks.
+```
+
+```remargin
+---
+id: brd_by_bob
+author: bob
+type: human
+ts: 2026-04-06T09:30:00-04:00
+checksum: sha256:c1
+---
+Bob's broadcast, zero acks.
+```
+"
+}
+
+#[test]
+fn pending_broadcast_excludes_callers_own_broadcast() {
+    let system = MockSystem::new()
+        .with_dir(Path::new("/two"))
+        .unwrap()
+        .with_file(Path::new("/two/b.md"), doc_two_broadcasts().as_bytes())
+        .unwrap();
+    let filter = QueryFilter {
+        expanded: true,
+        pending_broadcast: Some(String::from("alice")),
+        ..QueryFilter::default()
+    };
+
+    let results = query(&system, Path::new("/two"), &filter).unwrap();
+    assert_eq!(results.len(), 1);
+    let ids: Vec<&str> = results[0]
+        .comments
+        .iter()
+        .flatten()
+        .map(|cm| cm.id.as_str())
+        .collect();
+    // Writing a broadcast is not owing one: alice's own stays out,
+    // bob's unacked one is hers to see.
+    assert_eq!(ids, vec!["brd_by_bob"]);
+}
+
+#[test]
+fn pending_label_names_the_active_flavor() {
+    let directed = QueryFilter {
+        pending_for_me: Some(String::from("alice")),
+        ..QueryFilter::default()
+    };
+    assert_eq!(directed.pending_label().as_deref(), Some("for alice"));
+
+    let explicit = QueryFilter {
+        pending_for: Some(String::from("bob")),
+        ..QueryFilter::default()
+    };
+    assert_eq!(explicit.pending_label().as_deref(), Some("for bob"));
+
+    let broadcast = QueryFilter {
+        pending_broadcast: Some(String::from("alice")),
+        ..QueryFilter::default()
+    };
+    assert_eq!(
+        broadcast.pending_label().as_deref(),
+        Some("broadcast, unacked by alice")
+    );
+
+    let union = QueryFilter {
+        pending_for_me: Some(String::from("alice")),
+        pending_broadcast: Some(String::from("alice")),
+        ..QueryFilter::default()
+    };
+    assert_eq!(
+        union.pending_label().as_deref(),
+        Some("for alice or broadcast")
+    );
+
+    assert_eq!(QueryFilter::default().pending_label(), None);
+}

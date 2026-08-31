@@ -2212,7 +2212,13 @@ pub fn cmd_query(
     let filter = build_query_filter(config, params)?;
     let base_path = query::display_base_path(params.path, system.is_file(&target).unwrap_or(false));
     let results = query::query(system, &target, &filter)?;
-    render::render_query_output(sinks, &results, params, &base_path, filter.pending_label())
+    render::render_query_output(
+        sinks,
+        &results,
+        params,
+        &base_path,
+        filter.pending_label().as_deref(),
+    )
 }
 
 fn build_query_filter(

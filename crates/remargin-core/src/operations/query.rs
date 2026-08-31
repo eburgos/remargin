@@ -158,16 +158,25 @@ impl QueryFilter {
         false
     }
 
-    /// Identity-scoped pending-flavor label preferred for pretty-print
-    /// headers. Returns the explicit `--pending-for` name when set,
-    /// falling back to the caller identity attached by
-    /// `--pending-for-me` / `--pending-broadcast`.
+    /// Identity-scoped pending-flavor label for pretty-print headers,
+    /// phrased after "N pending": `for <name>` when only a directed
+    /// flavor (`--pending-for` / `--pending-for-me`) is active,
+    /// `broadcast, unacked by <name>` when only `--pending-broadcast`
+    /// is, and `for <name> or broadcast` for the union — so a match
+    /// that came from the broadcast flavor is never labeled as if it
+    /// were addressed to the caller.
     #[must_use]
-    pub fn pending_label(&self) -> Option<&str> {
-        self.pending_for
+    pub fn pending_label(&self) -> Option<String> {
+        let directed = self
+            .pending_for
             .as_deref()
-            .or(self.pending_for_me.as_deref())
-            .or(self.pending_broadcast.as_deref())
+            .or(self.pending_for_me.as_deref());
+        match (directed, self.pending_broadcast.as_deref()) {
+            (Some(name), Some(_)) => Some(format!("for {name} or broadcast")),
+            (Some(name), None) => Some(format!("for {name}")),
+            (None, Some(me)) => Some(format!("broadcast, unacked by {me}")),
+            (None, None) => None,
+        }
     }
 
     /// Attach the caller's identity to the identity-scoped pending
@@ -675,11 +684,12 @@ fn is_pending_for(cm: &parser::Comment, target: &str) -> bool {
     cm.is_pending_for(target)
 }
 
-/// A broadcast comment is pending for `me` when `to` is empty AND `me`
-/// has not acknowledged yet. The caller's ack "closes" the broadcast
-/// from their personal perspective even when other participants have
-/// not acked (unlike the broad `is_pending`, which considers any ack
-/// enough to close the conversation).
+/// A broadcast comment is pending for `me` when `to` is empty, `me`
+/// did not write it, AND `me` has not acknowledged yet. The caller's
+/// ack "closes" the broadcast from their personal perspective even
+/// when other participants have not acked (unlike the broad
+/// `is_pending`, which considers any ack enough to close the
+/// conversation).
 fn is_pending_broadcast(cm: &parser::Comment, me: &str) -> bool {
     cm.is_pending_broadcast_for(me)
 }

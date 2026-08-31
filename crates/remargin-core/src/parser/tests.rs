@@ -936,3 +936,16 @@ fn comment_span_handles_block_at_eof_without_trailing_newline() {
         "block ends on the last line"
     );
 }
+
+#[test]
+fn pending_broadcast_for_exempts_the_author() {
+    use crate::parser::is_pending_broadcast_for;
+    let broadcast: [String; 0] = [];
+    // The author never owes their own broadcast.
+    assert!(!is_pending_broadcast_for("alice", &broadcast, &[], "alice"));
+    // Anyone else does, until they ack.
+    assert!(is_pending_broadcast_for("alice", &broadcast, &[], "bob"));
+    // Directed comments are never broadcasts.
+    let directed = [String::from("bob")];
+    assert!(!is_pending_broadcast_for("alice", &directed, &[], "bob"));
+}
