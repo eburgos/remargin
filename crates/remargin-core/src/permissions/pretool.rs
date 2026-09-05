@@ -470,30 +470,8 @@ fn bash_decision(
         return PretoolOutcome::Deny(build_cli_denied_decision(tool_prefix));
     }
 
-    // From an in-realm cwd, bare relative words carry no path evidence and
-    // no token scan can prove the command safe — fail closed. The cwd is a
-    // directory, not a path-shaped word: resolve from the cwd itself so a
-    // realm rooted exactly at the cwd (a wildcard root) is visible.
-    let canonical_cwd = canonicalize_existing_prefix(system, &lexical_normalize(event_cwd));
-    let resolved_cwd = match resolve_permissions(system, &canonical_cwd) {
-        Ok(value) => value,
-        Err(err) => {
-            return PretoolOutcome::Fail(format!("permissions resolve failed: {err}"));
-        }
-    };
-    if path_is_restricted(&resolved_cwd, &canonical_cwd) {
-        if all_verbs_are_remargin(&commands) {
-            return PretoolOutcome::SilentAllow;
-        }
-        let realm_root = realm_root_for(&resolved_cwd, &canonical_cwd);
-        return PretoolOutcome::Deny(build_in_realm_cwd_decision(
-            &canonical_cwd,
-            &realm_root,
-            &commands,
-            tool_prefix,
-        ));
-    }
-
+    // In-realm cwds get the same per-word scan; a bare word with no path
+    // evidence passes — accepted so vault sessions keep a working shell.
     let mut cwd = event_cwd.to_path_buf();
     let mut cd_active = false;
     for tokens in &commands {
@@ -624,22 +602,6 @@ fn first_verb_is_remargin(commands: &[Vec<String>]) -> bool {
         .and_then(|tokens| command_verb(tokens))
         .map(|(_, name)| name)
         == Some("remargin")
-}
-
-/// `true` when EVERY simple command's verb is `remargin` — a compound
-/// command must not smuggle a second verb past the fail-closed branch.
-fn all_verbs_are_remargin(commands: &[Vec<String>]) -> bool {
-    commands
-        .iter()
-        .all(|tokens| command_verb(tokens).map(|(_, name)| name) == Some("remargin"))
-}
-
-/// The first simple command whose verb is not the remargin CLI.
-fn first_non_remargin_command(commands: &[Vec<String>]) -> Option<(&[String], usize, &str)> {
-    commands.iter().find_map(|tokens| {
-        let (idx, name) = command_verb(tokens)?;
-        (name != "remargin").then_some((tokens.as_slice(), idx, name))
-    })
 }
 
 /// Split the command line into simple commands on `&&`, `||`, `;`, `|`,
@@ -1141,38 +1103,6 @@ fn no_equivalent_message(matched_path: &str, realm_root: &Path) -> String {
          rooted at {realm}. This kind of work does not belong inside the realm -- it belongs \
          outside {realm}, and there is no remargin operation that performs it."
     )
-}
-
-/// Deny for a Bash command issued from a cwd inside a trusted root.
-fn build_in_realm_cwd_decision(
-    cwd: &Path,
-    realm_root: &Path,
-    commands: &[Vec<String>],
-    tool_prefix: ToolPrefix,
-) -> Decision {
-    let cwd_display = cwd.display().to_string();
-    let realm = realm_root.display();
-    let mut reason = format!(
-        "Your working directory {cwd_display} is inside the remargin-managed realm rooted at \
-         {realm}. From an in-realm working directory every shell command is denied unless every \
-         command in it is the remargin CLI — a bare relative word here could silently address a \
-         managed file. Use the {tool_prefix}* tools (or the remargin CLI) for managed content; \
-         run any other shell work from outside {realm}."
-    );
-    if let Some((tokens, verb_idx, verb)) = first_non_remargin_command(commands)
-        && let Some(guidance) =
-            verb_guidance(verb, &cwd_display, tokens, Some(verb_idx), tool_prefix)
-    {
-        reason.push(' ');
-        reason.push_str(&guidance);
-    }
-    Decision {
-        hook_specific_output: DecisionInner {
-            hook_event_name: "PreToolUse",
-            permission_decision: PermissionDecision::Deny,
-            permission_decision_reason: reason,
-        },
-    }
 }
 
 /// Deny message for a destructive command (or redirect write) whose target

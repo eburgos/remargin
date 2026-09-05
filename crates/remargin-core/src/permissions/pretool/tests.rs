@@ -82,17 +82,6 @@ fn deny_reason(decision: &Decision) -> &str {
         .as_str()
 }
 
-/// Pins which branch produced a `Deny`: only the fail-closed in-realm-cwd
-/// branch names the caller's working directory, so its absence proves the
-/// token-loop / ancestor-destructive path is what ran.
-fn assert_not_in_realm_cwd_deny(decision: &Decision) {
-    assert!(
-        !deny_reason(decision).contains("working directory"),
-        "expected a token-loop deny, got the in-realm-cwd deny: {}",
-        deny_reason(decision),
-    );
-}
-
 /// Test 1: `Read` on unrestricted path → `SilentAllow`.
 #[test]
 fn read_on_unrestricted_path_silent_allows() {
@@ -1171,14 +1160,11 @@ fn deny_ops_only_path_bash_rm_denies() {
 
 /// Unify 3: a wildcard `trusted_roots` realm still denies a `Bash rm` of a
 /// path inside it — trusted-root coverage is unchanged by the unification.
-/// The cwd sits outside the realm so the token loop is what denies — an
-/// in-realm cwd would fail closed before the path argument is weighed.
 #[test]
 fn wildcard_trusted_roots_bash_rm_denies() {
     let system = mock_with(&[("/r/.remargin.yaml", &restrict_yaml("'*'"))]);
     let stdin = event_json("Bash", "/x", &json!({ "command": "rm /r/x.md" }));
-    let decision = expect_deny(pretool(&system, &stdin));
-    assert_not_in_realm_cwd_deny(&decision);
+    expect_deny(pretool(&system, &stdin));
 }
 
 /// Unify 4: a path in neither `deny_ops` nor `trusted_roots` silent-allows.
@@ -1310,52 +1296,37 @@ fn allow_dot_folders_hook_matches_hook_covered_reallow() {
 }
 
 // ---------------------------------------------------------------------
-// Wildcard realm rooted at the cwd: the realm root IS inside the realm,
-// so the fail-closed branch denies every command — bare verbs included —
-// before the token loop can weigh path evidence. The bare-word carve-out
-// (a verb must not resolve to `<cwd>/<verb>` and self-deny) still governs
-// commands reaching the token loop from an unrestricted cwd.
+// Wildcard realm rooted at the cwd: same per-word scan; bare words pass.
 // ---------------------------------------------------------------------
 
-/// No shell from an in-realm cwd: a bare verb (`ls`) from a cwd exactly
-/// at a wildcard realm root → `Deny`.
 #[test]
-fn bash_wildcard_bare_verb_ls_denies() {
+fn bash_wildcard_bare_verb_ls_allows() {
     let system = mock_with(&[("/r/.remargin.yaml", &restrict_yaml("'*'"))]);
     let stdin = event_json("Bash", "/r", &json!({ "command": "ls" }));
-    assert!(matches!(pretool(&system, &stdin), PretoolOutcome::Deny(_)));
+    assert_eq!(pretool(&system, &stdin), PretoolOutcome::SilentAllow);
 }
 
-/// `git status` from the wildcard realm root is git in a remargin vault →
-/// `Deny`; git inside a managed realm belongs to the human's un-hooked
-/// terminal.
 #[test]
-fn bash_wildcard_git_status_denies() {
+fn bash_wildcard_bare_git_status_allows() {
     let system = mock_with(&[("/r/.remargin.yaml", &restrict_yaml("'*'"))]);
     let stdin = event_json("Bash", "/r", &json!({ "command": "git status" }));
-    assert!(matches!(pretool(&system, &stdin), PretoolOutcome::Deny(_)));
+    assert_eq!(pretool(&system, &stdin), PretoolOutcome::SilentAllow);
 }
 
-/// A bare subcommand + flag (`cargo build --release`) from the wildcard
-/// realm root → `Deny`; no shell from an in-realm cwd, path evidence or
-/// not.
 #[test]
-fn bash_wildcard_cargo_build_release_denies() {
+fn bash_wildcard_cargo_build_release_allows() {
     let system = mock_with(&[("/r/.remargin.yaml", &restrict_yaml("'*'"))]);
     let stdin = event_json("Bash", "/r", &json!({ "command": "cargo build --release" }));
-    assert!(matches!(pretool(&system, &stdin), PretoolOutcome::Deny(_)));
+    assert_eq!(pretool(&system, &stdin), PretoolOutcome::SilentAllow);
 }
 
 /// A real path argument into the wildcard realm still denies — the
 /// path-evidence carve-out never lifts an actual managed-path reference.
-/// The cwd sits outside the realm so the token loop is what weighs the
-/// argument — an in-realm cwd would fail closed before it is read.
 #[test]
 fn bash_wildcard_real_path_argument_denies() {
     let system = mock_with(&[("/r/.remargin.yaml", &restrict_yaml("'*'"))]);
     let stdin = event_json("Bash", "/x", &json!({ "command": "rm /r/x.md" }));
-    let decision = expect_deny(pretool(&system, &stdin));
-    assert_not_in_realm_cwd_deny(&decision);
+    expect_deny(pretool(&system, &stdin));
 }
 
 /// After a tracked `cd` into a wildcard realm, a bare-name mutator argument
@@ -1808,21 +1779,16 @@ fn read_ancestor_realm_file_silent_allows() {
 // ---------------------------------------------------------------------
 
 /// `rm /r` under a wildcard realm rooted at `/r` destroys the entire realm →
-/// `Deny`, consistent with the absolute-root case. The cwd sits outside the
-/// realm so the ancestor-destructive gate is what denies — an in-realm cwd
-/// would fail closed before the gate is reached.
+/// `Deny`, consistent with the absolute-root case.
 #[test]
 fn bash_rm_wildcard_realm_root_denies() {
     let system = mock_with(&[("/r/.remargin.yaml", &restrict_yaml("'*'"))]);
     let stdin = event_json("Bash", "/x", &json!({ "command": "rm /r" }));
-    let decision = expect_deny(pretool(&system, &stdin));
-    assert_not_in_realm_cwd_deny(&decision);
+    expect_deny(pretool(&system, &stdin));
 }
 
 /// `ls /r` under a wildcard realm rooted at `/r` only reads the realm root →
-/// `SilentAllow`; reads of the root are never destructive. The cwd sits
-/// outside the realm — an in-realm cwd denies fail-closed before the token
-/// loop can weigh the read.
+/// `SilentAllow`; reads of the root are never destructive.
 #[test]
 fn bash_ls_wildcard_realm_root_silent_allows() {
     let system = mock_with(&[("/r/.remargin.yaml", &restrict_yaml("'*'"))]);
@@ -1841,14 +1807,11 @@ fn grep_wildcard_realm_root_denies() {
 
 /// `rm /r/x.md` under a wildcard realm still denies through the normal,
 /// verb-independent at/below path -- the ancestor work does not disturb it.
-/// The cwd sits outside the realm so the token loop is what runs -- an
-/// in-realm cwd would fail closed before the at/below match is made.
 #[test]
 fn bash_rm_wildcard_subpath_still_denies() {
     let system = mock_with(&[("/r/.remargin.yaml", &restrict_yaml("'*'"))]);
     let stdin = event_json("Bash", "/x", &json!({ "command": "rm /r/x.md" }));
-    let decision = expect_deny(pretool(&system, &stdin));
-    assert_not_in_realm_cwd_deny(&decision);
+    expect_deny(pretool(&system, &stdin));
 }
 
 /// The documented blind spot: a candidate ABOVE the realm root cannot be
@@ -1863,9 +1826,8 @@ fn bash_rm_above_realm_root_undetected_silent_allows() {
 }
 
 // ---------------------------------------------------------------------
-// Fail closed from an in-realm cwd: bare relative words and path-less
-// cwd-walkers carry no path evidence, so every Bash command from such a
-// cwd is denied unless every simple command is the remargin CLI.
+// In-realm cwd: same per-word scan as anywhere else. Bare words pass
+// (accepted gap); path-evidenced words still deny.
 // ---------------------------------------------------------------------
 
 /// A realm restricting `path` whose folder policy also denies the CLI.
@@ -1873,67 +1835,52 @@ fn restrict_with_cli_denied(path: &str) -> String {
     format!("permissions:\n  cli_allowed: false\n  trusted_roots:\n    - path: {path}\n")
 }
 
-/// The original bug: a bare relative read from inside the trusted root has
-/// no path evidence, so the token loop never evaluated it. The fail-closed
-/// branch denies it, naming the in-realm cwd.
 #[test]
-fn in_realm_cwd_bare_relative_read_is_denied() {
+fn in_realm_cwd_bare_relative_read_is_allowed() {
     let system = mock_with(&[("/r/.remargin.yaml", &restrict_yaml("secret"))]);
     let stdin = event_json(
         "Bash",
         "/r/secret",
         &json!({ "command": "grep pattern idea.md" }),
     );
-    let decision = expect_deny(pretool(&system, &stdin));
-    assert!(
-        deny_reason(&decision).contains("/r/secret"),
-        "reason must name the in-realm cwd: {}",
-        deny_reason(&decision),
-    );
+    assert_eq!(pretool(&system, &stdin), PretoolOutcome::SilentAllow);
 }
 
-/// A path-less cwd-walker presents zero path tokens; from an in-realm cwd
-/// it would sweep the realm → `Deny`.
 #[test]
-fn in_realm_cwd_pathless_walker_is_denied() {
+fn in_realm_cwd_path_evidenced_read_still_denies() {
     let system = mock_with(&[("/r/.remargin.yaml", &restrict_yaml("secret"))]);
-    let stdin = event_json("Bash", "/r/secret", &json!({ "command": "rg pattern" }));
+    let stdin = event_json("Bash", "/r/secret", &json!({ "command": "cat ./idea.md" }));
     assert!(matches!(pretool(&system, &stdin), PretoolOutcome::Deny(_)));
 }
 
-/// A bare relative native write would bypass comment preservation and
-/// signing entirely — the critical case → `Deny`. The substitution uses
-/// `,` delimiters: `s/x/y/` carries slashes (path evidence) and already
-/// denied collaterally on master, so only the slash-free form pins the
-/// bare-word gap itself.
 #[test]
-fn in_realm_cwd_bare_relative_write_is_denied() {
+fn in_realm_cwd_pathless_walker_is_allowed() {
+    let system = mock_with(&[("/r/.remargin.yaml", &restrict_yaml("secret"))]);
+    let stdin = event_json("Bash", "/r/secret", &json!({ "command": "rg pattern" }));
+    assert_eq!(pretool(&system, &stdin), PretoolOutcome::SilentAllow);
+}
+
+/// Bypasses comment preservation — the sharpest edge of the accepted gap.
+#[test]
+fn in_realm_cwd_bare_relative_write_is_allowed() {
     let system = mock_with(&[("/r/.remargin.yaml", &restrict_yaml("secret"))]);
     let stdin = event_json(
         "Bash",
         "/r/secret",
         &json!({ "command": "sed -i s,x,y, idea.md" }),
     );
-    assert!(matches!(pretool(&system, &stdin), PretoolOutcome::Deny(_)));
+    assert_eq!(pretool(&system, &stdin), PretoolOutcome::SilentAllow);
 }
 
-/// git gets no carve-out: git inside a managed realm is the human's job,
-/// run from the human's own un-hooked terminal. The deny reuses the
-/// registry's git guidance.
 #[test]
-fn in_realm_cwd_git_is_denied_with_git_guidance() {
+fn in_realm_cwd_bare_git_is_allowed() {
     let system = mock_with(&[("/r/.remargin.yaml", &restrict_yaml("secret"))]);
     let stdin = event_json(
         "Bash",
         "/r/secret",
         &json!({ "command": "git commit -m msg" }),
     );
-    let decision = expect_deny(pretool(&system, &stdin));
-    assert!(
-        deny_reason(&decision).contains("human's job"),
-        "reason must carry the git guidance: {}",
-        deny_reason(&decision),
-    );
+    assert_eq!(pretool(&system, &stdin), PretoolOutcome::SilentAllow);
 }
 
 /// The remargin CLI stays the sanctioned surface from an in-realm cwd —
@@ -1958,41 +1905,29 @@ fn in_realm_cwd_remargin_cli_stays_allowed() {
     assert!(deny_reason(&decision).contains("cli_allowed: false"));
 }
 
-/// Compound smuggling: EVERY simple command must be the remargin CLI — a
-/// remargin-prefixed chain must not carry a second verb past the branch.
 #[test]
-fn in_realm_cwd_compound_with_remargin_prefix_still_denies() {
+fn in_realm_cwd_compound_with_remargin_prefix_is_allowed() {
     let system = mock_with(&[("/r/.remargin.yaml", &restrict_yaml("secret"))]);
     let stdin = event_json(
         "Bash",
         "/r/secret",
         &json!({ "command": "remargin ls . && grep x idea.md" }),
     );
-    assert!(matches!(pretool(&system, &stdin), PretoolOutcome::Deny(_)));
+    assert_eq!(pretool(&system, &stdin), PretoolOutcome::SilentAllow);
 }
 
-/// The wildcard variant of the original bug: the realm root is itself
-/// inside a wildcard realm, so a bare relative read from a cwd exactly at
-/// the root is denied, naming the cwd.
 #[test]
-fn in_realm_cwd_at_wildcard_realm_root_bare_read_is_denied() {
+fn in_realm_cwd_at_wildcard_realm_root_bare_read_is_allowed() {
     let system = mock_with(&[("/r/.remargin.yaml", &restrict_yaml("'*'"))]);
     let stdin = event_json("Bash", "/r", &json!({ "command": "grep pattern idea.md" }));
-    let decision = expect_deny(pretool(&system, &stdin));
-    assert!(
-        deny_reason(&decision).contains("/r"),
-        "reason must name the in-realm cwd: {}",
-        deny_reason(&decision),
-    );
+    assert_eq!(pretool(&system, &stdin), PretoolOutcome::SilentAllow);
 }
 
-/// A path-less cwd-walker from a cwd at the wildcard realm root would
-/// sweep the realm → `Deny`.
 #[test]
-fn in_realm_cwd_at_wildcard_realm_root_pathless_walker_is_denied() {
+fn in_realm_cwd_at_wildcard_realm_root_pathless_walker_is_allowed() {
     let system = mock_with(&[("/r/.remargin.yaml", &restrict_yaml("'*'"))]);
     let stdin = event_json("Bash", "/r", &json!({ "command": "rg pattern" }));
-    assert!(matches!(pretool(&system, &stdin), PretoolOutcome::Deny(_)));
+    assert_eq!(pretool(&system, &stdin), PretoolOutcome::SilentAllow);
 }
 
 /// The remargin CLI stays the sanctioned surface from a cwd at the
@@ -2018,10 +1953,8 @@ fn in_realm_cwd_at_wildcard_realm_root_remargin_cli_stays_allowed() {
     assert!(deny_reason(&decision).contains("cli_allowed: false"));
 }
 
-/// Regression guards for the fail-closed branch: (a) bare words from a cwd
-/// NOT at/below a trusted root stay unevaluated; (b) an explicit restricted
-/// path in the args still denies from any cwd; (c) the in-command `cd`
-/// branch still denies from outside.
+/// (a) bare words from an unrestricted cwd stay unevaluated; (b) explicit
+/// restricted paths deny from any cwd; (c) tracked `cd` then bare words deny.
 #[test]
 fn in_realm_cwd_regression_guards_unchanged() {
     let system = mock_with(&[("/r/.remargin.yaml", &restrict_yaml("secret"))]);
@@ -2127,13 +2060,12 @@ fn shell_verb_guidance_renders_per_host() {
     }
 }
 
-/// The three whole-command denies — in-realm cwd, ancestor-destructive, and
-/// the `cli_allowed` policy deny — each build their own string and so each
+/// The two whole-command denies — ancestor-destructive and the
+/// `cli_allowed` policy deny — each build their own string and so each
 /// needs the prefix threaded independently.
 #[test]
 fn whole_command_denies_render_per_host() {
     let system = mock_with(&[("/r/.remargin.yaml", &restrict_yaml("secret"))]);
-    assert_hosts_differ_only_by_prefix(&system, &bash_target("ls"), "/r/secret");
     assert_hosts_differ_only_by_prefix(&system, &bash_target("rm -rf /r"), "/tmp");
 
     let cli_denied = mock_with(&[("/r/.remargin.yaml", "permissions:\n  cli_allowed: false\n")]);

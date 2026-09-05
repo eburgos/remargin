@@ -106,7 +106,7 @@ stop at the first match:
 2. **Never delete other participants' comments** to unblock your own op. Find another path or ask the user. ❌ A `write` whose payload quietly drops comment blocks so the op stops failing. ✅ Re-read with `get`, rebuild the content around every comment block, retry.
 3. **Never declare a different identity per call** unless the user explicitly asked. Per-call `identity` / `type` / `config_path` to declare someone else = impersonation. Document `author` frontmatter is authenticated on write too: creating a `.md` stamps your resolved identity (a spoofed `author` in the payload is dropped), and in strict/registered realms you cannot change an existing document's author — you can't author a file as anyone but yourself. ❌ Passing `--identity` / `identity:` for someone else on a call the user didn't ask for. ✅ Declare nothing — the walked `.remargin.yaml` resolves you.
 4. **Sign only what you own; never sign to make `verify` pass.** Your signature vouches that *you authored* the content — sign your own comments and nothing else (the forgery guard enforces it, but the discipline is yours). A failed `verify` (`signature_invalid` or checksum mismatch) is a diagnostic signal, not something to silence: it means a wrong signing key, the wrong identity, edited/tampered content, or an unregistered key. Fix the root cause — never reach for `sign` / `repair_checksum` to paper over a failed verify, and never re-sign another author's content. ❌ Rewriting the file, or minting or copying a signing key, to make the failure go away — the rewrite treats the symptom, and a fresh key for an already-registered identity breaks the identity→pubkey binding so every later signature fails too. ✅ Surface it to the user; provisioning keys and editing the registry are the human's job.
-5. **Never build code inside a realm.** A restricted realm blocks shell writes to *every* file under it, not just `.md`, so `cargo new` / `npm init` / scaffolding / compiling all fail there — the build writes non-markdown files the hook refuses. Realms are for *using* remargin, not for building software. ❌ Running a build from a realm working directory, then retrying with different flags or paths. ✅ Say the work belongs outside the realm, and stop.
+5. **Never build code inside a realm.** A restricted realm protects *every* file under it, not just `.md`, and the hook denies shell commands whose words resolve into it — so scaffolding or building there fights the enforcement and litters a protected tree with build artifacts. The hook cannot see every spelling (a bare word carries no path evidence), but invisibility is not permission: realms are for *using* remargin, not for building software. ❌ Running a build from a realm working directory, then retrying with different flags or paths. ✅ Say the work belongs outside the realm, and stop.
 
 ### Before you act
 
@@ -385,25 +385,16 @@ identity declaration.
 
 ## Working with git
 
-Git inside a managed realm is the human's job, not yours. When your working directory sits inside a realm's trusted root — which is exactly where remargin-launched sessions put you — the hook denies **every** Bash command unless every command in it is the `remargin` CLI, and git gets no carve-out:
-
-```bash
-git status      # denied — in-realm working directory
-git log         # denied
-git add <file>  # denied
-git commit      # denied
-git push        # denied
-```
-
-Git commands that name a managed path in their arguments are equally denied from **any** working directory:
+Git over managed content is the human's job, not yours. The hook applies the same per-word scan to git as to every shell command: a git invocation that names a managed path in its arguments is denied from **any** working directory:
 
 ```bash
 git -C /path/to/vault status           # denied — managed path in argument
 git --git-dir=/path/to/vault/.git log  # denied — managed path in argument
 git --work-tree=/path/to/vault status  # denied — managed path in argument
+git add /path/to/vault/notes.md        # denied — managed path in argument
 ```
 
-**How to apply:** when realm content needs to be committed, pushed, or otherwise touched by git, say so and stop — the human runs git from their own terminal, which the hook does not govern. There is no spelling of a git command an agent can run against a managed realm; do not retry with different flags, paths, or wrappers.
+A bare git command from an in-realm working directory (`git status`, `git commit -m "..."`) carries no path evidence and is not denied by the hook — but the discipline stands regardless of the hook's reach: **do not run git over a realm's contents on your own initiative.** Commits and pushes of managed content are the human's call, made explicitly; when realm content needs git, say so and let the human decide.
 
 ---
 

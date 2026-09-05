@@ -152,15 +152,19 @@ fn shell_word_inside_managed_subtree_blocks() {
     assert_goose_namespaced(&reason);
 }
 
-/// The second route into the same block: an in-realm `working_dir`, where a
-/// bare relative word carries no path evidence and nothing can prove the
-/// command safe. The engine's in-realm fail-closed contract is inherited
-/// unchanged.
+/// In-realm `working_dir`: bare words pass, path-evidenced words block.
 #[test]
-fn shell_from_in_realm_working_dir_blocks() {
-    let stdin = event_json("developer__shell", "/r/secret", &json!({ "command": "ls" }));
-    let reason = expect_block(goose_pretool(&realm(), &stdin));
-    assert!(reason.contains("/r/secret"), "reason: {reason}");
+fn shell_from_in_realm_working_dir_follows_per_word_scan() {
+    let bare = event_json("developer__shell", "/r/secret", &json!({ "command": "ls" }));
+    assert_allow(&goose_pretool(&realm(), &bare));
+
+    let evidenced = event_json(
+        "developer__shell",
+        "/r/secret",
+        &json!({ "command": "cat ./idea.md" }),
+    );
+    let reason = expect_block(goose_pretool(&realm(), &evidenced));
+    assert_goose_namespaced(&reason);
 }
 
 // ---- 3. unmanaged paths ------------------------------------------------
@@ -294,10 +298,10 @@ fn ungated_tool_without_a_gated_shape_allows() {
 
 /// Every deny family reachable from goose renders its op names in goose's
 /// namespacing. Walks the families one by one — the per-tool message, the
-/// per-verb shell redirect, the in-realm-cwd deny, the ancestor-destructive
-/// deny, and the `cli_allowed` deny — because each builds its own string
-/// off the shared registry and a missed one would still hand the agent a
-/// tool it cannot call.
+/// per-verb shell redirect, the ancestor-destructive deny, and the
+/// `cli_allowed` deny — because each builds its own string off the shared
+/// registry and a missed one would still hand the agent a tool it cannot
+/// call.
 #[test]
 fn every_deny_family_names_goose_namespaced_ops() {
     let system = realm();
@@ -312,7 +316,6 @@ fn every_deny_family_names_goose_namespaced_ops() {
             "/tmp",
             &json!({ "command": "cat /r/secret/foo.md" }),
         ),
-        event_json("developer__shell", "/r/secret", &json!({ "command": "ls" })),
         event_json(
             "developer__shell",
             "/tmp",
