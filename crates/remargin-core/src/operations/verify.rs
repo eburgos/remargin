@@ -433,6 +433,7 @@ impl VerifyFailure {
             })
             .collect();
         serde_json::to_value(VerifyFailurePayload {
+            elapsed_ms: None,
             error_kind: VerifyErrorKind::VerifyFailed,
             failures,
             headline: self.headline(),
@@ -469,6 +470,10 @@ pub struct VerifyFailureRow {
 #[non_exhaustive]
 #[model_schema]
 pub struct VerifyFailurePayload {
+    /// Milliseconds the call took, written by the io layer on the way out. Part
+    /// of the contract because the plugin parses this payload strictly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub elapsed_ms: Option<u64>,
     pub error_kind: VerifyErrorKind,
     pub failures: Vec<VerifyFailureRow>,
     pub headline: String,

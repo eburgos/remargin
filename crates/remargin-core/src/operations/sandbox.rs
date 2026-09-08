@@ -75,6 +75,7 @@ impl SandboxBulkResult {
                 skipped,
             }),
             _ => serde_json::to_value(SandboxRemoveReport {
+                elapsed_ms: None,
                 failed,
                 removed: changed,
                 skipped,
@@ -108,6 +109,9 @@ pub struct SandboxAddReport {
 #[non_exhaustive]
 #[model_schema]
 pub struct SandboxRemoveReport {
+    /// Milliseconds the call took, written by the io layer on the way out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub elapsed_ms: Option<u64>,
     pub failed: Vec<SandboxFailureEntry>,
     pub removed: Vec<String>,
     pub skipped: Vec<String>,

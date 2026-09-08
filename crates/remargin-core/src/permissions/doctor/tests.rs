@@ -535,6 +535,7 @@ fn guard_absent_from_both_scopes_reports_session_guard_missing() {
 
 fn clean_report() -> DoctorReport {
     DoctorReport {
+        elapsed_ms: None,
         findings: vec![],
         goose_guard_installed: None,
         goose_mcp_installed: None,
@@ -548,6 +549,7 @@ fn clean_report() -> DoctorReport {
 
 fn findings_report() -> DoctorReport {
     DoctorReport {
+        elapsed_ms: None,
         findings: vec![DoctorFinding {
             kind: FindingKind::HookMissing,
             message: String::from("hook is missing"),
@@ -765,6 +767,7 @@ fn leftover_finding_fixture(rule: &str, file: &str) -> DoctorFinding {
 #[test]
 fn render_prompt_names_each_finding_rule_and_file() {
     let report = DoctorReport {
+        elapsed_ms: None,
         findings: vec![
             leftover_finding_fixture("Bash(remargin *)", "/r/.claude/settings.local.json"),
             leftover_finding_fixture("Edit(/r/**)", "/home/u/.claude/settings.json"),
@@ -1016,6 +1019,7 @@ fn hook_missing_skips_identity_key_check() {
 #[test]
 fn identity_findings_render_and_serialize() {
     let report = DoctorReport {
+        elapsed_ms: None,
         findings: vec![
             DoctorFinding {
                 kind: FindingKind::IdentityKeyUnresolvable,
@@ -1191,6 +1195,7 @@ fn schema_lint_clean_tree_has_no_findings() {
 #[test]
 fn config_schema_lint_serializes_and_renders() {
     let report = DoctorReport {
+        elapsed_ms: None,
         findings: vec![DoctorFinding {
             kind: FindingKind::ConfigSchemaLint,
             message: String::from("/r/.remargin.yaml (line 2, col 3): unknown field `deny_op`"),
@@ -1400,6 +1405,7 @@ fn stale_sandbox_skipped_when_hook_missing() {
 #[test]
 fn stale_sandbox_serializes_and_renders() {
     let report = DoctorReport {
+        elapsed_ms: None,
         findings: vec![DoctorFinding {
             kind: FindingKind::StaleSandboxEntry,
             message: String::from(
@@ -1537,6 +1543,7 @@ fn trusted_root_missing_skipped_when_escape_present() {
 #[test]
 fn trusted_root_missing_serializes_and_renders() {
     let report = DoctorReport {
+        elapsed_ms: None,
         findings: vec![DoctorFinding {
             kind: FindingKind::TrustedRootMissing,
             message: String::from(

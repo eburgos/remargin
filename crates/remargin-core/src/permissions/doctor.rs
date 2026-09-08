@@ -166,6 +166,10 @@ pub struct DoctorFinding {
 #[non_exhaustive]
 #[model_schema]
 pub struct DoctorReport {
+    /// Milliseconds the call took, written by the io layer on the way out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub elapsed_ms: Option<u64>,
+
     /// Findings in report order. Empty = clean.
     pub findings: Vec<DoctorFinding>,
 
@@ -619,6 +623,7 @@ pub fn run_doctor(
         }
         // Short-circuit: no further checks are meaningful without the hook.
         return Ok(DoctorReport {
+            elapsed_ms: None,
             findings,
             goose_guard_installed,
             goose_mcp_installed,
@@ -693,6 +698,7 @@ pub fn run_doctor(
     }
 
     Ok(DoctorReport {
+        elapsed_ms: None,
         findings,
         goose_guard_installed,
         goose_mcp_installed,
