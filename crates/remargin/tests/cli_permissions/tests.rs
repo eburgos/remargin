@@ -617,7 +617,7 @@ fn mcp_ls_without_path_rejects_when_cwd_outside_trusted_roots() {
     fs::write(
         parent.join(".remargin.yaml"),
         format!(
-            "identity: alice\ntype: human\nmode: open\npermissions:\n  trusted_roots:\n    - {}\n",
+            "identity: alice\ntype: agent\nmode: open\npermissions:\n  trusted_roots:\n    - {}\n",
             inside.display()
         ),
     )
@@ -656,7 +656,7 @@ fn mcp_ls_without_path_succeeds_when_cwd_inside_trusted_roots() {
     fs::write(
         cwd.join(".remargin.yaml"),
         format!(
-            "identity: alice\ntype: human\nmode: open\npermissions:\n  trusted_roots:\n    - {}\n",
+            "identity: alice\ntype: agent\nmode: open\npermissions:\n  trusted_roots:\n    - {}\n",
             canonical_cwd.display()
         ),
     )

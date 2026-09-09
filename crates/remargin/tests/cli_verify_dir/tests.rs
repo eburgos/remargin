@@ -59,7 +59,7 @@ fn build_workspace() -> TempDir {
     let tmp = TempDir::new().unwrap();
     fs::write(
         tmp.path().join(".remargin.yaml"),
-        "identity: alice\ntype: human\nmode: open\n",
+        "identity: alice\ntype: agent\nmode: open\n",
     )
     .unwrap();
     let notes = tmp.path().join("notes");

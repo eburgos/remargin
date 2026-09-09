@@ -79,6 +79,7 @@ stop at the first match:
 | Op denied with **`trusted_roots`** rule | surface the denial; **ask before `unrestrict`**; do not call `remargin claude unrestrict` |
 | Op denied with **`deny_ops`** rule | surface the denial; user has explicitly disallowed this op on this path |
 | `path escapes sandbox` from MCP | configuration issue (insufficient `trusted_roots`); surface to user; do not retry |
+| MCP op rejected with **`mcp_human_identity_rejected`** | the realm resolved to a human identity and the MCP is an agent surface. Never proceed under it: ask the user for permission, then render an agent identity with `identity_create` for them to add to the realm's `.remargin.yaml` |
 
 ### Anti-patterns
 

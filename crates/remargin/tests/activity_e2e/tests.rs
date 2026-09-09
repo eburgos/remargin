@@ -188,7 +188,7 @@ fn mcp_and_cli_match() {
             "--identity",
             "alice",
             "--type",
-            "human",
+            "agent",
         ],
     );
     assert_status(&cli, 0);
@@ -198,7 +198,7 @@ fn mcp_and_cli_match() {
     let base = system.canonicalize(realm.path()).unwrap();
     let mut flags = IdentityFlags::default();
     flags.identity = Some(String::from("alice"));
-    flags.author_type = Some(parse_author_type("human").unwrap());
+    flags.author_type = Some(parse_author_type("agent").unwrap());
     let config = ResolvedConfig::resolve(&system, &base, &flags, None).unwrap();
     let request = json!({
         "jsonrpc": "2.0",

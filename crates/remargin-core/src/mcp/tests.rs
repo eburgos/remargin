@@ -166,7 +166,7 @@ Body for P3.
 fn test_config() -> ResolvedConfig {
     ResolvedConfig {
         assets_dir: String::from("assets"),
-        author_type: Some(AuthorType::Human),
+        author_type: Some(AuthorType::Agent),
         identity: Some(String::from("tester")),
         ignore: Vec::new(),
         key_path: None,
@@ -1626,7 +1626,7 @@ participants:
         .unwrap()
         .with_file(
             Path::new("/parent/.remargin.yaml"),
-            b"mode: open\nidentity: caller\ntype: human\n",
+            b"mode: open\nidentity: caller\ntype: agent\n",
         )
         .unwrap()
         .with_file(
@@ -1648,7 +1648,7 @@ participants:
     // as active so the post-fix Strict + Missing path can flip to bad.
     let caller_cfg = ResolvedConfig {
         assets_dir: String::from("assets"),
-        author_type: Some(AuthorType::Human),
+        author_type: Some(AuthorType::Agent),
         identity: Some(String::from("caller")),
         ignore: Vec::new(),
         key_path: None,
@@ -1712,7 +1712,7 @@ hello
     let system = MockSystem::new()
         .with_file(
             Path::new("/parent/.remargin.yaml"),
-            b"mode: open\nidentity: caller\ntype: human\n",
+            b"mode: open\nidentity: caller\ntype: agent\n",
         )
         .unwrap()
         .with_file(Path::new("/parent/file.md"), unsigned_doc.as_bytes())
@@ -1730,7 +1730,7 @@ participants:
 
     let caller_cfg = ResolvedConfig {
         assets_dir: String::from("assets"),
-        author_type: Some(AuthorType::Human),
+        author_type: Some(AuthorType::Agent),
         identity: Some(String::from("caller")),
         ignore: Vec::new(),
         key_path: None,
@@ -4664,6 +4664,175 @@ fn identity_flag_rejection_is_structured() {
     assert!(payload["headline"].as_str().unwrap().contains("identity"));
 }
 
+/// A config whose resolved identity is `type: human`, as when the walk
+/// falls through to a user-level `~/.remargin.yaml`.
+fn human_config() -> ResolvedConfig {
+    ResolvedConfig {
+        author_type: Some(AuthorType::Human),
+        identity: Some(String::from("eduardo-burgos")),
+        ..test_config()
+    }
+}
+
+/// The MCP surface is an agent surface: a human identity resolved from
+/// the config walk is rejected at dispatch, with a structured error
+/// naming the recovery path (ask the user, then `identity_create`).
+#[test]
+fn mcp_human_identity_rejects_comment() {
+    let base = Path::new("/docs");
+    let system = system_with_doc(base, "doc.md", "# Hello\n");
+
+    let response = call(
+        &system,
+        base,
+        &human_config(),
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 1_i32,
+            "method": "tools/call",
+            "params": {
+                "name": "comment",
+                "arguments": { "file": "doc.md", "content": "x" }
+            }
+        }),
+    );
+    assert!(is_tool_error(&response));
+    let text = response["result"]["content"][0]["text"].as_str().unwrap();
+    let payload: Value = serde_json::from_str(text).unwrap();
+    assert_eq!(payload["error_kind"], "mcp_human_identity_rejected");
+    assert_eq!(payload["tool"], "comment");
+    assert_eq!(payload["identity"], "eduardo-burgos");
+    let headline = payload["headline"].as_str().unwrap();
+    assert!(headline.contains("identity_create"), "{headline}");
+    assert!(headline.contains("permission"), "{headline}");
+}
+
+/// The ban is blanket, not write-only: a read under a human identity
+/// still acts in the human's name downstream.
+#[test]
+fn mcp_human_identity_rejects_read_only_get() {
+    let base = Path::new("/docs");
+    let system = system_with_doc(base, "doc.md", "# Hello\n");
+
+    let response = call(
+        &system,
+        base,
+        &human_config(),
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 1_i32,
+            "method": "tools/call",
+            "params": {
+                "name": "get",
+                "arguments": { "path": "doc.md" }
+            }
+        }),
+    );
+    assert!(is_tool_error(&response));
+    let text = response["result"]["content"][0]["text"].as_str().unwrap();
+    let payload: Value = serde_json::from_str(text).unwrap();
+    assert_eq!(payload["error_kind"], "mcp_human_identity_rejected");
+    assert_eq!(payload["tool"], "get");
+}
+
+/// `whoami` and `identity_create` stay callable under a human identity —
+/// they are the diagnosis and recovery path the rejection points at.
+#[test]
+fn mcp_human_identity_allows_whoami_and_identity_create() {
+    let base = Path::new("/docs");
+    let system = MockSystem::new()
+        .with_file(
+            Path::new("/docs/.remargin.yaml"),
+            b"identity: eduardo-burgos\ntype: human\n",
+        )
+        .unwrap();
+    let config = human_config();
+
+    let whoami = call(
+        &system,
+        base,
+        &config,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 1_i32,
+            "method": "tools/call",
+            "params": { "name": "whoami", "arguments": {} }
+        }),
+    );
+    assert!(!is_tool_error(&whoami), "{whoami}");
+
+    let create = call(
+        &system,
+        base,
+        &config,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 2_i32,
+            "method": "tools/call",
+            "params": {
+                "name": "identity_create",
+                "arguments": { "identity": "docs_agent", "type": "agent" }
+            }
+        }),
+    );
+    assert!(!is_tool_error(&create), "{create}");
+}
+
+/// An agent identity does not trip the guard.
+#[test]
+fn mcp_agent_identity_passes() {
+    let base = Path::new("/docs");
+    let system = system_with_doc(base, "doc.md", "# Hello\n");
+
+    let response = call(
+        &system,
+        base,
+        &test_config(),
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 1_i32,
+            "method": "tools/call",
+            "params": {
+                "name": "get",
+                "arguments": { "path": "doc.md" }
+            }
+        }),
+    );
+    assert!(!is_tool_error(&response), "{response}");
+}
+
+/// No resolved identity at all (the no-config soft-miss) is not the
+/// human case; whatever happens downstream, the guard must not fire.
+#[test]
+fn mcp_no_identity_not_rejected_by_human_guard() {
+    let base = Path::new("/docs");
+    let system = system_with_doc(base, "doc.md", "# Hello\n");
+    let config = ResolvedConfig {
+        author_type: None,
+        identity: None,
+        ..test_config()
+    };
+
+    let response = call(
+        &system,
+        base,
+        &config,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 1_i32,
+            "method": "tools/call",
+            "params": {
+                "name": "get",
+                "arguments": { "path": "doc.md" }
+            }
+        }),
+    );
+    if is_tool_error(&response) {
+        let text = response["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(!text.contains("mcp_human_identity_rejected"), "{text}");
+    }
+}
+
 /// `identity_create` keeps `identity`/`type`/`key` in its schema —
 /// those name the NEW identity being created, not a per-call caller
 /// principal.
@@ -6751,7 +6920,50 @@ fn batch_reply_auto_ack_false_without_reason_rejects_whole_batch() {
 /// A hard-wrapped comment body still posts and still returns its id; the
 /// advice is an extra field on the successful result, not a refusal.
 #[test]
-fn comment_attaches_advice_for_hard_wrapped_body_without_failing() {
+fn comment_attaches_advice_for_bare_id_reference_without_failing() {
+    let base = Path::new("/docs");
+    let system = system_with_doc(base, "doc.md", "# Hello\n\nSome text.\n");
+    let config = test_config();
+
+    let response = call(
+        &system,
+        base,
+        &config,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 1_i32,
+            "method": "tools/call",
+            "params": {
+                "name": "comment",
+                "arguments": {
+                    "file": "doc.md",
+                    "content": "See a5q for the earlier decision."
+                }
+            }
+        }),
+    );
+
+    let result = extract_tool_text(&response);
+    assert!(
+        result["id"].is_string() && !result["id"].as_str().unwrap().is_empty(),
+        "the comment was still created: {result}"
+    );
+    let warnings = result["warnings"].as_array().unwrap();
+    assert_eq!(warnings.len(), 1_usize, "{result}");
+    assert_eq!(warnings[0]["line"].as_u64(), Some(1));
+    assert!(
+        warnings[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("reads as a comment id"),
+        "advisory wording: {result}"
+    );
+}
+
+/// The reject tier fires for agent authors: a hard-wrapped body is refused
+/// outright instead of posting with a warning.
+#[test]
+fn comment_rejects_hard_wrapped_body_from_agent() {
     let base = Path::new("/docs");
     let system = system_with_doc(base, "doc.md", "# Hello\n\nSome text.\n");
     let config = test_config();
@@ -6774,21 +6986,9 @@ fn comment_attaches_advice_for_hard_wrapped_body_without_failing() {
         }),
     );
 
-    let result = extract_tool_text(&response);
-    assert!(
-        result["id"].is_string() && !result["id"].as_str().unwrap().is_empty(),
-        "the comment was still created: {result}"
-    );
-    let warnings = result["warnings"].as_array().unwrap();
-    assert_eq!(warnings.len(), 1_usize, "{result}");
-    assert_eq!(warnings[0]["line"].as_u64(), Some(1));
-    assert!(
-        warnings[0]["message"]
-            .as_str()
-            .unwrap()
-            .contains("hard-wrapped"),
-        "advisory wording: {result}"
-    );
+    assert!(is_tool_error(&response), "{response}");
+    let text = extract_tool_raw_text(&response);
+    assert!(text.contains("comment body rejected"), "{text}");
 }
 
 /// A one-line comment body draws nothing, keeping the result exactly the
@@ -6862,7 +7062,7 @@ fn reply_inherits_the_comment_advisory_pass() {
                 "arguments": {
                     "file": "doc.md",
                     "parent_id": parent_id,
-                    "content": "A reply wrapped\nby hand."
+                    "content": "See a5q for the earlier decision."
                 }
             }
         }),

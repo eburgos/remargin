@@ -125,6 +125,13 @@ const PATH_DEFAULTS_TO_CWD_TOOLS: &[&str] = &["activity", "ls", "query", "sandbo
 /// identity flips are out of scope. The CLI keeps these flags.
 const REJECTED_IDENTITY_FLAGS: &[&str] = &["config_path", "identity", "key", "type"];
 
+/// Tools that stay callable when the resolved identity is `type:
+/// human`. The MCP surface is an agent surface, so a human identity
+/// is rejected at dispatch — except the two tools that let the agent
+/// diagnose the refusal (`whoami`) and render the agent identity the
+/// rejection tells it to create (`identity_create`).
+const HUMAN_IDENTITY_EXEMPT_TOOLS: &[&str] = &["identity_create", "whoami"];
+
 /// Description of a single MCP tool.
 struct ToolDesc {
     /// Human-readable description.
@@ -145,6 +152,20 @@ struct ToolDesc {
 pub struct McpIdentityFlagRejected {
     /// Offending parameter the caller sent.
     pub flag: String,
+    /// MCP tool the caller invoked (short name, no prefix).
+    pub tool: String,
+}
+
+/// Structured MCP human-identity rejection.
+///
+/// Hosts branch on `error_kind == "mcp_human_identity_rejected"` (via
+/// [`McpHumanIdentityRejected::to_json`]) to detect this class without
+/// regex-matching the free-form message.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct McpHumanIdentityRejected {
+    /// Identity the config walk resolved to.
+    pub identity: String,
     /// MCP tool the caller invoked (short name, no prefix).
     pub tool: String,
 }
@@ -212,6 +233,31 @@ impl McpIdentityFlagRejected {
             "error_kind": "mcp_identity_flag_rejected",
             "flag": self.flag,
             "headline": self.headline(),
+            "tool": self.tool,
+        })
+    }
+}
+
+impl McpHumanIdentityRejected {
+    /// One-line plain-English summary carrying the recovery path.
+    #[must_use]
+    pub fn headline(&self) -> String {
+        format!(
+            "MCP tool '{}' refused: this server resolved to '{}', a human identity, and an \
+             agent must not act as a human. Ask the user for permission to create an agent \
+             identity for this realm, then call 'identity_create' to render the \
+             `.remargin.yaml` block for them.",
+            self.tool, self.identity,
+        )
+    }
+
+    /// JSON shape used by [`tool_result_error_json`].
+    #[must_use]
+    pub fn to_json(&self) -> Value {
+        json!({
+            "error_kind": "mcp_human_identity_rejected",
+            "headline": self.headline(),
+            "identity": self.identity,
             "tool": self.tool,
         })
     }
@@ -1585,6 +1631,25 @@ fn dispatch_tool(
     // them — this is the last defensible checkpoint.
     if let Some(rejection) = reject_identity_flags(tool_name, p) {
         return tool_result_error_json(&rejection.to_json());
+    }
+
+    // The MCP surface is an agent surface: a human identity resolved
+    // from the config walk must never act here. `whoami` and
+    // `identity_create` stay callable so the agent can diagnose and
+    // render the agent identity the rejection asks for.
+    if matches!(config.author_type, Some(parser::AuthorType::Human))
+        && !HUMAN_IDENTITY_EXEMPT_TOOLS.contains(&tool_name)
+    {
+        return tool_result_error_json(
+            &McpHumanIdentityRejected {
+                identity: config
+                    .identity
+                    .clone()
+                    .unwrap_or_else(|| String::from("<unknown>")),
+                tool: String::from(tool_name),
+            }
+            .to_json(),
+        );
     }
 
     // Dispatch-time boundary check. UNCONSTRAINED sessions get the
