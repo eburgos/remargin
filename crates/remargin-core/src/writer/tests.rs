@@ -7,7 +7,7 @@ use std::path::Path;
 
 use chrono::DateTime;
 use os_shim::System as _;
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 
 use crate::linter;
 use crate::on_disk_comment::OnDiskComment;
@@ -263,7 +263,7 @@ fn write_with_mock_system() {
     let doc_str = serialize_comment(&comment).unwrap();
     let doc = parser::parse(&doc_str).unwrap();
 
-    let system = MockSystem::new().with_dir(Path::new("/docs")).unwrap();
+    let system = MemorySystem::new().with_dir(Path::new("/docs")).unwrap();
 
     let added = HashSet::new();
     let removed = HashSet::new();
@@ -691,7 +691,7 @@ fn doc_with_duplicate_acks() -> parser::ParsedDocument {
 
 #[test]
 fn write_document_self_heals_legacy_duplicate_acks() {
-    let system = MockSystem::new().with_dir(Path::new("/docs")).unwrap();
+    let system = MemorySystem::new().with_dir(Path::new("/docs")).unwrap();
     let path = Path::new("/docs/dup.md");
     let doc = doc_with_duplicate_acks();
     let empty: HashSet<String> = HashSet::new();
@@ -712,7 +712,7 @@ fn write_document_self_heals_legacy_duplicate_acks() {
 fn write_then_reparse_then_write_is_byte_stable_for_duped_input() {
     // Round-trip self-heal scenario: the first write deduplicates, the
     // second is byte-identical because the input is already clean.
-    let system = MockSystem::new().with_dir(Path::new("/docs")).unwrap();
+    let system = MemorySystem::new().with_dir(Path::new("/docs")).unwrap();
     let path = Path::new("/docs/rt.md");
     let doc = doc_with_duplicate_acks();
     let empty: HashSet<String> = HashSet::new();

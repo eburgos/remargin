@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 
 use crate::config::Config;
 use crate::config::permissions::op_name::OpName;
@@ -136,7 +136,7 @@ permissions:
 #[test]
 fn deny_ops_unknown_op_in_resolver_names_source_file() {
     let yaml = "permissions:\n  deny_ops:\n    - path: src\n      ops: [delte]\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/realm"))
         .unwrap()
         .with_file(Path::new("/realm/.remargin.yaml"), yaml.as_bytes())
@@ -151,13 +151,13 @@ fn deny_ops_unknown_op_in_resolver_names_source_file() {
 // Resolver
 // ---------------------------------------------------------------------
 
-fn write_yaml(system: MockSystem, path: &str, body: &str) -> MockSystem {
+fn write_yaml(system: MemorySystem, path: &str, body: &str) -> MemorySystem {
     system.with_file(Path::new(path), body.as_bytes()).unwrap()
 }
 
 #[test]
 fn no_config_anywhere_returns_default() {
-    let system = MockSystem::new().with_dir(Path::new("/realm")).unwrap();
+    let system = MemorySystem::new().with_dir(Path::new("/realm")).unwrap();
     let resolved = resolve_permissions(&system, Path::new("/realm")).unwrap();
     assert!(resolved.allow_dot_folders.is_empty());
     assert!(resolved.deny_ops.is_empty());
@@ -167,7 +167,7 @@ fn no_config_anywhere_returns_default() {
 #[test]
 fn config_without_permissions_block_resolves_empty() {
     let system = write_yaml(
-        MockSystem::new().with_dir(Path::new("/realm")).unwrap(),
+        MemorySystem::new().with_dir(Path::new("/realm")).unwrap(),
         "/realm/.remargin.yaml",
         "identity: alice\n",
     );
@@ -193,7 +193,7 @@ permissions:
     - .github
 ";
     let system = write_yaml(
-        MockSystem::new().with_dir(Path::new("/realm")).unwrap(),
+        MemorySystem::new().with_dir(Path::new("/realm")).unwrap(),
         "/realm/.remargin.yaml",
         yaml,
     );
@@ -231,7 +231,7 @@ permissions:
 fn wildcard_restrict_resolves_to_realm_root() {
     let yaml = "permissions:\n  trusted_roots:\n    - path: '*'\n";
     let system = write_yaml(
-        MockSystem::new().with_dir(Path::new("/realm")).unwrap(),
+        MemorySystem::new().with_dir(Path::new("/realm")).unwrap(),
         "/realm/.remargin.yaml",
         yaml,
     );
@@ -249,7 +249,7 @@ fn wildcard_restrict_resolves_to_realm_root() {
 fn relative_restrict_path_resolves_against_source_dir() {
     let yaml = "permissions:\n  trusted_roots:\n    - path: src/secret\n";
     let system = write_yaml(
-        MockSystem::new().with_dir(Path::new("/realm")).unwrap(),
+        MemorySystem::new().with_dir(Path::new("/realm")).unwrap(),
         "/realm/.remargin.yaml",
         yaml,
     );
@@ -264,7 +264,7 @@ fn relative_restrict_path_resolves_against_source_dir() {
 fn two_file_accumulation_preserves_order_and_provenance() {
     let parent = "permissions:\n  trusted_roots:\n    - path: top\n";
     let child = "permissions:\n  trusted_roots:\n    - path: nested\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/realm/sub"))
         .unwrap()
         .with_file(Path::new("/realm/.remargin.yaml"), parent.as_bytes())
@@ -294,7 +294,7 @@ fn two_file_accumulation_preserves_order_and_provenance() {
 #[test]
 fn malformed_yaml_surfaces_path_in_error() {
     let bad = "permissions:\n  trusted_roots: : :\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/realm"))
         .unwrap()
         .with_file(Path::new("/realm/.remargin.yaml"), bad.as_bytes())
@@ -307,7 +307,7 @@ fn malformed_yaml_surfaces_path_in_error() {
 #[test]
 fn unknown_field_under_permissions_block_rejected_by_resolver() {
     let yaml = "permissions:\n  bogus: true\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/realm"))
         .unwrap()
         .with_file(Path::new("/realm/.remargin.yaml"), yaml.as_bytes())
@@ -327,7 +327,7 @@ permissions:
       cli_allowed: true
 ";
     let system = write_yaml(
-        MockSystem::new().with_dir(Path::new("/realm")).unwrap(),
+        MemorySystem::new().with_dir(Path::new("/realm")).unwrap(),
         "/realm/.remargin.yaml",
         yaml,
     );
@@ -343,7 +343,7 @@ permissions:
 fn deny_ops_accumulate_across_files_without_dedup() {
     let parent = "permissions:\n  deny_ops:\n    - path: top\n      ops: [purge]\n";
     let child = "permissions:\n  deny_ops:\n    - path: nested\n      ops: [delete]\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/realm/sub"))
         .unwrap()
         .with_file(Path::new("/realm/.remargin.yaml"), parent.as_bytes())
@@ -358,7 +358,7 @@ fn deny_ops_accumulate_across_files_without_dedup() {
 fn restrict_order_is_deepest_first() {
     let parent = "permissions:\n  trusted_roots:\n    - path: top\n";
     let child = "permissions:\n  trusted_roots:\n    - path: nested\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/realm/sub"))
         .unwrap()
         .with_file(Path::new("/realm/.remargin.yaml"), parent.as_bytes())
@@ -376,7 +376,7 @@ fn restrict_order_is_deepest_first() {
 fn allow_dot_folders_accumulate_across_files() {
     let parent = "permissions:\n  allow_dot_folders: ['.git']\n";
     let child = "permissions:\n  allow_dot_folders: ['.cache']\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/realm/sub"))
         .unwrap()
         .with_file(Path::new("/realm/.remargin.yaml"), parent.as_bytes())
@@ -403,7 +403,7 @@ fn allow_dot_folders_accumulate_across_files() {
 fn lint_permissions_collects_findings_across_parents() {
     let parent = "permissions:\n  deny_ops:\n    - path: top\n      ops: [delte]\n";
     let child = "permissions:\n  deny_ops:\n    - path: nested\n      ops: [purg]\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/realm/sub"))
         .unwrap()
         .with_file(Path::new("/realm/.remargin.yaml"), parent.as_bytes())
@@ -427,7 +427,7 @@ fn lint_permissions_collects_findings_across_parents() {
 #[test]
 fn lint_permissions_flags_legacy_to_field_as_hard_finding() {
     let yaml = "permissions:\n  deny_ops:\n    - path: .\n      ops: [purge]\n      to: [eduardo-burgos]\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/realm"))
         .unwrap()
         .with_file(Path::new("/realm/.remargin.yaml"), yaml.as_bytes())
@@ -483,7 +483,7 @@ fn deny_ops_legacy_to_field_fails_to_parse() {
 #[test]
 fn lint_permissions_returns_empty_when_clean() {
     let yaml = "permissions:\n  deny_ops:\n    - path: src/secret\n      ops: [purge, delete]\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/realm"))
         .unwrap()
         .with_file(Path::new("/realm/.remargin.yaml"), yaml.as_bytes())
@@ -495,7 +495,7 @@ fn lint_permissions_returns_empty_when_clean() {
 #[test]
 fn in_realm_absolute_restrict_path_preserved() {
     let yaml = "permissions:\n  trusted_roots:\n    - path: /realm/etc/secret\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/realm"))
         .unwrap()
         .with_file(Path::new("/realm/.remargin.yaml"), yaml.as_bytes())
@@ -513,7 +513,7 @@ fn in_realm_absolute_restrict_path_preserved() {
 #[test]
 fn out_of_realm_absolute_entry_fails_resolution() {
     let yaml = "permissions:\n  trusted_roots:\n    - path: /other/secret\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/realm"))
         .unwrap()
         .with_file(Path::new("/realm/.remargin.yaml"), yaml.as_bytes())
@@ -529,7 +529,7 @@ fn out_of_realm_absolute_entry_fails_resolution() {
 #[test]
 fn dotdot_escape_entry_fails_resolution() {
     let yaml = "permissions:\n  trusted_roots:\n    - path: ../sibling\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/realm"))
         .unwrap()
         .with_file(Path::new("/realm/.remargin.yaml"), yaml.as_bytes())
@@ -542,11 +542,11 @@ fn dotdot_escape_entry_fails_resolution() {
 }
 
 /// A `~` expansion landing outside the realm escapes just like a written
-/// absolute path — driven through `MockSystem`'s HOME.
+/// absolute path — driven through `MemorySystem`'s HOME.
 #[test]
 fn tilde_expansion_escape_fails_resolution() {
     let yaml = "permissions:\n  trusted_roots:\n    - ~/notes\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_env("HOME", "/home/alice")
         .unwrap()
         .with_dir(Path::new("/realm"))
@@ -563,7 +563,7 @@ fn tilde_expansion_escape_fails_resolution() {
 #[test]
 fn tilde_expansion_inside_realm_resolves() {
     let yaml = "permissions:\n  trusted_roots:\n    - ~/notes\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_env("HOME", "/realm/home/alice")
         .unwrap()
         .with_dir(Path::new("/realm"))
@@ -581,7 +581,7 @@ fn tilde_expansion_inside_realm_resolves() {
 #[test]
 fn lint_reports_out_of_realm_trusted_root() {
     let yaml = "permissions:\n  trusted_roots:\n    - path: /other/secret\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/realm"))
         .unwrap()
         .with_file(Path::new("/realm/.remargin.yaml"), yaml.as_bytes())
@@ -601,7 +601,9 @@ fn lint_reports_out_of_realm_trusted_root() {
 
 #[test]
 fn trusted_roots_cwd_fallback_when_none_declared() {
-    let system = MockSystem::new().with_dir(Path::new("/somewhere")).unwrap();
+    let system = MemorySystem::new()
+        .with_dir(Path::new("/somewhere"))
+        .unwrap();
     let resolved = resolve_trusted_roots_for_cwd(&system, Path::new("/somewhere")).unwrap();
     assert_eq!(resolved, vec![PathBuf::from("/somewhere")]);
 }
@@ -609,7 +611,7 @@ fn trusted_roots_cwd_fallback_when_none_declared() {
 #[test]
 fn trusted_roots_use_declared_paths() {
     let yaml = "permissions:\n  trusted_roots:\n    - /realm/a\n    - /realm/b\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/realm"))
         .unwrap()
         .with_file(Path::new("/realm/.remargin.yaml"), yaml.as_bytes())
@@ -624,7 +626,7 @@ fn trusted_roots_use_declared_paths() {
 #[test]
 fn trusted_roots_expand_tilde_against_mock_home() {
     let yaml = "permissions:\n  trusted_roots:\n    - ~/notes\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_env("HOME", "/realm/home/alice")
         .unwrap()
         .with_dir(Path::new("/realm"))
@@ -655,7 +657,7 @@ fn permissions_block_with_empty_trusted_roots_list_parses_to_some_empty() {
 #[test]
 fn resolver_records_lock_when_trusted_roots_explicitly_empty() {
     let yaml = "permissions:\n  trusted_roots: []\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/realm"))
         .unwrap()
         .with_file(Path::new("/realm/.remargin.yaml"), yaml.as_bytes())
@@ -672,7 +674,7 @@ fn resolver_records_lock_when_trusted_roots_explicitly_empty() {
 #[test]
 fn resolver_leaves_lock_unset_when_key_absent() {
     let yaml = "permissions:\n  allow_dot_folders: ['.git']\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/realm"))
         .unwrap()
         .with_file(Path::new("/realm/.remargin.yaml"), yaml.as_bytes())
@@ -688,7 +690,7 @@ fn resolver_records_deepest_lock_first_in_walk() {
     // canonical locker source.
     let parent = "permissions:\n  trusted_roots: []\n";
     let child = "permissions:\n  trusted_roots: []\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/realm/sub"))
         .unwrap()
         .with_file(Path::new("/realm/.remargin.yaml"), parent.as_bytes())
@@ -706,7 +708,7 @@ fn resolver_records_deepest_lock_first_in_walk() {
 fn resolve_trusted_roots_for_cwd_locked_returns_empty() {
     // No inherited entries + lock → empty Vec, NOT a cwd fallback.
     let yaml = "permissions:\n  trusted_roots: []\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/realm"))
         .unwrap()
         .with_file(Path::new("/realm/.remargin.yaml"), yaml.as_bytes())
@@ -722,7 +724,7 @@ fn resolve_trusted_roots_for_cwd_locked_returns_empty() {
 /// T1: no `cli_allowed` anywhere in walk → effective = true (default allow).
 #[test]
 fn cli_allowed_default_allow_when_absent() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/realm"))
         .unwrap()
         .with_file(Path::new("/realm/.remargin.yaml"), b"identity: alice\n")
@@ -742,7 +744,7 @@ fn cli_allowed_nearest_wins_deny() {
     let root_yaml = "identity: alice\n";
     let mid_yaml = "identity: alice\n"; // no cli_allowed
     let deep_yaml = "permissions:\n  cli_allowed: false\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/realm/a/aa"))
         .unwrap()
         .with_file(Path::new("/realm/.remargin.yaml"), root_yaml.as_bytes())
@@ -775,7 +777,7 @@ fn cli_allowed_nearest_wins_deny() {
 #[test]
 fn cli_allowed_root_allow_inherited() {
     let root_yaml = "permissions:\n  cli_allowed: true\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/realm/sub"))
         .unwrap()
         .with_file(Path::new("/realm/.remargin.yaml"), root_yaml.as_bytes())
@@ -799,7 +801,7 @@ fn cli_allowed_deeper_override_re_allows() {
     let root_yaml = "permissions:\n  cli_allowed: true\n";
     let mid_yaml = "permissions:\n  cli_allowed: false\n";
     let deep_yaml = "permissions:\n  cli_allowed: true\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/realm/a/aa"))
         .unwrap()
         .with_file(Path::new("/realm/.remargin.yaml"), root_yaml.as_bytes())

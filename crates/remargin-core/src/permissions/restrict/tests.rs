@@ -8,7 +8,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use os_shim::System as _;
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 use serde_yaml::Value;
 
 use crate::permissions::restrict::{
@@ -16,9 +16,9 @@ use crate::permissions::restrict::{
 };
 use crate::permissions::sidecar;
 
-fn realm_with_claude(extra_files: &[(&str, &str)]) -> (MockSystem, PathBuf) {
+fn realm_with_claude(extra_files: &[(&str, &str)]) -> (MemorySystem, PathBuf) {
     let anchor = PathBuf::from("/r");
-    let mut system = MockSystem::new()
+    let mut system = MemorySystem::new()
         .with_dir(&anchor)
         .unwrap()
         .with_dir(anchor.join(".claude"))
@@ -44,7 +44,7 @@ fn args(path: &str) -> RestrictArgs {
     }
 }
 
-fn read_yaml(system: &MockSystem, path: &Path) -> Value {
+fn read_yaml(system: &MemorySystem, path: &Path) -> Value {
     let body = system.read_to_string(path).unwrap();
     serde_yaml::from_str(&body).unwrap()
 }
@@ -70,7 +70,7 @@ fn anchor_discovery_walks_up_to_nearest_claude_dir() {
 /// Scenario 3: no `.claude/` ancestor → clear error.
 #[test]
 fn anchor_discovery_errors_when_no_claude_ancestor() {
-    let system = MockSystem::new().with_dir(Path::new("/r")).unwrap();
+    let system = MemorySystem::new().with_dir(Path::new("/r")).unwrap();
     let err = find_claude_anchor(&system, Path::new("/r")).unwrap_err();
     let msg = format!("{err:#}");
     assert!(

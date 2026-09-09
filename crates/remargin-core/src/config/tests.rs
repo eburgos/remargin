@@ -4,7 +4,7 @@
 use core::time::Duration;
 use std::path::Path;
 
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 
 use crate::parser::AuthorType;
 
@@ -93,7 +93,7 @@ participants:
 
 #[test]
 fn walk_up_finds_config() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/project/src/deep"))
         .unwrap()
         .with_file(
@@ -110,7 +110,7 @@ fn walk_up_finds_config() {
 
 #[test]
 fn walk_up_finds_nothing() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/empty/path"))
         .unwrap();
 
@@ -120,7 +120,7 @@ fn walk_up_finds_nothing() {
 
 #[test]
 fn config_and_registry_at_different_levels() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/project/src"))
         .unwrap()
         .with_file(
@@ -147,7 +147,7 @@ fn config_and_registry_at_different_levels() {
 
 #[test]
 fn full_config_parse() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/project/.remargin.yaml"),
             full_config_yaml().as_bytes(),
@@ -167,7 +167,7 @@ fn full_config_parse() {
 
 #[test]
 fn minimal_config_defaults() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/project/.remargin.yaml"),
             minimal_config_yaml("bob").as_bytes(),
@@ -187,7 +187,7 @@ fn minimal_config_defaults() {
 
 #[test]
 fn registry_revoked_participant() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/project/.remargin.yaml"), b"mode: registered\n")
         .unwrap()
         .with_file(
@@ -215,7 +215,7 @@ fn registry_revoked_participant() {
 
 #[test]
 fn key_rotation_multiple_pubkeys() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/project/.remargin-registry.yaml"),
             registry_yaml().as_bytes(),
@@ -231,7 +231,7 @@ fn key_rotation_multiple_pubkeys() {
 
 #[test]
 fn key_shorthand_plain_name() {
-    let system = MockSystem::new().with_env("HOME", "/home/user").unwrap();
+    let system = MemorySystem::new().with_env("HOME", "/home/user").unwrap();
 
     let path = resolve_key_path(&system, "id_ed25519").unwrap();
     assert_eq!(path, Path::new("/home/user/.ssh/id_ed25519"));
@@ -239,7 +239,7 @@ fn key_shorthand_plain_name() {
 
 #[test]
 fn key_path_literal_tilde() {
-    let system = MockSystem::new().with_env("HOME", "/home/user").unwrap();
+    let system = MemorySystem::new().with_env("HOME", "/home/user").unwrap();
 
     let path = resolve_key_path(&system, "~/.remargin/keys/foo.key").unwrap();
     assert_eq!(path, Path::new("/home/user/.remargin/keys/foo.key"));
@@ -247,7 +247,7 @@ fn key_path_literal_tilde() {
 
 #[test]
 fn key_path_literal_absolute() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
 
     let path = resolve_key_path(&system, "/etc/keys/foo.key").unwrap();
     assert_eq!(path, Path::new("/etc/keys/foo.key"));
@@ -261,7 +261,7 @@ fn manual_identity_declaration_supersedes_walked_config() {
     // irrelevant. Mode still comes from the walked config (mode is a
     // property of the directory tree, not of the identity declaration)
     // and assets_dir still honors the CLI flag when set.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_env("HOME", "/home/user")
         .unwrap()
         .with_file(
@@ -292,7 +292,7 @@ fn manual_identity_declaration_supersedes_walked_config() {
 
 #[test]
 fn open_mode_any_author() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let resolved = ResolvedConfig::resolve(
         &system,
         Path::new("/empty"),
@@ -306,7 +306,7 @@ fn open_mode_any_author() {
 
 #[test]
 fn strict_mode_unregistered() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/project/.remargin.yaml"), b"mode: strict\n")
         .unwrap()
         .with_file(
@@ -332,7 +332,7 @@ fn strict_mode_unregistered() {
 
 #[test]
 fn strict_mode_requires_signature() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/project/.remargin.yaml"), b"mode: strict\n")
         .unwrap()
         .with_file(
@@ -358,7 +358,7 @@ fn strict_mode_requires_signature() {
 
 #[test]
 fn registered_mode_no_registry() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/project/.remargin.yaml"), b"mode: registered\n")
         .unwrap();
     let resolved = ResolvedConfig::resolve(
@@ -383,7 +383,7 @@ participants:
   nostatus:
     type: human
 ";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/project/.remargin-registry.yaml"),
             yaml.as_bytes(),
@@ -405,7 +405,7 @@ fn typed_config_yaml(identity: &str, author_type: &str) -> String {
 
 #[test]
 fn type_filter_matches_first_config() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/project/.remargin.yaml"),
             typed_config_yaml("eduardo", "human").as_bytes(),
@@ -421,7 +421,7 @@ fn type_filter_matches_first_config() {
 
 #[test]
 fn type_filter_skips_non_matching_finds_higher() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/home/project/src"))
         .unwrap()
         .with_file(
@@ -444,7 +444,7 @@ fn type_filter_skips_non_matching_finds_higher() {
 
 #[test]
 fn type_filter_no_match() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/project/src"))
         .unwrap()
         .with_file(
@@ -459,7 +459,7 @@ fn type_filter_no_match() {
 
 #[test]
 fn no_filter_backward_compat() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/project/.remargin.yaml"),
             typed_config_yaml("agent_bot", "agent").as_bytes(),
@@ -475,7 +475,7 @@ fn no_filter_backward_compat() {
 
 #[test]
 fn no_filter_no_type_field() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/project/.remargin.yaml"),
             minimal_config_yaml("bob").as_bytes(),
@@ -491,7 +491,7 @@ fn no_filter_no_type_field() {
 
 #[test]
 fn type_filter_skips_config_without_type() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/project/sub"))
         .unwrap()
         .with_file(
@@ -514,7 +514,7 @@ fn type_filter_skips_config_without_type() {
 
 #[test]
 fn type_filter_multiple_configs_selects_correct() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/a/b"))
         .unwrap()
         .with_file(
@@ -537,7 +537,7 @@ fn type_filter_multiple_configs_selects_correct() {
 
 #[test]
 fn load_config_wrapper_still_works() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/project/src"))
         .unwrap()
         .with_file(
@@ -554,7 +554,7 @@ fn load_config_wrapper_still_works() {
 
 #[test]
 fn resolve_mode_finds_vault_root_mode() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/project/.remargin.yaml"),
             b"mode: strict\ntype: human\nidentity: eduardo\n",
@@ -571,7 +571,7 @@ fn resolve_mode_finds_vault_root_mode() {
 
 #[test]
 fn resolve_mode_walks_up() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/project/src/deep"))
         .unwrap()
         .with_file(Path::new("/project/.remargin.yaml"), b"mode: registered\n")
@@ -587,7 +587,7 @@ fn resolve_mode_walks_up() {
 
 #[test]
 fn resolve_mode_defaults_to_open_when_no_config() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/empty/path"))
         .unwrap();
 
@@ -602,7 +602,7 @@ fn resolve_mode_ignores_type_filter() {
     // mode resolution does not skip it looking for a human config — it
     // returns the agent config's mode, because mode is a directory-tree
     // property.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/home/vault/sub"))
         .unwrap()
         .with_file(
@@ -629,7 +629,7 @@ fn resolve_mode_walks_past_configs_without_an_explicit_mode_field() {
     // A config without a `mode:` field does not declare a realm; the
     // walk must continue upward. With no further config the resolver
     // falls back to Open and reports no source.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/project/.remargin.yaml"),
             minimal_config_yaml("bob").as_bytes(),
@@ -650,7 +650,7 @@ fn resolve_mode_skips_inner_yaml_without_mode_and_uses_outer_strict() {
     // an inner yaml in a subdirectory only carries a system_prompt block
     // with no mode field. The walk for a file in the inner dir must reach
     // the outer's strict declaration.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/vault/.remargin.yaml"), b"mode: strict\n")
         .unwrap()
         .with_file(
@@ -685,7 +685,7 @@ fn agent_type_filter_does_not_inherit_human_identity() {
     // silently borrow the human identity with a swapped author_type —
     // the three-branch design makes this a hard error instead
     // of a silent misattribution.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/home/user/project/src"))
         .unwrap()
         .with_file(
@@ -739,7 +739,7 @@ participants:
     status: active
     pubkeys: []
 ";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/project/.remargin-registry.yaml"),
             yaml.as_bytes(),
@@ -772,7 +772,7 @@ fn resolve_signing_key_returns_none_in_open_mode() {
     //
     // Mode is sourced from the config file. No config → default
     // mode is Open.
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let resolved = ResolvedConfig::resolve(
         &system,
         Path::new("/empty"),
@@ -792,7 +792,7 @@ fn resolve_signing_key_returns_none_for_unregistered_in_strict() {
     // so in practice this code path is only reached for arbitrary
     // author names the op layer looks up (e.g. verifying siblings
     // authored by someone else).
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/project/.remargin.yaml"), b"mode: strict\n")
         .unwrap()
         .with_file(
@@ -822,7 +822,7 @@ fn resolve_signing_key_returns_key_when_present() {
     // key is paired with identity inside the same file (branch 3 walk)
     // or inside a manual --identity/--type/--key declaration (branch 2).
     // Supplying `--key` alone is not a valid shape.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_env("HOME", "/home/eduardo")
         .unwrap()
         .with_file(
@@ -859,7 +859,7 @@ fn resolve_bails_when_strict_identity_has_no_key() {
     // silently wrote an unsigned artifact here and the post-write gate
     // tripped on the NEXT mutation. the gate
     // moves to construction time so ops never see an invalid config.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/project/.remargin.yaml"),
             b"identity: eduardo\nmode: strict\n",
@@ -902,7 +902,7 @@ fn resolve_bails_when_revoked_identity_in_strict_mode() {
     // acceptance: a revoked participant in strict mode causes
     // `ResolvedConfig::resolve` to error, not the op handler. This
     // replaces the equivalent op-level `can_post` check.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_env("HOME", "/home/eduardo")
         .unwrap()
         .with_file(
@@ -942,7 +942,7 @@ fn resolve_bails_when_revoked_identity_in_strict_mode() {
 // stricter caller mode. That breaks the invariant.
 #[test]
 fn doc_realm_open_replaces_caller_strict_mode() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/realm/.remargin.yaml"),
             b"mode: open\nidentity: alice\ntype: human\n",

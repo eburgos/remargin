@@ -11,7 +11,7 @@
 use std::path::{Path, PathBuf};
 
 use os_shim::System;
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 use serde_yaml::{Mapping, Value};
 
 use super::{
@@ -106,15 +106,15 @@ fn config_path() -> PathBuf {
 }
 
 /// A mock whose `current_exe` is the binary the installer must embed.
-fn mock() -> MockSystem {
-    MockSystem::new()
+fn mock() -> MemorySystem {
+    MemorySystem::new()
         .with_current_exe(Path::new(EXE))
         .unwrap()
         .with_file(Path::new(EXE), b"binary")
         .unwrap()
 }
 
-fn seed(system: MockSystem, body: &str) -> MockSystem {
+fn seed(system: MemorySystem, body: &str) -> MemorySystem {
     system.with_file(config_path(), body.as_bytes()).unwrap()
 }
 
@@ -471,7 +471,7 @@ fn test_reports_not_installed_when_absent() {
 /// zero remargin tools. The guard still blocks and still names them.
 #[test]
 fn test_reports_broken_when_the_binary_is_gone() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_exe(Path::new(EXE))
         .unwrap()
         .with_file(config_path(), wired_yaml().as_bytes())

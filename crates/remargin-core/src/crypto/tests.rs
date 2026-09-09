@@ -5,7 +5,7 @@ extern crate alloc;
 use std::path::Path;
 
 use chrono::DateTime;
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 
 use crate::crypto::{
     compute_checksum, compute_reaction_checksum, compute_signature, normalize_whitespace,
@@ -49,8 +49,8 @@ fn make_comment(content: &str) -> Comment {
     }
 }
 
-fn system_with_key() -> MockSystem {
-    MockSystem::new()
+fn system_with_key() -> MemorySystem {
+    MemorySystem::new()
         .with_file(Path::new("/keys/ed25519"), TEST_PRIVATE_KEY.as_bytes())
         .unwrap()
 }
@@ -249,7 +249,7 @@ fn signature_tamper_author() {
 
 #[test]
 fn key_loading_via_system() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/mock/ssh/key"), TEST_PRIVATE_KEY.as_bytes())
         .unwrap();
 

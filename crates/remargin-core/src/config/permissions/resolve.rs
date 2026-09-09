@@ -326,7 +326,7 @@ fn block_trusted_root_escapes(
 }
 
 /// `true` when `anchor` resolves at or below `source_dir`. Both sides are
-/// lexically normalized first so a `../` escape survives `MockSystem`'s
+/// lexically normalized first so a `../` escape survives `MemorySystem`'s
 /// join-only `canonicalize` (which never collapses parent traversals).
 fn anchor_within_realm(source_dir: &Path, anchor: &Path) -> bool {
     let realm = lexical_normalize(source_dir);

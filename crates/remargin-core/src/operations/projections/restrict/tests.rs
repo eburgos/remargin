@@ -4,7 +4,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use os_shim::System as _;
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 
 use crate::operations::plan::{
     ConfigConflict, ConfigPlanDiff, EntryAction, RemarginYamlDiff, SidecarDiff,
@@ -15,9 +15,9 @@ use crate::permissions::restrict::{RestrictArgs, restrict};
 /// Realm fixture: `<r>/.claude/` exists, no `.remargin.yaml`, no
 /// settings files. Anchor is `<r>`. Returns `(system, realm_root,
 /// project_settings, user_settings)`.
-fn fresh_realm() -> (MockSystem, PathBuf, PathBuf, PathBuf) {
+fn fresh_realm() -> (MemorySystem, PathBuf, PathBuf, PathBuf) {
     let realm = PathBuf::from("/realm");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(&realm)
         .unwrap()
         .with_dir(realm.join(".claude"))
@@ -70,7 +70,7 @@ fn reject_or_fail(projection: RestrictProjection) -> String {
     }
 }
 
-fn write_settings_file(system: MockSystem, path: &Path, body: &str) -> MockSystem {
+fn write_settings_file(system: MemorySystem, path: &Path, body: &str) -> MemorySystem {
     let parent = path.parent().unwrap_or(path);
     system
         .with_dir(parent)
@@ -138,7 +138,7 @@ fn anchor_is_ancestor_when_cwd_is_subdirectory() {
 #[test]
 fn no_anchor_returns_reject() {
     let cwd = PathBuf::from("/orphan");
-    let system = MockSystem::new().with_dir(&cwd).unwrap();
+    let system = MemorySystem::new().with_dir(&cwd).unwrap();
     let args = restrict_args("foo");
 
     let projection = project_restrict(

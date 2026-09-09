@@ -5,7 +5,7 @@ use std::path::Path;
 
 use clap::Parser as _;
 use clap::error::ErrorKind;
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 use serde_json::Value;
 
 use crate::handlers::cmd_session;
@@ -64,7 +64,7 @@ fn launch_named(name: &str, identity: Vec<String>) -> SessionAction {
 /// Run `cmd_session` over a mock tree, returning its result and whatever it
 /// wrote to stdout. Any error text reaches the user through `dispatch::run`,
 /// not the sinks, so the stderr buffer is not inspected here.
-fn run(system: &MockSystem, cwd: &str, action: &SessionAction) -> (anyhow::Result<()>, String) {
+fn run(system: &MemorySystem, cwd: &str, action: &SessionAction) -> (anyhow::Result<()>, String) {
     let mut stdout: Vec<u8> = Vec::new();
     let mut stderr: Vec<u8> = Vec::new();
     let result = {
@@ -75,8 +75,8 @@ fn run(system: &MockSystem, cwd: &str, action: &SessionAction) -> (anyhow::Resul
 }
 
 /// Root and one child realm, each with a launchable `session:` block.
-fn launchable_tree() -> MockSystem {
-    MockSystem::new()
+fn launchable_tree() -> MemorySystem {
+    MemorySystem::new()
         .with_file(
             Path::new("/demo/.remargin.yaml"),
             b"identity: root_agent\nsystem_prompt:\n  name: Root\n  prompt: body\nsession:\n  loop: 30s\n  goal: process pending\n",
@@ -93,8 +93,8 @@ fn launchable_tree() -> MockSystem {
 /// out-of-tree agent folders and no identity of its own, so downward
 /// discovery from `/ws` is empty and the launched fleet is exactly the named
 /// roster the manifest resolves.
-fn manifest_workspace() -> MockSystem {
-    MockSystem::new()
+fn manifest_workspace() -> MemorySystem {
+    MemorySystem::new()
         .with_file(
             Path::new("/ws/.remargin.yaml"),
             b"sessions:\n  default: evaluation\n  \
@@ -118,8 +118,8 @@ fn manifest_workspace() -> MockSystem {
 /// The canonical manifest tree, with each roster member's own config
 /// injectable so a scenario can perturb exactly one of them (drop a `goal`,
 /// add an unknown key) while the rest of the tree stays fixed.
-fn canonical_workspace_with(product: &[u8], researcher: &[u8]) -> MockSystem {
-    MockSystem::new()
+fn canonical_workspace_with(product: &[u8], researcher: &[u8]) -> MemorySystem {
+    MemorySystem::new()
         .with_file(Path::new("/ws/.remargin.yaml"), WS_MANIFEST)
         .unwrap()
         .with_file(Path::new("/ws/product/.remargin.yaml"), product)
@@ -129,7 +129,7 @@ fn canonical_workspace_with(product: &[u8], researcher: &[u8]) -> MockSystem {
 }
 
 /// The unperturbed canonical tree used by the happy-path dry-run/print rows.
-fn canonical_workspace() -> MockSystem {
+fn canonical_workspace() -> MemorySystem {
     canonical_workspace_with(CANONICAL_PRODUCT, CANONICAL_RESEARCHER)
 }
 
@@ -150,7 +150,7 @@ fn dry_run_lists_all_identities() {
 
 #[test]
 fn dry_run_flags_missing_goal_and_exits_nonzero() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/demo/.remargin.yaml"),
             b"identity: root_agent\nsession:\n  loop: 30s\n  goal: go\n",
@@ -181,7 +181,7 @@ fn dry_run_flags_missing_goal_and_exits_nonzero() {
 /// missing value.
 #[test]
 fn dry_run_defaulted_loop_renders_5m_default() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/demo/.remargin.yaml"),
             b"identity: finance\nsession:\n  goal: process pending work\n",
@@ -207,7 +207,7 @@ fn dry_run_defaulted_loop_renders_5m_default() {
 /// `5m (default)` and the entry is launchable.
 #[test]
 fn dry_run_json_defaulted_loop_reports_5m_default() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/demo/.remargin.yaml"),
             b"identity: finance\nsession:\n  goal: process pending work\n",
@@ -323,7 +323,7 @@ fn bare_launch_rejects_zellij_now_removed() {
 /// spawned. This keeps the launch branch under test without a real tmux.
 #[test]
 fn bare_launch_surfaces_task84_error_before_spawning() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/demo/.remargin.yaml"),
             b"identity: root_agent\nsession:\n  loop: 30s\n",
@@ -345,7 +345,7 @@ fn bare_launch_surfaces_task84_error_before_spawning() {
 /// spawning an empty session.
 #[test]
 fn bare_launch_no_identities_bails() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/demo/.remargin.yaml"), b"mode: open\n")
         .unwrap();
     let (result, _stdout) = run(&system, "/demo", &launch(false, false, Vec::new(), false));
@@ -384,7 +384,7 @@ fn print_emits_launch_command_and_seed_lines() {
 
 #[test]
 fn print_surfaces_task84_error_for_missing_goal() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/demo/.remargin.yaml"),
             b"identity: root_agent\nsession:\n  loop: 30s\n",

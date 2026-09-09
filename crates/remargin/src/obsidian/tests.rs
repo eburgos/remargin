@@ -1,4 +1,4 @@
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 
 use super::*;
 
@@ -9,17 +9,21 @@ const STUB_MAIN_JS: &[u8] = b"// stub main.js\nconsole.log('remargin');\n";
 /// Stub `manifest.json` bytes. Valid JSON but also arbitrary.
 const STUB_MANIFEST: &[u8] = br#"{"id":"remargin","name":"Remargin","version":"0.0.0-test"}"#;
 
-fn seed_vault(fs: &MockSystem, vault: &Path) {
+fn seed_vault(fs: &MemorySystem, vault: &Path) {
     fs.create_dir_all(&vault.join(".obsidian")).unwrap();
 }
 
-fn install_stub(fs: &MockSystem, cwd: &Path, vault_path: Option<&Path>) -> anyhow::Result<Report> {
+fn install_stub(
+    fs: &MemorySystem,
+    cwd: &Path,
+    vault_path: Option<&Path>,
+) -> anyhow::Result<Report> {
     install_from_bytes(fs, cwd, vault_path, STUB_MAIN_JS, STUB_MANIFEST)
 }
 
 #[test]
 fn install_creates_plugin_dir_with_artifacts() {
-    let fs = MockSystem::new();
+    let fs = MemorySystem::new();
     let vault = PathBuf::from("/home/user/vault");
     seed_vault(&fs, &vault);
 
@@ -34,7 +38,7 @@ fn install_creates_plugin_dir_with_artifacts() {
 
 #[test]
 fn install_writes_exact_bytes() {
-    let fs = MockSystem::new();
+    let fs = MemorySystem::new();
     let vault = PathBuf::from("/home/user/vault");
     seed_vault(&fs, &vault);
 
@@ -51,7 +55,7 @@ fn install_writes_exact_bytes() {
 
 #[test]
 fn install_errors_when_not_a_vault() {
-    let fs = MockSystem::new();
+    let fs = MemorySystem::new();
     let cwd = Path::new("/home/user/docs");
     fs.create_dir_all(cwd).unwrap();
 
@@ -61,7 +65,7 @@ fn install_errors_when_not_a_vault() {
 
 #[test]
 fn install_is_idempotent() {
-    let fs = MockSystem::new();
+    let fs = MemorySystem::new();
     let vault = PathBuf::from("/home/user/vault");
     seed_vault(&fs, &vault);
 
@@ -72,7 +76,7 @@ fn install_is_idempotent() {
 
 #[test]
 fn install_preserves_data_json() {
-    let fs = MockSystem::new();
+    let fs = MemorySystem::new();
     let vault = PathBuf::from("/home/user/vault");
     seed_vault(&fs, &vault);
 
@@ -91,7 +95,7 @@ fn install_preserves_data_json() {
 
 #[test]
 fn install_with_explicit_vault_path() {
-    let fs = MockSystem::new();
+    let fs = MemorySystem::new();
     let cwd = PathBuf::from("/tmp/anywhere");
     let vault = PathBuf::from("/home/user/other-vault");
     fs.create_dir_all(&cwd).unwrap();
@@ -103,7 +107,7 @@ fn install_with_explicit_vault_path() {
 
 #[test]
 fn uninstall_errors_when_not_a_vault() {
-    let fs = MockSystem::new();
+    let fs = MemorySystem::new();
     let cwd = Path::new("/home/user/docs");
     fs.create_dir_all(cwd).unwrap();
 
@@ -113,7 +117,7 @@ fn uninstall_errors_when_not_a_vault() {
 
 #[test]
 fn uninstall_is_noop_when_not_installed() {
-    let fs = MockSystem::new();
+    let fs = MemorySystem::new();
     let vault = PathBuf::from("/home/user/vault");
     seed_vault(&fs, &vault);
 
@@ -123,7 +127,7 @@ fn uninstall_is_noop_when_not_installed() {
 
 #[test]
 fn uninstall_removes_plugin_dir() {
-    let fs = MockSystem::new();
+    let fs = MemorySystem::new();
     let vault = PathBuf::from("/home/user/vault");
     seed_vault(&fs, &vault);
 

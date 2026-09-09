@@ -1,11 +1,11 @@
 //! Unit tests for `permissions::pretool`. Every test feeds a synthetic
-//! stdin envelope through `pretool()` against a `MockSystem` realm and
+//! stdin envelope through `pretool()` against a `MemorySystem` realm and
 //! asserts the resulting `PretoolOutcome`. The core function is pure
 //! so the binary never spawns.
 
 use std::path::{Path, PathBuf};
 
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 use serde_json::{Value, json};
 
 use crate::permissions::pretool::{
@@ -13,8 +13,8 @@ use crate::permissions::pretool::{
     pretool,
 };
 
-fn mock_with(files: &[(&str, &str)]) -> MockSystem {
-    let mut system = MockSystem::new();
+fn mock_with(files: &[(&str, &str)]) -> MemorySystem {
+    let mut system = MemorySystem::new();
     for (path, body) in files {
         system = system.with_file(Path::new(path), body.as_bytes()).unwrap();
     }
@@ -344,7 +344,7 @@ fn target_in_other_realm_uses_that_realms_config() {
 /// `SilentAllow`. Unprotected paths stay unprotected regardless of cwd.
 #[test]
 fn no_realm_above_target_silent_allows() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let stdin = event_json("Read", "/anywhere", &json!({ "file_path": "/tmp/a.md" }));
     assert_eq!(pretool(&system, &stdin), PretoolOutcome::SilentAllow);
 }
@@ -378,7 +378,7 @@ fn relative_target_rooted_at_cwd_then_resolved() {
 /// Test 14: malformed stdin JSON → `Fail`.
 #[test]
 fn malformed_stdin_fails() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let reason = expect_fail(pretool(&system, b"not json"));
     assert!(reason.contains("malformed PreToolUse event"));
 }
@@ -398,7 +398,7 @@ fn out_of_realm_trusted_root_fails_loud() {
 /// Test 15: missing `tool_name` → `Fail`.
 #[test]
 fn missing_tool_name_fails() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let reason = expect_fail(pretool(&system, b"{}"));
     assert!(reason.contains("missing field"));
 }
@@ -906,7 +906,7 @@ fn regression_glob_realm_segment_denies() {
 }
 
 /// Canonicalizing the bash word resolves the symlink into the realm.
-/// Real FS because `MockSystem` does not model symlinks.
+/// Real FS because `MemorySystem` does not model symlinks.
 #[cfg(unix)]
 #[test]
 fn regression_symlink_into_realm_via_bash_denies() {
@@ -938,7 +938,7 @@ fn regression_symlink_into_realm_via_bash_denies() {
 
 /// A symlink chain (link -> link -> realm target) named by a shell
 /// command resolves through every hop and denies. Real FS because
-/// `MockSystem` does not model symlinks.
+/// `MemorySystem` does not model symlinks.
 #[cfg(unix)]
 #[test]
 fn regression_symlink_chain_into_realm_via_bash_denies() {
@@ -1008,7 +1008,7 @@ fn regression_symlink_outside_realm_via_bash_silent_allows() {
 }
 
 /// A `~`-relative word expands via `HOME` into a realm and denies. Uses
-/// `MockSystem::with_env` — the `env_var("HOME")` seam `expand_tilde`
+/// `MemorySystem::with_env` — the `env_var("HOME")` seam `expand_tilde`
 /// reads — so no symlink modelling or real filesystem is needed.
 #[test]
 fn bash_tilde_word_expanding_into_realm_denies() {
@@ -1508,7 +1508,7 @@ fn locked_empty_realm_bash_rm_denies() {
 /// exist), but canonicalizing the deepest existing ancestor resolves the
 /// symlink into the realm, so restriction is checked on the real target and
 /// denies — never a silent allow of an unchecked path. Real FS because
-/// `MockSystem` does not model symlinks.
+/// `MemorySystem` does not model symlinks.
 #[cfg(unix)]
 #[test]
 fn canonicalize_prefix_symlink_new_file_write_denies() {
@@ -1571,7 +1571,7 @@ fn canonicalize_fail_no_realm_silent_allows() {
 /// to exit 2), unchanged.
 #[test]
 fn malformed_event_json_fails() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let reason = expect_fail(pretool(&system, b"{ not valid json"));
     assert!(
         reason.contains("malformed PreToolUse event"),
@@ -1991,7 +1991,12 @@ fn in_realm_cwd_regression_guards_unchanged() {
 // Host tool prefix: one registry, rendered per host
 // ---------------------------------------------------------------------
 
-fn reason_under(system: &MockSystem, target: &ToolTarget, cwd: &str, prefix: ToolPrefix) -> String {
+fn reason_under(
+    system: &MemorySystem,
+    target: &ToolTarget,
+    cwd: &str,
+    prefix: ToolPrefix,
+) -> String {
     let decision = expect_deny(decide(system, target, Path::new(cwd), prefix));
     deny_reason(&decision).to_owned()
 }
@@ -2001,7 +2006,7 @@ fn reason_under(system: &MockSystem, target: &ToolTarget, cwd: &str, prefix: Too
 /// reproduce the goose render exactly. Wording that drifted per host, or a
 /// message that hard-coded a prefix instead of taking the parameter, fails
 /// here.
-fn assert_hosts_differ_only_by_prefix(system: &MockSystem, target: &ToolTarget, cwd: &str) {
+fn assert_hosts_differ_only_by_prefix(system: &MemorySystem, target: &ToolTarget, cwd: &str) {
     let claude = reason_under(system, target, cwd, ToolPrefix::CLAUDE);
     let goose = reason_under(system, target, cwd, ToolPrefix::GOOSE);
     assert_eq!(

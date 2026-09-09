@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use chrono::DateTime;
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 
 use super::{AuthorType, Segment, parse, parse_file};
 
@@ -282,7 +282,7 @@ fn test_no_comments() {
 #[test]
 fn test_parse_file_with_mock_system() {
     let content = minimal_block("file1");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/test.md"), content.as_bytes())
         .unwrap();
     let parsed = parse_file(&system, Path::new("/docs/test.md")).unwrap();
@@ -332,7 +332,7 @@ Line three after blank.
 
 #[test]
 fn test_parse_file_missing() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let result = parse_file(&system, Path::new("/nonexistent.md"));
     result.unwrap_err();
 }

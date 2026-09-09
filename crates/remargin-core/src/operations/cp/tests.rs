@@ -1,6 +1,6 @@
 //! Unit tests for [`crate::operations::cp`].
 //!
-//! Tests drive an in-memory `os_shim::mock::MockSystem` — no real filesystem,
+//! Tests drive an in-memory `os_shim::mock::MemorySystem` — no real filesystem,
 //! fully hermetic. Signed-comment fixtures reuse the ed25519 key pair from
 //! `operations/sign/tests.rs` so the integrity-safety tests can exercise real
 //! checksums and signatures.
@@ -10,7 +10,7 @@ extern crate alloc;
 use std::path::{Path, PathBuf};
 
 use os_shim::System as _;
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 
 use crate::config::{Mode, ResolvedConfig};
 use crate::crypto;
@@ -50,8 +50,8 @@ fn open_config() -> ResolvedConfig {
     }
 }
 
-fn realm_with(file: &str, contents: &[u8]) -> MockSystem {
-    MockSystem::new()
+fn realm_with(file: &str, contents: &[u8]) -> MemorySystem {
+    MemorySystem::new()
         .with_dir(base())
         .unwrap()
         .with_file(base().join(file), contents)
@@ -148,8 +148,8 @@ fn source_signatures_intact_after_copy() {
     let content = "signed note";
     let checksum = crypto::compute_checksum(content, &[]);
     let key_path = Path::new("/keys/ed25519");
-    // Build a MockSystem with the key and a simple signed doc.
-    let system = MockSystem::new()
+    // Build a MemorySystem with the key and a simple signed doc.
+    let system = MemorySystem::new()
         .with_dir(base())
         .unwrap()
         .with_file(key_path, TEST_PRIVATE_KEY.as_bytes())
@@ -212,7 +212,7 @@ fn same_path_is_noop() {
 
 #[test]
 fn dst_exists_without_force_errors() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(base())
         .unwrap()
         .with_file(base().join("a.md"), b"src")
@@ -230,7 +230,7 @@ fn dst_exists_without_force_errors() {
 
 #[test]
 fn dst_exists_with_force_overwrites() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(base())
         .unwrap()
         .with_file(base().join("a.md"), b"new content")
@@ -247,7 +247,7 @@ fn dst_exists_with_force_overwrites() {
 
 #[test]
 fn dst_is_directory_errors() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(base())
         .unwrap()
         .with_dir(base().join("subdir"))
@@ -265,7 +265,7 @@ fn dst_is_directory_errors() {
 
 #[test]
 fn src_is_directory_errors() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(base())
         .unwrap()
         .with_dir(base().join("subdir"))
@@ -278,7 +278,7 @@ fn src_is_directory_errors() {
 
 #[test]
 fn src_missing_errors() {
-    let system = MockSystem::new().with_dir(base()).unwrap();
+    let system = MemorySystem::new().with_dir(base()).unwrap();
     let args = CpArgs::new(PathBuf::from("missing.md"), PathBuf::from("dst.md"));
     let err = cp(&system, base(), &open_config(), &args).unwrap_err();
     assert!(format!("{err}").contains("source not found"), "{err}");

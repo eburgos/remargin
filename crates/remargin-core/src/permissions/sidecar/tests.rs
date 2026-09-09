@@ -7,16 +7,16 @@
 use std::path::{Path, PathBuf};
 
 use os_shim::System as _;
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 
 use crate::permissions::sidecar::{
     SIDECAR_GITIGNORE_ENTRY, SIDECAR_RELATIVE_PATH, SIDECAR_VERSION, Sidecar, SidecarEntry,
     add_entry, load, remove_entry, save, sidecar_path,
 };
 
-fn empty_anchor() -> (MockSystem, PathBuf) {
+fn empty_anchor() -> (MemorySystem, PathBuf) {
     let anchor = PathBuf::from("/r");
-    let system = MockSystem::new().with_dir(&anchor).unwrap();
+    let system = MemorySystem::new().with_dir(&anchor).unwrap();
     (system, anchor)
 }
 

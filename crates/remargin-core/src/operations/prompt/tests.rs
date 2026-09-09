@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use os_shim::System as _;
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 
 use super::{
     PromptListEntry, SystemPromptBlock, delete, find_block_range, list, remove_system_prompt, set,
@@ -27,18 +27,18 @@ fn open_config() -> ResolvedConfig {
     }
 }
 
-fn mkdir(system: &MockSystem, path: &str) {
+fn mkdir(system: &MemorySystem, path: &str) {
     system.create_dir_all(Path::new(path)).unwrap();
 }
 
-fn write_file(system: &MockSystem, path: &str, content: &str) {
+fn write_file(system: &MemorySystem, path: &str, content: &str) {
     if let Some(parent) = Path::new(path).parent() {
         system.create_dir_all(parent).unwrap();
     }
     system.write(Path::new(path), content.as_bytes()).unwrap();
 }
 
-fn read_file(system: &MockSystem, path: &str) -> String {
+fn read_file(system: &MemorySystem, path: &str) -> String {
     system.read_to_string(Path::new(path)).unwrap()
 }
 
@@ -268,12 +268,12 @@ fn find_block_range_extends_to_eof() {
 }
 
 // ---------------------------------------------------------------------------
-// set — end-to-end with MockSystem.
+// set — end-to-end with MemorySystem.
 // ---------------------------------------------------------------------------
 
 #[test]
 fn set_creates_yaml_when_absent() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     mkdir(&system, "/vault/foo");
     let out = set(
         &system,
@@ -293,7 +293,7 @@ fn set_creates_yaml_when_absent() {
 
 #[test]
 fn set_preserves_identity_field() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     write_file(
         &system,
         "/vault/foo/.remargin.yaml",
@@ -315,7 +315,7 @@ fn set_preserves_identity_field() {
 
 #[test]
 fn set_replaces_existing_block() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     write_file(
         &system,
         "/vault/foo/.remargin.yaml",
@@ -337,7 +337,7 @@ fn set_replaces_existing_block() {
 
 #[test]
 fn set_refuses_non_directory() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     write_file(&system, "/vault/foo/a.md", "x");
     let err = set(
         &system,
@@ -357,7 +357,7 @@ fn set_refuses_non_directory() {
 
 #[test]
 fn set_writes_runner_line() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     mkdir(&system, "/vault/foo");
     set(
         &system,
@@ -374,7 +374,7 @@ fn set_writes_runner_line() {
 
 #[test]
 fn set_without_runner_clears_existing_runner() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     write_file(
         &system,
         "/vault/foo/.remargin.yaml",
@@ -395,7 +395,7 @@ fn set_without_runner_clears_existing_runner() {
 
 #[test]
 fn set_rejects_multiline_runner() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     mkdir(&system, "/vault/foo");
     let err = set(
         &system,
@@ -414,7 +414,7 @@ fn set_rejects_multiline_runner() {
 
 #[test]
 fn set_refuses_missing_folder() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let err = set(
         &system,
         Path::new("/missing"),
@@ -434,7 +434,7 @@ fn set_refuses_missing_folder() {
 
 #[test]
 fn delete_strips_block_preserves_identity() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     write_file(
         &system,
         "/vault/foo/.remargin.yaml",
@@ -449,7 +449,7 @@ fn delete_strips_block_preserves_identity() {
 
 #[test]
 fn delete_idempotent_on_missing_block() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     write_file(&system, "/vault/foo/.remargin.yaml", "identity: eduardo\n");
     let out = delete(&system, Path::new("/vault/foo"), &open_config()).unwrap();
     assert!(out.absent);
@@ -457,7 +457,7 @@ fn delete_idempotent_on_missing_block() {
 
 #[test]
 fn delete_idempotent_on_missing_file() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     mkdir(&system, "/vault/foo");
     let out = delete(&system, Path::new("/vault/foo"), &open_config()).unwrap();
     assert!(out.absent);
@@ -465,7 +465,7 @@ fn delete_idempotent_on_missing_file() {
 
 #[test]
 fn delete_leaves_empty_file_in_place() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     write_file(
         &system,
         "/vault/foo/.remargin.yaml",
@@ -487,7 +487,7 @@ fn delete_leaves_empty_file_in_place() {
 
 #[test]
 fn list_finds_declared_prompts() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     write_file(
         &system,
         "/vault/a/.remargin.yaml",
@@ -536,7 +536,7 @@ fn list_finds_declared_prompts() {
 
 #[test]
 fn list_carries_runner_when_declared() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     write_file(
         &system,
         "/vault/a/.remargin.yaml",
@@ -562,7 +562,7 @@ fn list_carries_runner_when_declared() {
 
 #[test]
 fn list_empty_when_no_declarations() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     mkdir(&system, "/vault/foo");
     let out = list(&system, Path::new("/vault")).unwrap();
     assert!(out.is_empty());

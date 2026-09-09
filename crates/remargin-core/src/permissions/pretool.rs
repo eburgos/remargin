@@ -305,7 +305,7 @@ fn absolutise(cwd: &Path, path: &Path) -> PathBuf {
 }
 
 /// Lexically resolve `.` and `..` components without touching disk —
-/// `MockSystem`'s `canonicalize` is a join-only stub, so the hook can
+/// `MemorySystem`'s `canonicalize` is a join-only stub, so the hook can
 /// only collapse parent traversals from the event's `cwd` by hand.
 fn lexical_normalize(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
@@ -825,7 +825,7 @@ fn resolve_run(system: &dyn System, run: &str, base_cwd: &Path) -> PathBuf {
 /// (`<realm>/link/new.md`, where `link` points elsewhere): a purely lexical
 /// path would be checked under the link name, not its target. Restriction
 /// is therefore always resolved on a real path — never silently allowed as
-/// unchecked. `MockSystem`'s join-only `canonicalize` never fails, so this
+/// unchecked. `MemorySystem`'s join-only `canonicalize` never fails, so this
 /// collapses to plain canonicalization there.
 fn canonicalize_existing_prefix(system: &dyn System, absolute: &Path) -> PathBuf {
     let mut tail: Vec<&OsStr> = Vec::new();

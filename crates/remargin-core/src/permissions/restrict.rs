@@ -267,7 +267,7 @@ pub fn write_remargin_yaml(system: &dyn System, anchor: &Path, body: &str) -> Re
 /// Strip `.` and resolve `..` purely lexically so the
 /// outside-the-anchor check rejects `../escape` regardless of whether
 /// the underlying [`System`] implementation collapses parent
-/// references at canonicalise time. `MockSystem`, for example, does
+/// references at canonicalise time. `MemorySystem`, for example, does
 /// not — so a real-world pre-canonicalisation pass is needed to keep
 /// the boundary tight in tests.
 fn lexical_normalise(path: &Path) -> PathBuf {

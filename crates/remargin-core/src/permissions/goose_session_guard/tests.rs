@@ -4,7 +4,7 @@
 use std::path::Path;
 
 use os_shim::System as _;
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 use serde_json::json;
 
 use super::{GuardOutcome, goose_session_guard};
@@ -23,8 +23,8 @@ fn hooks_json(binary: &str) -> String {
 
 /// A mock with `HOME` set and the remargin binary on disk. The plugin is
 /// left out so each case wires the scope it is about.
-fn mock() -> MockSystem {
-    let system = MockSystem::new()
+fn mock() -> MemorySystem {
+    let system = MemorySystem::new()
         .with_dir(Path::new("/r"))
         .unwrap()
         .with_file(Path::new(EXE), b"binary")
@@ -34,7 +34,7 @@ fn mock() -> MockSystem {
 }
 
 /// A mock whose user-scope plugin is wired — the healthy baseline.
-fn mock_with_user_plugin() -> MockSystem {
+fn mock_with_user_plugin() -> MemorySystem {
     mock()
         .with_file(
             Path::new("/home/u/.agents/plugins/remargin-guard/hooks/hooks.json"),

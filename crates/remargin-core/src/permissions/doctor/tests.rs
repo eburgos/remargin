@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use os_shim::System;
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 use serde_json::json;
 
 use crate::permissions::doctor::{
@@ -132,12 +132,12 @@ fn deny_only_settings_json(deny: &[&str]) -> String {
     serde_json::to_string_pretty(&v).unwrap()
 }
 
-fn mock_with_file(path: &str, body: &str) -> MockSystem {
+fn mock_with_file(path: &str, body: &str) -> MemorySystem {
     mock_with_files(&[(path, body)])
 }
 
-fn mock_with_files(files: &[(&str, &str)]) -> MockSystem {
-    let mut system = MockSystem::new()
+fn mock_with_files(files: &[(&str, &str)]) -> MemorySystem {
+    let mut system = MemorySystem::new()
         .with_dir(Path::new("/r"))
         .unwrap()
         .with_dir(Path::new("/r/.claude"))
@@ -183,7 +183,7 @@ fn hook_in_project_scope_is_clean() {
 /// Hook absent from both scopes → `HookMissing` finding (critical severity).
 #[test]
 fn hook_absent_from_both_scopes_reports_hook_missing() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/r"))
         .unwrap()
         .with_dir(Path::new("/r/.claude"))
@@ -362,7 +362,7 @@ fn path_relative_findings_follow_their_check_selection() {
 /// `HookMissing` finding references both settings file paths.
 #[test]
 fn hook_missing_finding_names_both_files() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/r"))
         .unwrap()
         .with_dir(Path::new("/r/.claude"))
@@ -389,7 +389,7 @@ fn hook_missing_finding_names_both_files() {
 /// Findings order: `HookMissing` comes first (it gates everything else).
 #[test]
 fn hook_missing_is_first_finding() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/r"))
         .unwrap()
         .with_dir(Path::new("/r/.claude"))
@@ -407,7 +407,7 @@ fn hook_missing_is_first_finding() {
 /// `DoctorReport` serializes to JSON without losing fields.
 #[test]
 fn doctor_report_json_round_trip() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/r"))
         .unwrap()
         .with_dir(Path::new("/r/.claude"))
@@ -426,7 +426,7 @@ fn doctor_report_json_round_trip() {
 /// Returns correct `project_settings_file` and `user_settings_file` paths.
 #[test]
 fn report_includes_correct_settings_file_paths() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/r"))
         .unwrap()
         .with_dir(Path::new("/r/.claude"))
@@ -819,8 +819,8 @@ fn strict_agent_registry() -> &'static str {
 /// Hook installed in user-scope and `HOME` set, so `~/.ssh` derivation and
 /// plain-name `key:` resolution behave as they do in a real run. Extra
 /// realm files (`.remargin.yaml`, registry, key files) are layered on top.
-fn identity_mock(files: &[(&str, &str)]) -> MockSystem {
-    let mut system = MockSystem::new()
+fn identity_mock(files: &[(&str, &str)]) -> MemorySystem {
+    let mut system = MemorySystem::new()
         .with_dir(Path::new("/r"))
         .unwrap()
         .with_dir(Path::new("/r/.claude"))
@@ -851,7 +851,7 @@ fn strict_agent_yaml(key: &str) -> String {
     format!("mode: strict\ntype: agent\nidentity: agent1\nkey: {key}\n")
 }
 
-fn run_at_r(system: &MockSystem) -> DoctorReport {
+fn run_at_r(system: &MemorySystem) -> DoctorReport {
     run_doctor(
         system,
         Path::new("/r"),
@@ -986,7 +986,7 @@ fn human_key_under_user_ssh_has_no_finding() {
 /// and every later check, including the identity/key check, is skipped.
 #[test]
 fn hook_missing_skips_identity_key_check() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/r"))
         .unwrap()
         .with_dir(Path::new("/r/.claude"))
@@ -1378,7 +1378,7 @@ fn stale_sandbox_mixed_files_flags_only_the_stale_one() {
 /// and the resolve-dependent stale-sandbox check is skipped.
 #[test]
 fn stale_sandbox_skipped_when_hook_missing() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/r"))
         .unwrap()
         .with_dir(Path::new("/r/.claude"))
@@ -1590,7 +1590,7 @@ fn trusted_root_missing_serializes_and_renders() {
 /// guard is absent (`SessionGuardMissing`) and a stale `Bash(remargin *)`
 /// deny sits in `settings.local.json` (`LeftoverProjectedRule`). The
 /// `PreToolUse` hook is present, so the run does not short-circuit.
-fn guard_missing_and_leftover_mock() -> MockSystem {
+fn guard_missing_and_leftover_mock() -> MemorySystem {
     mock_with_files(&[
         (
             "/home/u/.claude/settings.json",
@@ -1755,7 +1755,7 @@ fn parse_set_trims_and_all_is_complete() {
 
 /// A mock carrying both Claude hooks (so the gate does not short-circuit),
 /// a `HOME` env var, and whichever extra files the case needs.
-fn goose_mock(extra: &[(&str, &str)]) -> MockSystem {
+fn goose_mock(extra: &[(&str, &str)]) -> MemorySystem {
     let mut files = vec![("/home/u/.claude/settings.json", hook_settings_json())];
     files.extend(extra.iter().map(|(p, b)| ((*p), (*b).to_owned())));
     let borrowed: Vec<(&str, &str)> = files

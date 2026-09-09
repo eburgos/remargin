@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use os_shim::System as _;
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 
 use crate::config::{Mode, ResolvedConfig};
 use crate::operations::batch::{BatchCommentOp, batch_comment};
@@ -74,8 +74,8 @@ fn open_config() -> ResolvedConfig {
     }
 }
 
-fn system_with_doc(content: &str) -> MockSystem {
-    MockSystem::new()
+fn system_with_doc(content: &str) -> MemorySystem {
+    MemorySystem::new()
         .with_file(Path::new("/docs/test.md"), content.as_bytes())
         .unwrap()
 }
@@ -1201,8 +1201,8 @@ fn batch_reply_explicit_to() {
     );
 }
 
-fn registered_recipient_batch_system(doc: &str) -> MockSystem {
-    MockSystem::new()
+fn registered_recipient_batch_system(doc: &str) -> MemorySystem {
+    MemorySystem::new()
         .with_file(Path::new("/docs/test.md"), doc.as_bytes())
         .unwrap()
         .with_file(

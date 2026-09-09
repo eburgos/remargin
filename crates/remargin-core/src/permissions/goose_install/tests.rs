@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use os_shim::System;
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 use serde_json::{Value, json};
 
 use super::{
@@ -24,8 +24,8 @@ fn guard_dir() -> PathBuf {
 }
 
 /// A mock whose `current_exe` is the binary the installer must embed.
-fn mock() -> MockSystem {
-    MockSystem::new()
+fn mock() -> MemorySystem {
+    MemorySystem::new()
         .with_current_exe(Path::new(EXE))
         .unwrap()
         .with_file(Path::new(EXE), b"binary")
@@ -40,7 +40,7 @@ fn hooks_json(system: &dyn System) -> Value {
     read_json(system, &guard_dir().join("hooks/hooks.json"))
 }
 
-fn seed(system: MockSystem, path: &Path, body: &str) -> MockSystem {
+fn seed(system: MemorySystem, path: &Path, body: &str) -> MemorySystem {
     system.with_file(path, body.as_bytes()).unwrap()
 }
 

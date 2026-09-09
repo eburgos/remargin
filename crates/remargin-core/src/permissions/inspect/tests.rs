@@ -2,12 +2,12 @@
 
 use std::path::{Path, PathBuf};
 
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 
 use crate::permissions::inspect::{check, show};
 
-fn mock_with(files: &[(&str, &str)]) -> MockSystem {
-    let mut system = MockSystem::new();
+fn mock_with(files: &[(&str, &str)]) -> MemorySystem {
+    let mut system = MemorySystem::new();
     for (path, body) in files {
         system = system.with_file(Path::new(path), body.as_bytes()).unwrap();
     }
@@ -20,7 +20,7 @@ fn mock_with(files: &[(&str, &str)]) -> MockSystem {
 
 #[test]
 fn show_empty_when_no_config() {
-    let system = MockSystem::new().with_dir(Path::new("/r")).unwrap();
+    let system = MemorySystem::new().with_dir(Path::new("/r")).unwrap();
     let out = show(&system, Path::new("/r")).unwrap();
     assert!(out.allow_dot_folders.is_empty());
     assert!(out.deny_ops.is_empty());

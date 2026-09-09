@@ -12,7 +12,7 @@ use image::codecs::gif::GifEncoder;
 use image::codecs::png::PngEncoder;
 use image::{Frame, Rgb, RgbImage, Rgba, RgbaImage};
 use os_shim::System as _;
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 use serde_json::{Value, json};
 
 use crate::config::registry::Registry;
@@ -179,9 +179,9 @@ fn test_config() -> ResolvedConfig {
 }
 
 /// Create a mock system with a document at the given path.
-fn system_with_doc(base: &Path, filename: &str, content: &str) -> MockSystem {
+fn system_with_doc(base: &Path, filename: &str, content: &str) -> MemorySystem {
     let path = base.join(filename);
-    MockSystem::new()
+    MemorySystem::new()
         .with_file(&path, content.as_bytes())
         .unwrap()
 }
@@ -287,7 +287,7 @@ fn is_tool_error(response: &Value) -> bool {
 #[test]
 fn initialize_returns_capabilities() {
     let base = Path::new("/docs");
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let config = test_config();
 
     let response = call(
@@ -360,7 +360,7 @@ fn tools_list_returns_all_tools() {
     const CLI_ONLY_TOOLS: &[&str] = &["claude_restrict", "claude_unrestrict"];
 
     let base = Path::new("/docs");
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let config = test_config();
 
     let response = call(
@@ -397,7 +397,7 @@ fn tools_list_returns_all_tools() {
 #[test]
 fn tools_list_all_have_input_schema() {
     let base = Path::new("/docs");
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let config = test_config();
 
     let response = call(
@@ -828,7 +828,7 @@ fn search_compact_groups_matches_by_file_in_page_order() {
     let base = Path::new("/docs");
     // Two files; walk order is sorted (a.md, b.md), which is also the
     // first-match order for this scan.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/a.md"), b"needle one\nneedle two\n")
         .unwrap()
         .with_file(Path::new("/docs/b.md"), b"needle three\n")
@@ -986,7 +986,7 @@ fn replace_requires_explicit_path() {
 #[test]
 fn ls_lists_directory() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/notes.md"), b"# Notes\n")
         .unwrap()
         .with_file(Path::new("/docs/readme.md"), b"# Readme\n")
@@ -1047,7 +1047,7 @@ fn get_reads_file_content() {
 #[test]
 fn get_returns_links_array() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(base.join("notes.md"), b"See [[Target]] for details.")
         .unwrap()
         .with_file(base.join("Target.md"), b"---\ntitle: The Target\n---\n# T")
@@ -1090,7 +1090,7 @@ fn get_returns_links_array() {
 #[test]
 fn get_compact_line_numbers_minified() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(base.join("notes.md"), b"See [[Target]].\nMore text.\n")
         .unwrap()
         .with_file(base.join("Target.md"), b"---\ntitle: The Target\n---\n# T")
@@ -1145,7 +1145,7 @@ fn get_compact_line_numbers_minified() {
 #[test]
 fn get_compact_no_line_numbers_minified() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(base.join("notes.md"), b"See [[Target]].\nMore text.\n")
         .unwrap()
         .with_file(base.join("Target.md"), b"---\ntitle: The Target\n---\n# T")
@@ -1191,7 +1191,7 @@ fn get_compact_no_line_numbers_minified() {
 #[test]
 fn get_lone_start_line_returns_tail_not_whole_file() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(base.join("notes.md"), b"one\ntwo\nthree\nfour\nfive\n")
         .unwrap();
     let config = test_config();
@@ -1227,7 +1227,7 @@ fn get_lone_start_line_returns_tail_not_whole_file() {
 #[test]
 fn get_lone_end_line_returns_head_not_whole_file() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(base.join("notes.md"), b"one\ntwo\nthree\nfour\nfive\n")
         .unwrap();
     let config = test_config();
@@ -1307,7 +1307,7 @@ fn injector_preserves_payload_style() {
 #[test]
 fn unknown_method_returns_error() {
     let base = Path::new("/docs");
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let config = test_config();
 
     let response = call(
@@ -1329,7 +1329,7 @@ fn unknown_method_returns_error() {
 #[test]
 fn notification_returns_no_response() {
     let base = Path::new("/docs");
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let config = test_config();
 
     let request = json!({
@@ -1345,7 +1345,7 @@ fn notification_returns_no_response() {
 #[test]
 fn unknown_tool_returns_error() {
     let base = Path::new("/docs");
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let config = test_config();
 
     let response = call(
@@ -1371,7 +1371,7 @@ fn unknown_tool_returns_error() {
 #[test]
 fn claude_restrict_tool_dispatch_rejected() {
     let base = Path::new("/docs");
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let config = test_config();
 
     let response = call(
@@ -1404,7 +1404,7 @@ fn claude_restrict_tool_dispatch_rejected() {
 #[test]
 fn claude_unrestrict_tool_dispatch_rejected() {
     let base = Path::new("/docs");
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let config = test_config();
 
     let response = call(
@@ -1437,7 +1437,7 @@ fn claude_unrestrict_tool_dispatch_rejected() {
 #[test]
 fn plan_claude_restrict_op_rejected_via_mcp() {
     let base = Path::new("/docs");
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let config = test_config();
 
     let response = call(
@@ -1473,7 +1473,7 @@ fn plan_claude_restrict_op_rejected_via_mcp() {
 #[test]
 fn plan_claude_unrestrict_op_rejected_via_mcp() {
     let base = Path::new("/docs");
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let config = test_config();
 
     let response = call(
@@ -1621,7 +1621,7 @@ participants:
       - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAtestalicekey
 ";
     let base = Path::new("/parent");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/parent/realm"))
         .unwrap()
         .with_file(
@@ -1709,7 +1709,7 @@ hello
 ```
 ";
     let base = Path::new("/parent");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/parent/.remargin.yaml"),
             b"mode: open\nidentity: caller\ntype: agent\n",
@@ -1972,7 +1972,7 @@ fn metadata_binary_file_omits_markdown_fields() {
 #[test]
 fn response_includes_jsonrpc_version() {
     let base = Path::new("/docs");
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let config = test_config();
 
     let response = call(
@@ -1994,7 +1994,7 @@ fn response_includes_jsonrpc_version() {
 #[test]
 fn response_preserves_string_id() {
     let base = Path::new("/docs");
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let config = test_config();
 
     let response = call(
@@ -2325,7 +2325,7 @@ fn get_image_result(system: &dyn os_shim::System, base: &Path, config: &Resolved
 fn get_image_returns_image_content_block() {
     let base = Path::new("/docs");
     let png = solid_png(64, 48, [10, 120, 200]);
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(base.join("pic.png"), &png)
         .unwrap();
     let config = test_config();
@@ -2360,7 +2360,7 @@ fn get_image_gif_returns_first_frame() {
     let base = Path::new("/docs");
     // Frame 1 red, frame 2 blue — the returned pixel proves which frame won.
     let gif = two_frame_gif(16, 16, [255, 0, 0, 255], [0, 0, 255, 255]);
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(base.join("pic.gif"), &gif)
         .unwrap();
     let config = test_config();
@@ -2397,7 +2397,7 @@ fn get_image_gif_returns_first_frame() {
 fn get_image_records_nonzero_response_size() {
     let base = Path::new("/docs");
     let png = solid_png(64, 48, [10, 120, 200]);
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(base.join("pic.png"), &png)
         .unwrap();
     let config = test_config();
@@ -2435,7 +2435,7 @@ fn get_image_records_nonzero_response_size() {
 #[test]
 fn mcp_query_comment_id_finds_doc() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/docs/sub"))
         .unwrap()
         .with_file(Path::new("/docs/sub/a.md"), DOC_WITH_COMMENT.as_bytes())
@@ -2470,7 +2470,7 @@ fn mcp_query_comment_id_finds_doc() {
 #[test]
 fn mcp_query_comment_id_not_found_returns_empty() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/a.md"), DOC_WITH_COMMENT.as_bytes())
         .unwrap();
     let config = test_config();
@@ -2497,7 +2497,7 @@ fn mcp_query_comment_id_not_found_returns_empty() {
     assert!(results.is_empty());
 }
 
-fn query_base_path(system: &MockSystem, base: &Path, path: &str) -> String {
+fn query_base_path(system: &MemorySystem, base: &Path, path: &str) -> String {
     let response = call(
         system,
         base,
@@ -2520,7 +2520,7 @@ fn query_base_path(system: &MockSystem, base: &Path, path: &str) -> String {
 #[test]
 fn mcp_query_file_base_path_is_parent_directory() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/docs/notes"))
         .unwrap()
         .with_file(
@@ -2540,7 +2540,7 @@ fn mcp_query_file_base_path_is_parent_directory() {
 #[test]
 fn mcp_query_file_base_path_joins_to_result_path() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/docs/notes"))
         .unwrap()
         .with_file(
@@ -2577,7 +2577,7 @@ fn mcp_query_file_base_path_joins_to_result_path() {
 #[test]
 fn mcp_query_expanded_returns_comments() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/a.md"), DOC_EXPANDED.as_bytes())
         .unwrap();
     let config = test_config();
@@ -2654,7 +2654,7 @@ fn mcp_query_expanded_returns_comments() {
 #[test]
 fn mcp_query_reports_matched_count_beside_file_wide_counts() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/a.md"), DOC_EXPANDED.as_bytes())
         .unwrap();
     let config = test_config();
@@ -2688,7 +2688,7 @@ fn mcp_query_reports_matched_count_beside_file_wide_counts() {
 #[test]
 fn mcp_query_compact_include_integrity_widens_rows() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/a.md"), DOC_EXPANDED.as_bytes())
         .unwrap();
     let config = test_config();
@@ -2729,7 +2729,7 @@ fn mcp_query_compact_include_integrity_widens_rows() {
 /// enforcement is active but the `SessionStart` guard is missing) and whose
 /// project-local settings carry a stale `Bash(remargin *)` deny. The full
 /// doctor run trips both `SessionGuardMissing` and `LeftoverProjectedRule`.
-fn doctor_two_finding_system() -> MockSystem {
+fn doctor_two_finding_system() -> MemorySystem {
     let exe = "/opt/bin/remargin";
     let command = format!("{exe} {HOOK_SUBCOMMAND}");
     let user_settings = json!({
@@ -2741,7 +2741,7 @@ fn doctor_two_finding_system() -> MockSystem {
     })
     .to_string();
     let local = json!({ "permissions": { "deny": ["Bash(remargin *)"] } }).to_string();
-    MockSystem::new()
+    MemorySystem::new()
         .with_dir(Path::new("/r"))
         .unwrap()
         .with_dir(Path::new("/r/.claude"))
@@ -2769,7 +2769,7 @@ fn finding_kinds(report: &Value) -> Vec<String> {
         .collect()
 }
 
-fn doctor_call(system: &MockSystem, arguments: &Value) -> Value {
+fn doctor_call(system: &MemorySystem, arguments: &Value) -> Value {
     let config = test_config();
     call(
         system,
@@ -2867,7 +2867,7 @@ fn assert_activity_change_rows(rows: &[Value]) {
 fn mcp_activity_compact_columnar_minified() {
     let base = Path::new("/docs");
     let body = "---\ntitle: t\nsandbox:\n  - alice@2026-04-06T17:00:00-04:00\n---\n\n# Body\n\n```remargin\n---\nid: c1\nauthor: bob\ntype: human\nts: 2026-04-06T12:00:00-04:00\nto: [carol]\nchecksum: sha256:test\nack:\n  - carol@2026-04-06T14:00:00-04:00\n---\nHello.\n```\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/docs/.remargin.yaml"),
             b"identity: tester\ntype: human\n",
@@ -2929,7 +2929,7 @@ fn mcp_activity_compact_columnar_minified() {
 #[test]
 fn mcp_query_summary_omits_comments() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/a.md"), DOC_EXPANDED.as_bytes())
         .unwrap();
     let config = test_config();
@@ -2967,7 +2967,7 @@ fn mcp_query_summary_omits_comments() {
 #[test]
 fn mcp_ack_without_file_resolves_from_tree() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/a.md"), DOC_WITH_COMMENT.as_bytes())
         .unwrap();
     let config = test_config();
@@ -2998,7 +2998,7 @@ fn mcp_ack_without_file_resolves_from_tree() {
 #[test]
 fn mcp_ack_without_file_scopes_to_path() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/docs/sub"))
         .unwrap()
         .with_file(Path::new("/docs/sub/a.md"), DOC_WITH_COMMENT.as_bytes())
@@ -3030,7 +3030,7 @@ fn mcp_ack_without_file_scopes_to_path() {
 #[test]
 fn mcp_ack_without_file_not_found_returns_error() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/a.md"), DOC_WITH_COMMENT.as_bytes())
         .unwrap();
     let config = test_config();
@@ -3066,7 +3066,7 @@ fn mcp_ack_without_file_not_found_returns_error() {
 fn mcp_ack_without_file_ambiguous_returns_error() {
     let base = Path::new("/docs");
     // Two documents with the same comment ID.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/a.md"), DOC_WITH_COMMENT.as_bytes())
         .unwrap()
         .with_file(Path::new("/docs/b.md"), DOC_WITH_COMMENT.as_bytes())
@@ -3291,7 +3291,7 @@ fn mcp_batch_auto_ack_per_op() {
 #[test]
 fn mcp_rm_deletes_file() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/target.md"), b"# To delete")
         .unwrap();
     let config = test_config();
@@ -3324,7 +3324,7 @@ fn mcp_rm_deletes_file() {
 #[test]
 fn mcp_rm_idempotent() {
     let base = Path::new("/docs");
-    let system = MockSystem::new().with_dir(Path::new("/docs")).unwrap();
+    let system = MemorySystem::new().with_dir(Path::new("/docs")).unwrap();
     let config = test_config();
 
     let response = call(
@@ -3352,7 +3352,7 @@ fn mcp_rm_idempotent() {
 #[test]
 fn mcp_rm_missing_path_param() {
     let base = Path::new("/docs");
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let config = test_config();
 
     let response = call(
@@ -3376,7 +3376,7 @@ fn mcp_rm_missing_path_param() {
 #[test]
 fn mcp_write_raw_param() {
     let base = Path::new("/docs");
-    let system = MockSystem::new().with_dir(Path::new("/docs")).unwrap();
+    let system = MemorySystem::new().with_dir(Path::new("/docs")).unwrap();
     let config = test_config();
     let raw_content = r#"{"nodes":[{"id":"abc"}]}"#;
 
@@ -3413,7 +3413,7 @@ fn mcp_write_raw_param() {
 #[test]
 fn mcp_write_raw_rejected_for_md() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/doc.md"), b"# Hello")
         .unwrap();
     let config = test_config();
@@ -3443,7 +3443,7 @@ fn mcp_write_raw_rejected_for_md() {
 #[test]
 fn mcp_write_binary_param() {
     let base = Path::new("/docs");
-    let system = MockSystem::new().with_dir(Path::new("/docs")).unwrap();
+    let system = MemorySystem::new().with_dir(Path::new("/docs")).unwrap();
     let config = test_config();
     let content_bytes = b"binary MCP content";
     let b64 = BASE64_STANDARD.encode(content_bytes);
@@ -3482,7 +3482,7 @@ fn mcp_write_binary_param() {
 #[test]
 fn mcp_write_binary_rejected_for_md() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/doc.md"), b"# Hello")
         .unwrap();
     let config = test_config();
@@ -3528,7 +3528,7 @@ body A
 body B
 body C
 ";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/doc.md"), original.as_bytes())
         .unwrap();
     let config = test_config();
@@ -3569,7 +3569,7 @@ fn mcp_write_partial_rejects_missing_end_line() {
     // Both start_line and end_line must be provided together — a lone
     // start_line is a nonsense request.
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/doc.md"), b"A\nB\nC\n")
         .unwrap();
     let config = test_config();
@@ -3602,7 +3602,7 @@ fn mcp_write_reports_noop_true_on_identical_content() {
     // the proposed content is byte-identical to what's on disk so
     // agents can branch on it (e.g. skip follow-up verification).
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/notes.txt"), b"hello\n")
         .unwrap();
     let config = test_config();
@@ -3636,7 +3636,7 @@ fn mcp_write_reports_noop_false_on_real_change() {
     // Mirror test: a real byte change produces `noop: false` so the
     // flag is reliable as a branch condition.
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/notes.txt"), b"hello\n")
         .unwrap();
     let config = test_config();
@@ -3709,9 +3709,9 @@ fn mcp_reply_prepends_parent_author_to_list() {
 /// Seed a document through the real `operations::create_comment` path so
 /// comment checksums are valid. Returns the generated comment id so tests
 /// can reference it in plan requests.
-fn seed_real_comment(base: &Path, filename: &str) -> (MockSystem, ResolvedConfig, String) {
+fn seed_real_comment(base: &Path, filename: &str) -> (MemorySystem, ResolvedConfig, String) {
     let path = base.join(filename);
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(&path, b"# Plan fixture\n\nBody text.\n")
         .unwrap();
     let config = test_config();
@@ -3877,9 +3877,9 @@ fn mcp_plan_write_markdown_create_projects_without_writing_disk() {
     // enforce.
     let base = Path::new("/docs");
     // Seed a sibling file so `/docs` exists as a directory in the
-    // `MockSystem`; the sandbox resolver needs the parent to be present
+    // `MemorySystem`; the sandbox resolver needs the parent to be present
     // even when the target file is still missing.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(base.join("seed.md"), b"# seed\n")
         .unwrap();
     let config = test_config();
@@ -3928,7 +3928,9 @@ fn mcp_plan_write_raw_non_markdown_returns_unsupported_reject_reason() {
     // reachable branch with a `.txt` path.
     let base = Path::new("/docs");
     let path = base.join("data.txt");
-    let system = MockSystem::new().with_file(&path, b"old bytes\n").unwrap();
+    let system = MemorySystem::new()
+        .with_file(&path, b"old bytes\n")
+        .unwrap();
     let config = test_config();
 
     let response = call(
@@ -4225,7 +4227,7 @@ fn mcp_purge_recursive_clears_every_md_file() {
     let base = Path::new("/realm");
     let path_a = base.join("a.md");
     let path_b = base.join("notes/b.md");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(base)
         .unwrap()
         .with_dir(base.join("notes"))
@@ -4278,7 +4280,7 @@ fn mcp_purge_recursive_clears_every_md_file() {
 #[test]
 fn mcp_purge_dir_without_recursive_errors() {
     let base = Path::new("/realm");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(base)
         .unwrap()
         .with_file(base.join("a.md"), b"# A\n")
@@ -4310,7 +4312,7 @@ fn mcp_purge_dir_without_recursive_errors() {
 fn mcp_plan_purge_recursive_emits_purge_dir_diff() {
     let base = Path::new("/realm");
     let path_a = base.join("a.md");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(base)
         .unwrap()
         .with_file(&path_a, b"# A\n")
@@ -4435,7 +4437,7 @@ fn mcp_plan_sandbox_remove_noop_when_not_present() {
 #[test]
 fn mcp_plan_rejects_unknown_op() {
     let base = Path::new("/docs");
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let config = test_config();
 
     let response = call(
@@ -4470,7 +4472,7 @@ fn mcp_plan_rejects_unknown_op() {
 #[test]
 fn no_identity_flags_on_any_mcp_tool_schema() {
     let base = Path::new("/docs");
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let config = test_config();
 
     let response = call(
@@ -4511,7 +4513,7 @@ fn no_identity_flags_on_any_mcp_tool_schema() {
 #[test]
 fn no_mode_or_dry_run_in_any_schema() {
     let base = Path::new("/docs");
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let config = test_config();
 
     let response = call(
@@ -4740,7 +4742,7 @@ fn mcp_human_identity_rejects_read_only_get() {
 #[test]
 fn mcp_human_identity_allows_whoami_and_identity_create() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/docs/.remargin.yaml"),
             b"identity: eduardo-burgos\ntype: human\n",
@@ -4839,7 +4841,7 @@ fn mcp_no_identity_not_rejected_by_human_guard() {
 #[test]
 fn identity_create_keeps_identity_fields() {
     let base = Path::new("/docs");
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let config = test_config();
 
     let response = call(
@@ -4876,7 +4878,7 @@ fn identity_create_keeps_identity_fields() {
 fn mcp_query_pending_includes_broadcast_rem_4j91() {
     // --pending must now surface broadcast comments (the bug fix).
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/a.md"), DOC_FOUR_SHAPES.as_bytes())
         .unwrap();
     let config = test_config();
@@ -4913,7 +4915,7 @@ fn mcp_query_pending_for_me_uses_server_identity() {
     // pending_for_me=true must use the server's configured identity
     // ("tester" from test_config), surfacing only dir_me.
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/a.md"), DOC_FOUR_SHAPES.as_bytes())
         .unwrap();
     let config = test_config();
@@ -4948,7 +4950,7 @@ fn mcp_query_pending_broadcast_only_surfaces_unacked_broadcasts() {
     // brd_open surfaces — brd_mine is already acked by tester, and
     // directed comments never count as broadcast.
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/a.md"), DOC_FOUR_SHAPES.as_bytes())
         .unwrap();
     let config = test_config();
@@ -4982,7 +4984,7 @@ fn mcp_query_pending_for_me_and_broadcast_union() {
     // Union of directed-to-me (dir_me) and unacked broadcasts for me
     // (brd_open). brd_mine is acked by tester, so excluded.
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/a.md"), DOC_FOUR_SHAPES.as_bytes())
         .unwrap();
     let config = test_config();
@@ -5018,7 +5020,7 @@ fn mcp_query_pending_for_me_errors_without_identity() {
     // A config with no identity must fail loudly when pending_for_me
     // is requested.
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/a.md"), DOC_FOUR_SHAPES.as_bytes())
         .unwrap();
     let config = ResolvedConfig {
@@ -5066,7 +5068,7 @@ fn mcp_query_pending_for_me_errors_without_identity() {
 #[test]
 fn mcp_identity_create_minimal_returns_yaml() {
     let base = Path::new("/docs");
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let config = test_config();
 
     let response = call(
@@ -5100,7 +5102,7 @@ fn mcp_identity_create_minimal_returns_yaml() {
 #[test]
 fn mcp_identity_create_with_key() {
     let base = Path::new("/docs");
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let config = test_config();
 
     let response = call(
@@ -5135,7 +5137,7 @@ fn mcp_identity_create_with_key() {
 #[test]
 fn mcp_identity_create_rejects_invalid_type() {
     let base = Path::new("/docs");
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let config = test_config();
 
     let response = call(
@@ -5168,7 +5170,7 @@ fn mcp_identity_create_rejects_invalid_type() {
 fn mcp_identity_create_yaml_never_contains_mode() {
     // Parity with the CLI: mode is tree-level, never identity-scoped.
     let base = Path::new("/docs");
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let config = test_config();
 
     let response = call(
@@ -5201,7 +5203,7 @@ fn mcp_identity_create_yaml_never_contains_mode() {
 #[test]
 fn mcp_identity_create_missing_identity_errors() {
     let base = Path::new("/docs");
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let config = test_config();
 
     let response = call(
@@ -5232,7 +5234,7 @@ fn mcp_identity_create_missing_identity_errors() {
 fn mcp_whoami_returns_resolved_identity_from_walked_config() {
     let base = Path::new("/docs");
     let yaml = b"identity: alice\ntype: human\nassets_dir: assets\nmode: open\n" as &[u8];
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(base.join(".remargin.yaml"), yaml)
         .unwrap();
     let config = test_config();
@@ -5268,7 +5270,7 @@ fn mcp_whoami_returns_resolved_identity_from_walked_config() {
 #[test]
 fn mcp_whoami_with_no_config_returns_found_false() {
     let base = Path::new("/docs");
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let config = test_config();
 
     let response = call(
@@ -5298,7 +5300,7 @@ fn mcp_whoami_with_no_config_returns_found_false() {
 #[test]
 fn mcp_whoami_rejects_config_path() {
     let base = Path::new("/docs");
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let config = test_config();
 
     let response = call(
@@ -5420,7 +5422,7 @@ fn mcp_comments_filters_by_kind() {
 #[test]
 fn mcp_query_kind_filter_or_semantics() {
     let base = Path::new("/vault");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(base.join("a.md").as_path(), b"# a\n")
         .unwrap()
         .with_file(base.join("b.md").as_path(), b"# b\n")
@@ -5821,7 +5823,7 @@ fn mcp_batch_omits_warnings_when_every_body_reads_cleanly() {
 #[test]
 fn mcp_mv_renames_file() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(base)
         .unwrap()
         .with_file(base.join("a.md"), b"hello mcp")
@@ -5857,7 +5859,7 @@ fn mcp_mv_renames_file() {
 #[test]
 fn mcp_mv_refuses_existing_destination_without_force() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(base)
         .unwrap()
         .with_file(base.join("a.md"), b"src")
@@ -5891,7 +5893,7 @@ fn mcp_mv_refuses_existing_destination_without_force() {
 #[test]
 fn mcp_mv_force_overwrites_destination() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(base)
         .unwrap()
         .with_file(base.join("a.md"), b"new")
@@ -5928,7 +5930,7 @@ fn mcp_mv_force_overwrites_destination() {
 #[test]
 fn mcp_plan_mv_emits_mv_diff() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(base)
         .unwrap()
         .with_file(base.join("a.md"), b"plan me")
@@ -5972,7 +5974,7 @@ fn mcp_plan_mv_emits_mv_diff() {
 #[test]
 fn mcp_mv_renames_directory() {
     let base = Path::new("/realm");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(base)
         .unwrap()
         .with_dir(base.join("notes"))
@@ -6015,7 +6017,7 @@ fn mcp_mv_renames_directory() {
 #[test]
 fn mcp_plan_mv_directory_emits_is_directory() {
     let base = Path::new("/realm");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(base)
         .unwrap()
         .with_dir(base.join("src"))
@@ -6082,7 +6084,7 @@ checksum: sha256:000000000000000000000000000000000000000000000000000000000000000
 hello
 ```
 ";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(base.join("a.md"), bad_doc.as_bytes())
         .unwrap();
     let config = test_config();
@@ -6114,7 +6116,7 @@ hello
 #[test]
 fn prompt_resolve_returns_nearest_block() {
     let base = Path::new("/vault");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(base.join("a/b"))
         .unwrap()
         .with_file(
@@ -6156,7 +6158,7 @@ fn prompt_resolve_returns_nearest_block() {
 #[test]
 fn prompt_resolve_falls_through_to_default() {
     let base = Path::new("/vault");
-    let system = MockSystem::new().with_dir(base.join("a/b")).unwrap();
+    let system = MemorySystem::new().with_dir(base.join("a/b")).unwrap();
     let config = test_config();
 
     let response = call(
@@ -6191,7 +6193,7 @@ fn prompt_resolve_falls_through_to_default() {
 #[test]
 fn prompt_resolve_absolute_and_relative_paths_match() {
     let base = Path::new("/vault");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(base.join("a"))
         .unwrap()
         .with_file(
@@ -6239,7 +6241,7 @@ fn prompt_resolve_absolute_and_relative_paths_match() {
 #[test]
 fn prompt_set_runner_round_trips_and_clears() {
     let base = Path::new("/vault");
-    let system = MockSystem::new().with_dir(base.join("a")).unwrap();
+    let system = MemorySystem::new().with_dir(base.join("a")).unwrap();
     let config = test_config();
 
     let set_response = call(
@@ -6626,7 +6628,7 @@ fn mcp_plan_reply_op_missing_parent_id_errors() {
 #[test]
 fn mcp_tools_list_includes_reply_alphabetically_between_react_and_rm() {
     let base = Path::new("/docs");
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let config = test_config();
 
     let response = call(
@@ -6655,7 +6657,7 @@ fn mcp_tools_list_includes_reply_alphabetically_between_react_and_rm() {
 #[test]
 fn mcp_tools_list_descriptor_text_matches_spec() {
     let base = Path::new("/docs");
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let config = test_config();
 
     let response = call(

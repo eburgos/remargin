@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::DateTime;
 use os_shim::System as _;
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 
 use crate::config::registry::Registry;
 use crate::config::{Mode, ResolvedConfig};
@@ -199,9 +199,9 @@ fn alice_active_registry() -> Registry {
 // WHY: commit_with_verify now derives mode and registry from the doc's
 // realm. Tests that hand it a (mode, registry) pair must also stage a
 // matching realm at /d/ so the realm walk doesn't replace either.
-fn realm_at_d(mode: &Mode, registry_yaml: Option<&str>) -> MockSystem {
+fn realm_at_d(mode: &Mode, registry_yaml: Option<&str>) -> MemorySystem {
     let yaml = format!("mode: {}\n", mode.as_str());
-    let mut sys = MockSystem::new()
+    let mut sys = MemorySystem::new()
         .with_file(Path::new("/d/.remargin.yaml"), yaml.as_bytes())
         .unwrap();
     if let Some(reg) = registry_yaml {
@@ -376,7 +376,7 @@ fn one_bad_row_marks_whole_report_bad() {
 fn commit_with_verify_invokes_writer_when_ok() {
     let doc = doc_with(vec![make_comment("a", "alice", "hello")]);
     let cfg = make_config(Mode::Open, None);
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
 
     let mut called = false;
     let result = commit_with_verify(&system, &doc, &cfg, Path::new("/d/a.md"), |_| {
@@ -394,7 +394,7 @@ fn commit_with_verify_blocks_writer_on_bad_checksum() {
     bad.checksum = String::from("sha256:deadbeef");
     let doc = doc_with(vec![bad]);
     let cfg = make_config(Mode::Open, None);
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
 
     let mut called = false;
     let result = commit_with_verify(&system, &doc, &cfg, Path::new("/d/a.md"), |_| {
@@ -630,8 +630,8 @@ fn open_cfg_as(author: &str) -> ResolvedConfig {
 }
 
 /// Helper: put the document on a mock filesystem.
-fn mock_with_doc(content: &str) -> MockSystem {
-    MockSystem::new()
+fn mock_with_doc(content: &str) -> MemorySystem {
+    MemorySystem::new()
         .with_file(Path::new("/d/a.md"), content.as_bytes())
         .unwrap()
 }
@@ -649,8 +649,8 @@ fn outcome_for<'rep>(report: &'rep FolderVerifyReport, path: &str) -> &'rep File
 // WHY: file's realm is the source of truth for mode AND registry. Tests
 // that rely on strict-mode op gating need /d/ to declare strict
 // explicitly AND carry the registry the realm's gate consults.
-fn mock_with_doc_in_strict_realm(content: &str) -> MockSystem {
-    MockSystem::new()
+fn mock_with_doc_in_strict_realm(content: &str) -> MemorySystem {
+    MemorySystem::new()
         .with_file(Path::new("/d/.remargin.yaml"), b"mode: strict\n")
         .unwrap()
         .with_file(
@@ -662,8 +662,8 @@ fn mock_with_doc_in_strict_realm(content: &str) -> MockSystem {
         .unwrap()
 }
 
-fn mock_with_doc_in_registered_realm(content: &str) -> MockSystem {
-    MockSystem::new()
+fn mock_with_doc_in_registered_realm(content: &str) -> MemorySystem {
+    MemorySystem::new()
         .with_file(Path::new("/d/.remargin.yaml"), b"mode: registered\n")
         .unwrap()
         .with_file(
@@ -1123,7 +1123,7 @@ title: T
 
 # H
 ";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/vault/.remargin.yaml"), b"mode: strict\n")
         .unwrap()
         .with_file(
@@ -1199,7 +1199,7 @@ title: T
 
 # H
 ";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/d/.remargin.yaml"), b"mode: strict\n")
         .unwrap()
         .with_file(
@@ -1276,7 +1276,7 @@ title: T
 
 # H
 ";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/home/u/.remargin-registry.yaml"),
             registry_yaml.as_bytes(),
@@ -1441,7 +1441,7 @@ fn escalate_mode_for_doc_keeps_caller_registry_today() {
     //
     // Per the rule (file's realm is the source of truth), the registry
     // should also come from the realm's anchor.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/realm/.remargin.yaml"), b"mode: strict\n")
         .unwrap()
         .with_file(
@@ -1615,7 +1615,7 @@ alice's note
 #[test]
 fn subset_gate_allows_op_when_pre_file_missing_and_post_is_clean() {
     // Fresh file (P = ∅). Clean Q. Q ⊆ P (both empty). Allowed.
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let cfg = open_cfg_as("alice");
     let doc = doc_with(vec![make_comment("alc", "alice", "alice's note")]);
     commit_with_verify(&system, &doc, &cfg, Path::new("/d/new.md"), |_| Ok(())).unwrap();
@@ -1749,7 +1749,7 @@ fn commit_with_verify_repair_removes_bad_recipient_succeeds() {
     )]);
     let pre_md = pre_doc.to_markdown().unwrap();
 
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/d/a.md"), pre_md.as_bytes())
         .unwrap()
         .with_file(Path::new("/d/.remargin.yaml"), b"mode: registered\n")
@@ -1775,7 +1775,7 @@ fn commit_with_verify_repair_removes_bad_recipient_succeeds() {
 #[test]
 fn commit_with_verify_introducing_bad_recipient_blocked() {
     let reg_yaml = RECIPIENT_VERIFY_REGISTRY;
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/d/a.md"), b"---\ntitle: Test\n---\n\n# Hello\n")
         .unwrap()
         .with_file(Path::new("/d/.remargin.yaml"), b"mode: registered\n")
@@ -1883,7 +1883,7 @@ fn verify_path_single_file_tampered_checksum_not_ok() {
 
 #[test]
 fn verify_path_directory_all_clean_aggregates_ok() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/d"))
         .unwrap()
         .with_dir(Path::new("/d/sub"))
@@ -1904,7 +1904,7 @@ fn verify_path_directory_all_clean_aggregates_ok() {
 
 #[test]
 fn verify_path_directory_one_damaged_others_still_verified() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/d"))
         .unwrap()
         .with_file(Path::new("/d/good.md"), SIMPLE_DOC.as_bytes())
@@ -1924,7 +1924,7 @@ fn verify_path_directory_one_damaged_others_still_verified() {
 
 #[test]
 fn verify_path_directory_unreadable_file_recorded_continues() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/d"))
         .unwrap()
         .with_file(Path::new("/d/good.md"), SIMPLE_DOC.as_bytes())
@@ -1948,7 +1948,7 @@ fn verify_path_directory_unreadable_file_recorded_continues() {
 
 #[test]
 fn verify_path_directory_non_md_and_hidden_skipped() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/d"))
         .unwrap()
         .with_file(Path::new("/d/a.md"), SIMPLE_DOC.as_bytes())
@@ -1967,7 +1967,7 @@ fn verify_path_directory_non_md_and_hidden_skipped() {
 
 #[test]
 fn verify_path_empty_directory_is_ok_with_no_files() {
-    let system = MockSystem::new().with_dir(Path::new("/d")).unwrap();
+    let system = MemorySystem::new().with_dir(Path::new("/d")).unwrap();
     let cfg = open_cfg_as("alice");
 
     let report = verify_path(&system, Path::new("/d"), Path::new("/d"), &cfg).unwrap();
@@ -1978,7 +1978,7 @@ fn verify_path_empty_directory_is_ok_with_no_files() {
 
 #[test]
 fn verify_path_folder_json_is_failures_only_summary() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/d"))
         .unwrap()
         .with_file(Path::new("/d/good.md"), SIMPLE_DOC.as_bytes())
@@ -2009,7 +2009,7 @@ fn verify_path_folder_json_is_failures_only_summary() {
 
 #[test]
 fn verify_path_folder_json_all_clean_has_empty_failures() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/d"))
         .unwrap()
         .with_file(Path::new("/d/a.md"), SIMPLE_DOC.as_bytes())
@@ -2030,7 +2030,7 @@ fn verify_path_folder_json_all_clean_has_empty_failures() {
 
 #[test]
 fn verify_path_folder_json_parse_error_file_carries_error_only() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/d"))
         .unwrap()
         .with_file(Path::new("/d/good.md"), SIMPLE_DOC.as_bytes())
@@ -2089,7 +2089,7 @@ checksum: sha256:deadbeef
 two
 ```
 ";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/d"))
         .unwrap()
         .with_file(Path::new("/d/x.md"), TWO_TAMPERED.as_bytes())
@@ -2114,7 +2114,7 @@ two
 fn verify_path_folder_json_summary_is_smaller_than_per_file_form() {
     // Size-regression guard: a large mostly-passing directory serializes
     // far smaller as a failures-only summary than the per-file form would.
-    let mut system = MockSystem::new().with_dir(Path::new("/d")).unwrap();
+    let mut system = MemorySystem::new().with_dir(Path::new("/d")).unwrap();
     for i in 0_u32..200 {
         let path = format!("/d/f{i}.md");
         system = system

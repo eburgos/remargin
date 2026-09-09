@@ -9,7 +9,7 @@
 use std::path::Path;
 
 use os_shim::System as _;
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 
 use super::{ReplaceOptions, replace};
 use crate::config::{Mode, ResolvedConfig};
@@ -51,15 +51,15 @@ fn remargin_block(id: &str, content: &str) -> String {
     )
 }
 
-fn system_with(path: &str, body: &str) -> MockSystem {
-    MockSystem::new()
+fn system_with(path: &str, body: &str) -> MemorySystem {
+    MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new(path), body.as_bytes())
         .unwrap()
 }
 
-fn read(system: &MockSystem, path: &str) -> String {
+fn read(system: &MemorySystem, path: &str) -> String {
     system.read_to_string(Path::new(path)).unwrap()
 }
 
@@ -208,7 +208,7 @@ fn case_insensitive() {
 // Scenario 7: folder walk touches every .md, skips non-markdown.
 #[test]
 fn folder_walk_skips_non_markdown() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project/d"))
@@ -313,7 +313,7 @@ fn injecting_comment_fence_is_refused() {
 // Scenario 11: deny_ops governs replace independently.
 #[test]
 fn deny_ops_governs_replace() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/r"))
         .unwrap()
         .with_file(
@@ -350,7 +350,7 @@ fn deny_ops_governs_replace() {
 // allow-list is refused.
 #[test]
 fn trusted_roots_governs_replace() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/r"))
         .unwrap()
         .with_dir(Path::new("/r/src"))
@@ -398,7 +398,7 @@ fn trusted_roots_governs_replace() {
 #[test]
 fn one_bad_file_in_folder_continues() {
     let injected = remargin_block("evil", "injected");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project/d"))

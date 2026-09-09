@@ -3,7 +3,7 @@
 use core::time::Duration;
 use std::path::Path;
 
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 
 use super::backend::{ClaudeBackend, SessionBackend as _, resolve_backend};
 use super::discovery::{DiscoveredSession, discover_sessions};
@@ -13,8 +13,8 @@ use super::spec::build_launch_spec;
 /// Build a `demo-remargin`-shaped tree: a root that declares its own
 /// identity and a system prompt, five child realms each declaring their
 /// own identity, and a `session:` block on `finance`.
-fn demo_tree() -> MockSystem {
-    MockSystem::new()
+fn demo_tree() -> MemorySystem {
+    MemorySystem::new()
         .with_file(
             Path::new("/demo/.remargin.yaml"),
             b"identity: eburgos_notes_agent\nsystem_prompt:\n  name: root\n  prompt: root body\n",
@@ -85,7 +85,7 @@ fn each_session_carries_its_resolved_system_prompt() {
 
 #[test]
 fn inherit_only_subfolder_is_not_emitted() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/demo/.remargin.yaml"), b"identity: root_agent\n")
         .unwrap()
         .with_file(
@@ -102,7 +102,7 @@ fn inherit_only_subfolder_is_not_emitted() {
 
 #[test]
 fn nested_realm_boundary_yields_two_scoped_sessions() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/tree/a/.remargin.yaml"), b"identity: a_id\n")
         .unwrap()
         .with_file(Path::new("/tree/a/b/.remargin.yaml"), b"identity: b_id\n")
@@ -121,7 +121,7 @@ fn nested_realm_boundary_yields_two_scoped_sessions() {
 
 #[test]
 fn same_identity_in_sibling_folders_stays_distinct() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/tree/bar/.remargin.yaml"), b"identity: x\n")
         .unwrap()
         .with_file(Path::new("/tree/foo/.remargin.yaml"), b"identity: x\n")
@@ -137,7 +137,7 @@ fn same_identity_in_sibling_folders_stays_distinct() {
 
 #[test]
 fn no_identity_anywhere_yields_zero_sessions() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/tree/.remargin.yaml"), b"mode: open\n")
         .unwrap();
 
@@ -148,7 +148,7 @@ fn no_identity_anywhere_yields_zero_sessions() {
 
 #[test]
 fn root_identity_inherited_from_ancestor_uses_cwd_as_folder() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/vault/.remargin.yaml"),
             b"identity: vault_agent\nsession:\n  loop: 5min\n  goal: x\n",
@@ -172,7 +172,7 @@ fn root_identity_inherited_from_ancestor_uses_cwd_as_folder() {
 
 #[test]
 fn dot_directories_are_skipped() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/tree/.remargin.yaml"), b"identity: root\n")
         .unwrap()
         .with_file(
@@ -192,8 +192,8 @@ fn dot_directories_are_skipped() {
 /// Tree with two launchable realms: `finance` carries a full `session:`
 /// block (loop + goal + claude + budget) and its own system prompt; `ops`
 /// carries loop + goal only (no claude, no budget).
-fn launch_demo_tree() -> MockSystem {
-    MockSystem::new()
+fn launch_demo_tree() -> MemorySystem {
+    MemorySystem::new()
         .with_file(Path::new("/demo/.remargin.yaml"), b"identity: root_agent\n")
         .unwrap()
         .with_file(
@@ -215,7 +215,7 @@ fn launch_demo_tree() -> MockSystem {
         .unwrap()
 }
 
-fn discovered(system: &MockSystem, identity: &str) -> DiscoveredSession {
+fn discovered(system: &MemorySystem, identity: &str) -> DiscoveredSession {
     discover_sessions(system, Path::new("/demo"))
         .unwrap()
         .into_iter()
@@ -484,8 +484,8 @@ fn resolve_backend_known_and_unknown() {
 /// Workspace whose `.remargin.yaml` carries only a `sessions:` block (no
 /// identity of its own, so downward discovery from `/ws` is empty) plus two
 /// out-of-tree agent folders that entries point at by absolute path.
-fn manifest_workspace(root_yaml: &str) -> MockSystem {
-    MockSystem::new()
+fn manifest_workspace(root_yaml: &str) -> MemorySystem {
+    MemorySystem::new()
         .with_file(Path::new("/ws/.remargin.yaml"), root_yaml.as_bytes())
         .unwrap()
         .with_file(
@@ -589,7 +589,7 @@ fn unknown_requested_name_errors_listing_defined() {
 
 #[test]
 fn relative_and_tilde_paths_resolve_against_manifest_dir() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_env("HOME", "/home/user")
         .unwrap()
         .with_file(
@@ -688,7 +688,7 @@ fn bad_entry_yields_no_partial_fleet() {
 fn entry_overrides_win_per_field() {
     // Target declares goal + loop + claude; entry overrides goal and adds a
     // budget. Each field replaces as a whole value, entry wins.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/ws/.remargin.yaml"),
             b"sessions:\n  main:\n    agents:\n      \
@@ -718,7 +718,7 @@ fn entry_overrides_win_per_field() {
 #[test]
 fn union_dedups_by_identity_and_folder_entry_wins() {
     // The entry points at a folder discovery also finds, overriding its loop.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/ws/.remargin.yaml"),
             b"identity: ws_root\nsessions:\n  main:\n    agents:\n      \
@@ -757,7 +757,7 @@ fn union_dedups_by_identity_and_folder_entry_wins() {
 
 #[test]
 fn entry_without_overrides_passes_target_session_through() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/ws/.remargin.yaml"),
             b"sessions:\n  main:\n    agents:\n      - path: /agents/full\n",

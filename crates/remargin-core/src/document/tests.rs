@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use os_shim::System as _;
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 
 use crate::config::{Mode, ResolvedConfig};
 use crate::document::{
@@ -103,7 +103,7 @@ fn config_with_ignore(patterns: Vec<String>) -> ResolvedConfig {
     }
 }
 
-fn read_bytes(system: &MockSystem, path: &Path) -> Vec<u8> {
+fn read_bytes(system: &MemorySystem, path: &Path) -> Vec<u8> {
     let mut reader = system.open(path).unwrap();
     let mut buf = Vec::new();
     reader.read_to_end(&mut buf).unwrap();
@@ -289,7 +289,7 @@ fn not_visible_message_bare_for_dotfile() {
 
 #[test]
 fn ls_visible_files() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -315,7 +315,7 @@ fn ls_visible_files() {
 
 #[test]
 fn ls_dot_directory_hidden() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -338,7 +338,7 @@ fn ls_dot_directory_hidden() {
 
 #[test]
 fn ls_ignore_patterns() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -361,7 +361,7 @@ fn ls_ignore_patterns() {
 
 #[test]
 fn get_markdown() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/doc.md"), b"# Hello\nWorld")
@@ -402,7 +402,7 @@ A comment mentioning [[Hidden]].
 
 Body links to [[Real]].
 ";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/doc.md"), doc.as_bytes())
@@ -433,7 +433,7 @@ Body links to [[Real]].
 #[test]
 fn get_with_links_slice_relative_references() {
     let doc = "line 1\nline 2\nsee [[Alpha]]\nline 4\n[[Beta]] here\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/doc.md"), doc.as_bytes())
@@ -478,7 +478,7 @@ fn get_with_links_slice_relative_references() {
 
 #[test]
 fn get_with_links_empty_when_no_links() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/doc.md"), b"# Hello\nWorld")
@@ -500,7 +500,7 @@ fn get_with_links_empty_when_no_links() {
 
 #[test]
 fn get_dotfile_hidden() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/.env"), b"SECRET=123")
@@ -520,7 +520,7 @@ fn get_dotfile_hidden() {
 
 #[test]
 fn get_disallowed_extension() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/app.exe"), b"binary")
@@ -540,7 +540,7 @@ fn get_disallowed_extension() {
 
 #[test]
 fn get_with_lines() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(
@@ -573,7 +573,7 @@ fn resolve_line_window_supports_half_open_ranges() {
 
 #[test]
 fn get_escape_attempt() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -595,7 +595,7 @@ fn get_escape_attempt() {
 
 #[test]
 fn metadata_correct_counts() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/doc.md"), DOC_WITH_COMMENTS.as_bytes())
@@ -622,7 +622,7 @@ fn metadata_correct_counts() {
 #[test]
 fn metadata_binary_file_returns_file_level_fields_only() {
     // PNG file: is allowlisted, binary, no markdown parse step.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/pic.png"), &[0x89, b'P', b'N', b'G'])
@@ -652,7 +652,7 @@ fn metadata_binary_file_returns_file_level_fields_only() {
 #[test]
 fn metadata_non_md_text_file_returns_markdown_fields() {
     // .txt is text/plain — still text, so we parse it (no comments expected).
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/notes.txt"), b"line one\nline two\n")
@@ -676,7 +676,7 @@ fn metadata_non_md_text_file_returns_markdown_fields() {
 
 #[test]
 fn metadata_pdf_is_binary() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/doc.pdf"), b"%PDF-1.4")
@@ -726,7 +726,7 @@ ack:
 Self-addressed note acked by an agent only.
 ```
 ";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/doc.md"), DOC.as_bytes())
@@ -747,7 +747,7 @@ Self-addressed note acked by an agent only.
 
 #[test]
 fn metadata_missing_file_errors() {
-    let system = MockSystem::new().with_current_dir("/project").unwrap();
+    let system = MemorySystem::new().with_current_dir("/project").unwrap();
 
     let result = document::metadata(
         &system,
@@ -762,7 +762,7 @@ fn metadata_missing_file_errors() {
 #[test]
 fn read_binary_returns_bytes_and_mime() {
     let bytes: &[u8] = &[0x89, b'P', b'N', b'G', 1, 2, 3];
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/pic.png"), bytes)
@@ -784,7 +784,7 @@ fn read_binary_returns_bytes_and_mime() {
 
 #[test]
 fn read_binary_rejects_markdown() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/doc.md"), b"# hi\n")
@@ -803,7 +803,7 @@ fn read_binary_rejects_markdown() {
 
 #[test]
 fn read_binary_unknown_extension_is_octet_stream() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/blob.bin"), b"raw")
@@ -822,7 +822,7 @@ fn read_binary_unknown_extension_is_octet_stream() {
 
 #[test]
 fn read_binary_rejects_dotfile() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/.env"), b"secret")
@@ -840,7 +840,7 @@ fn read_binary_rejects_dotfile() {
 
 #[test]
 fn read_binary_escape_attempt() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -860,7 +860,7 @@ fn read_binary_escape_attempt() {
 
 #[test]
 fn write_preserves_comments() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/doc.md"), DOC_WITH_COMMENTS.as_bytes())
@@ -886,7 +886,7 @@ fn write_preserves_comments() {
 
 #[test]
 fn write_missing_comment_rejected() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/doc.md"), DOC_WITH_COMMENTS.as_bytes())
@@ -927,7 +927,7 @@ First comment.
 
 #[test]
 fn write_create_new_file() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -961,7 +961,7 @@ fn write_create_new_file() {
 fn write_skips_frontmatter_injection_for_non_md_extensions() {
     // Frontmatter injection is a markdown-only concern; writing to a
     // `.pen` (or any non-.md/.mdx) file must round-trip byte-for-byte.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -995,7 +995,7 @@ fn write_skips_frontmatter_injection_for_non_md_extensions() {
 
 #[test]
 fn write_create_rejects_existing_file() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/doc.md"), b"# Existing")
@@ -1023,7 +1023,7 @@ fn write_create_rejects_existing_file() {
 
 #[test]
 fn write_create_auto_creates_parent_dirs() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -1058,7 +1058,7 @@ fn write_create_auto_creates_parent_dirs() {
 
 #[test]
 fn write_create_deeply_nested() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -1094,7 +1094,7 @@ fn write_create_deeply_nested() {
 
 #[test]
 fn write_create_existing_parent_unchanged() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -1126,7 +1126,7 @@ fn write_create_existing_parent_unchanged() {
 
 #[test]
 fn write_create_rejects_escape() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -1152,7 +1152,7 @@ fn write_create_rejects_escape() {
 
 #[test]
 fn write_create_rejects_disallowed_extension() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -1176,7 +1176,7 @@ fn write_create_rejects_disallowed_extension() {
 
 #[test]
 fn write_create_rejects_dotfile() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -1200,7 +1200,7 @@ fn write_create_rejects_dotfile() {
 
 #[test]
 fn write_create_parent_outside_sandbox() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -1230,7 +1230,7 @@ fn write_create_parent_outside_sandbox() {
 
 #[test]
 fn write_no_create_missing_parent_still_fails() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -1252,7 +1252,7 @@ fn write_no_create_missing_parent_still_fails() {
 #[test]
 fn write_raw_pen_file() {
     let raw_json = r#"{"nodes":[{"id":"abc"}]}"#;
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/design.pen"), b"{}")
@@ -1281,7 +1281,7 @@ fn write_raw_pen_file() {
 #[test]
 fn write_raw_json_file() {
     let raw_content = r#"{"key": "value"}"#;
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/data.json"), b"{}")
@@ -1310,7 +1310,7 @@ fn write_raw_json_file() {
 #[test]
 fn write_raw_create_new_file() {
     let raw_content = r#"{"created": true}"#;
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -1342,7 +1342,7 @@ fn write_raw_create_terraform_file() {
     // A .tf authored raw+create must land byte-for-byte: no frontmatter
     // injection, no comment wrapping.
     let raw_content = "resource \"null_resource\" \"x\" {}\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -1371,7 +1371,7 @@ fn write_raw_create_terraform_file() {
 
 #[test]
 fn write_raw_overwrites_without_comment_check() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(
@@ -1403,7 +1403,7 @@ fn write_raw_overwrites_without_comment_check() {
 
 #[test]
 fn write_raw_rejected_for_markdown() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/doc.md"), b"# Hello")
@@ -1435,7 +1435,7 @@ fn write_binary_png_content() {
     let png_bytes: &[u8] = &[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
     let b64 = BASE64_STANDARD.encode(png_bytes);
 
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -1465,7 +1465,7 @@ fn write_binary_implies_raw() {
     let content_bytes = b"binary content here";
     let b64 = BASE64_STANDARD.encode(content_bytes);
 
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -1496,7 +1496,7 @@ fn write_binary_create_new_file() {
     let content_bytes = b"new binary file";
     let b64 = BASE64_STANDARD.encode(content_bytes);
 
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -1526,7 +1526,7 @@ fn write_binary_with_raw_flag() {
     let content_bytes = b"binary takes precedence";
     let b64 = BASE64_STANDARD.encode(content_bytes);
 
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -1556,7 +1556,7 @@ fn write_binary_with_raw_flag() {
 fn write_binary_rejected_for_markdown() {
     let b64 = BASE64_STANDARD.encode(b"binary md");
 
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/doc.md"), b"# Hello")
@@ -1584,7 +1584,7 @@ fn write_binary_rejected_for_markdown() {
 
 #[test]
 fn write_binary_invalid_base64() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/image.png"), b"PNG")
@@ -1611,7 +1611,7 @@ fn write_binary_invalid_base64() {
 
 #[test]
 fn write_non_binary_still_text() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -1640,12 +1640,12 @@ fn write_non_binary_still_text() {
     assert!(result.contains("Hello"));
 }
 
-// Note: MockSystem::canonicalize does not resolve `..` components, so parent
+// Note: MemorySystem::canonicalize does not resolve `..` components, so parent
 // traversal tests use absolute paths (which canonicalize handles correctly).
 
 #[test]
 fn sandbox_blocks_absolute_escape() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -1669,7 +1669,7 @@ fn sandbox_blocks_absolute_escape() {
 
 #[test]
 fn sandbox_create_blocks_absolute_escape() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -1693,7 +1693,7 @@ fn sandbox_create_blocks_absolute_escape() {
 
 #[test]
 fn sandbox_allows_child_path() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -1716,7 +1716,7 @@ fn sandbox_allows_child_path() {
 
 #[test]
 fn sandbox_create_allows_child() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -1737,7 +1737,7 @@ fn sandbox_create_allows_child() {
 
 #[test]
 fn unrestricted_allows_absolute_path() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -1758,7 +1758,7 @@ fn unrestricted_allows_absolute_path() {
 
 #[test]
 fn unrestricted_allows_relative_within_sandbox() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -1781,7 +1781,7 @@ fn unrestricted_allows_relative_within_sandbox() {
 
 #[test]
 fn unrestricted_create_allows_absolute_escape() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -1802,7 +1802,7 @@ fn unrestricted_create_allows_absolute_escape() {
 
 #[test]
 fn unrestricted_create_absolute() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -1828,7 +1828,7 @@ fn unrestricted_create_absolute() {
 /// a path inside `base_dir` is allowed (existing behaviour).
 #[test]
 fn sandbox_under_base_allowed_with_no_trusted_roots() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/project"))
         .unwrap()
         .with_file(Path::new("/project/doc.md"), b"# d")
@@ -1848,7 +1848,7 @@ fn sandbox_under_base_allowed_with_no_trusted_roots() {
 /// lives OUTSIDE `base_dir` is allowed.
 #[test]
 fn sandbox_under_trusted_root_outside_base_allowed() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/project"))
         .unwrap()
         .with_dir(Path::new("/notes"))
@@ -1871,7 +1871,7 @@ fn sandbox_under_trusted_root_outside_base_allowed() {
 /// is rejected.
 #[test]
 fn sandbox_outside_base_and_trusted_roots_rejected() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/project"))
         .unwrap()
         .with_dir(Path::new("/notes"))
@@ -1897,7 +1897,7 @@ fn sandbox_outside_base_and_trusted_roots_rejected() {
 /// `base_dir` is allowed by `resolve_sandboxed_create`.
 #[test]
 fn sandbox_create_under_trusted_root_outside_base_allowed() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/project"))
         .unwrap()
         .with_dir(Path::new("/notes"))
@@ -1917,7 +1917,7 @@ fn sandbox_create_under_trusted_root_outside_base_allowed() {
 #[test]
 fn sandboxed_absolute_blocked_but_unrestricted_allows() {
     // Same path: sandboxed blocks it, unrestricted allows it.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -1953,7 +1953,7 @@ fn sandboxed_absolute_blocked_but_unrestricted_allows() {
 
 #[test]
 fn line_numbers_full_file() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(
@@ -1983,7 +1983,7 @@ fn line_numbers_with_range() {
     let lines: Vec<String> = (1_i32..=100_i32).map(|i| format!("line{i}")).collect();
     let file_content = lines.join("\n");
 
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/doc.md"), file_content.as_bytes())
@@ -2010,7 +2010,7 @@ fn line_numbers_padding() {
     let lines: Vec<String> = (1_i32..=1_000_i32).map(|i| format!("line{i}")).collect();
     let file_content = lines.join("\n");
 
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/doc.md"), file_content.as_bytes())
@@ -2034,7 +2034,7 @@ fn line_numbers_padding() {
 
 #[test]
 fn line_numbers_off_by_default() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/doc.md"), b"hello\nworld")
@@ -2055,7 +2055,7 @@ fn line_numbers_off_by_default() {
 
 #[test]
 fn line_numbers_single_line() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/doc.md"), b"only line")
@@ -2076,7 +2076,7 @@ fn line_numbers_single_line() {
 
 #[test]
 fn line_numbers_empty_lines() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/doc.md"), b"first\n\nthird")
@@ -2097,7 +2097,7 @@ fn line_numbers_empty_lines() {
 
 #[test]
 fn line_numbers_binary_rejected() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/image.png"), b"\x89PNG\r\n")
@@ -2121,7 +2121,7 @@ fn line_numbers_binary_rejected() {
 
 #[test]
 fn rm_deletes_existing_file() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/notes.md"), b"# Notes")
@@ -2144,7 +2144,7 @@ fn rm_deletes_existing_file() {
 
 #[test]
 fn rm_idempotent_missing_file() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -2164,7 +2164,7 @@ fn rm_idempotent_missing_file() {
 
 #[test]
 fn rm_rejects_hidden_file() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/.secret"), b"hidden")
@@ -2187,7 +2187,7 @@ fn rm_rejects_hidden_file() {
 
 #[test]
 fn rm_rejects_path_outside_sandbox() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/etc/passwd"), b"root:x:0:0")
@@ -2206,7 +2206,7 @@ fn rm_rejects_path_outside_sandbox() {
 
 #[test]
 fn rm_removes_empty_directory() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project/subdir"))
@@ -2230,7 +2230,7 @@ fn rm_removes_empty_directory() {
 fn rm_deletes_non_markdown_binary_file() {
     // Real PNG signature — invalid UTF-8 (starts with 0x89).
     let png: &[u8] = &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0xff, 0xd8];
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/assets/probe.png"), png)
@@ -2277,7 +2277,7 @@ fn rm_can_delete_anything_the_read_layer_sees() {
     // A visible non-markdown file (binary, non-UTF-8 bytes) in an allowed
     // root — seen by a *different* read tool (metadata) than test 1.
     let bytes: &[u8] = &[0x00, 0x01, 0xfe, 0xff, 0x80, 0x90];
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/assets/figure.png"), bytes)
@@ -2318,7 +2318,7 @@ fn rm_can_delete_anything_the_read_layer_sees() {
 
 #[test]
 fn rm_dir_removes_all_visible_files_and_reports_them() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/docs/a.md"), b"a")
@@ -2340,7 +2340,7 @@ fn rm_dir_removes_all_visible_files_and_reports_them() {
 
 #[test]
 fn rm_dir_removes_nested_subdirs_bottom_up() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/tree/top.md"), b"t")
@@ -2370,7 +2370,7 @@ fn rm_dir_removes_nested_subdirs_bottom_up() {
 
 #[test]
 fn rm_dir_with_only_hidden_file_leaves_folder_behind() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/box/visible.md"), b"v")
@@ -2401,7 +2401,7 @@ fn rm_dir_with_only_hidden_file_leaves_folder_behind() {
 fn rm_dir_with_nested_realm_config_leaves_realm_folder_intact() {
     // A nested realm's `.remargin.yaml` is a dotfile: ls never lists it,
     // so the folder looks empty to the no-force remove and survives.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/outer/top.md"), b"t")
@@ -2455,7 +2455,7 @@ fn rm_dir_leaves_folder_holding_registry_dotfile_intact() {
     // `.remargin-registry.yaml` is a forbidden target AND a dotfile, so
     // ls never lists it: it does not block the pre-flight, and its folder
     // is left behind because the no-force remove sees it as non-empty.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/cfg/keep.md"), b"k")
@@ -2481,7 +2481,7 @@ fn rm_dir_leaves_folder_holding_registry_dotfile_intact() {
 
 #[test]
 fn rm_dir_refuses_path_outside_sandbox() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/outside/secret.md"), b"s")
@@ -2500,7 +2500,7 @@ fn rm_dir_refuses_path_outside_sandbox() {
 
 #[test]
 fn rm_dir_report_to_json_shape() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/d/one.md"), b"1")
@@ -2525,7 +2525,7 @@ fn rm_dir_report_to_json_shape() {
 
 #[test]
 fn rm_refuses_commented_markdown_file() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/note.md"), DOC_WITH_COMMENTS.as_bytes())
@@ -2553,7 +2553,7 @@ fn rm_refuses_commented_markdown_file() {
 
 #[test]
 fn rm_deletes_comment_free_markdown_file() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(
@@ -2577,7 +2577,7 @@ fn rm_deletes_comment_free_markdown_file() {
 
 #[test]
 fn rm_purge_then_rm_deletes_previously_commented_file() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/note.md"), DOC_WITH_COMMENTS.as_bytes())
@@ -2599,7 +2599,7 @@ fn rm_purge_then_rm_deletes_previously_commented_file() {
 
 #[test]
 fn rm_dir_aborts_when_any_nested_file_has_comments() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/tree/top.md"), b"t")
@@ -2636,7 +2636,7 @@ fn rm_dir_aborts_when_any_nested_file_has_comments() {
 
 #[test]
 fn rm_dir_deletes_tree_with_no_commented_files() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/clean/a.md"), b"a")
@@ -2655,7 +2655,7 @@ fn rm_dir_deletes_tree_with_no_commented_files() {
 
 #[test]
 fn rm_purge_dir_then_rm_dir_deletes_tree() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(
@@ -2763,7 +2763,7 @@ line 12
 
 more content here
 ";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/doc.md"), original.as_bytes())
@@ -2805,7 +2805,7 @@ fn write_partial_rejects_destroyed_comment() {
     // A partial write whose range overlaps a comment block and DOES NOT
     // reinclude the comment must fail with a preservation diagnostic
     // that names the destroyed comment id.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/doc.md"), DOC_WITH_COMMENTS.as_bytes())
@@ -2837,7 +2837,7 @@ fn write_partial_rejects_destroyed_comment() {
 fn write_partial_accepts_reincluded_comment() {
     // A partial write whose range covers a comment block IS accepted
     // as long as the replacement reincludes the comment verbatim.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/doc.md"), DOC_WITH_COMMENTS.as_bytes())
@@ -2883,7 +2883,7 @@ First comment.
 fn write_partial_rejects_with_create() {
     // `--lines` and `--create` are mutually exclusive: partial writes
     // require an existing file to splice into.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -2909,7 +2909,7 @@ fn write_partial_rejects_with_create() {
 #[test]
 fn write_partial_rejects_invalid_range() {
     // Start > end is nonsense; caller must get a specific diagnostic.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/doc.md"), b"A\nB\nC\n")
@@ -2932,7 +2932,7 @@ fn write_partial_rejects_invalid_range() {
 fn write_partial_rejects_with_raw() {
     // `--lines` and `--raw` are mutually exclusive: partial writes own
     // the comment-preservation invariant and need to parse the result.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/config.json"), b"{}\n")
@@ -2957,7 +2957,7 @@ fn write_partial_rejects_with_raw() {
 #[test]
 fn write_partial_rejects_start_zero() {
     // 0-indexed callers are a common mistake; reject explicitly.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/doc.md"), b"A\nB\nC\n")
@@ -2980,7 +2980,7 @@ fn write_partial_rejects_start_zero() {
 fn write_whole_file_unchanged_when_lines_omitted() {
     // Regression guard: omitting --lines preserves the earlier
     // whole-file write semantics exactly.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/doc.md"), DOC_WITH_COMMENTS.as_bytes())
@@ -3012,7 +3012,7 @@ fn write_noop_when_identical_bytes_back_to_back() {
     // input content, so the serialized output is byte-identical — must
     // return noop=true without touching the file. We verify the file
     // bytes are preserved exactly across the no-op.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/doc.md"), DOC_WITH_COMMENTS.as_bytes())
@@ -3063,7 +3063,7 @@ fn write_noop_when_identical_bytes_back_to_back() {
 fn write_noop_reports_false_when_content_differs() {
     // Baseline: two distinct writes must each report noop=false so
     // callers can reliably branch on the flag.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/doc.md"), DOC_WITH_COMMENTS.as_bytes())
@@ -3090,7 +3090,7 @@ fn write_noop_raw_when_bytes_match() {
     // Raw writes bypass the markdown pipeline but still honor the
     // byte-identical no-op guard so `remargin write --raw` is retry-safe
     // for plain text / source files too.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -3132,11 +3132,11 @@ fn write_noop_raw_when_bytes_match() {
 
 #[test]
 fn write_noop_binary_when_bytes_match() {
-    // Mirror of the raw case for binary mode. MockSystem exposes
+    // Mirror of the raw case for binary mode. MemorySystem exposes
     // `read_to_string` only, so the no-op short-circuit for binary
     // files only trips when the existing bytes are valid UTF-8 — good
     // enough for this test since the payload decodes to ASCII.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -3173,7 +3173,7 @@ fn write_noop_binary_when_bytes_match() {
 fn write_create_never_reports_noop() {
     // `create` writes a brand-new file — the noop short-circuit
     // must not fire (file doesn't exist yet to compare against).
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -3254,7 +3254,7 @@ fn list_entry_json_shape_matches_schema() {
 
 #[test]
 fn project_write_happy_path_projects_markdown_without_mutating_disk() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/doc.md"), DOC_WITH_COMMENTS.as_bytes())
@@ -3312,7 +3312,7 @@ fn project_write_detects_noop_when_content_matches() {
     // Seed a file and do a real write first, so the on-disk bytes are
     // already in the shape `ensure_frontmatter` produces. Re-submitting
     // the same content should then trip the byte-identical noop path.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/doc.md"), DOC_WITH_COMMENTS.as_bytes())
@@ -3364,7 +3364,7 @@ fn project_write_detects_noop_when_content_matches() {
 
 #[test]
 fn project_write_create_returns_empty_before_and_leaves_disk_untouched() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -3417,7 +3417,7 @@ fn project_write_create_returns_empty_before_and_leaves_disk_untouched() {
 
 #[test]
 fn project_write_raw_mode_returns_unsupported() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/design.pen"), b"existing")
@@ -3453,7 +3453,7 @@ fn project_write_raw_mode_returns_unsupported() {
 
 #[test]
 fn project_write_binary_mode_returns_unsupported() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/image.png"), b"\x89PNG\r\n")
@@ -3491,7 +3491,7 @@ fn project_write_binary_mode_returns_unsupported() {
 
 #[test]
 fn project_write_missing_comment_rejected_like_real_write() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/doc.md"), DOC_WITH_COMMENTS.as_bytes())
@@ -3544,8 +3544,8 @@ fn caller_config(identity: &str, mode: Mode) -> ResolvedConfig {
 
 /// A `/project` realm whose `.remargin.yaml` declares `realm_yaml`, with a
 /// registry and a `doc.md` seeded with `doc`.
-fn realm_with_doc(realm_yaml: &str, doc: &str) -> MockSystem {
-    MockSystem::new()
+fn realm_with_doc(realm_yaml: &str, doc: &str) -> MemorySystem {
+    MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/.remargin.yaml"), realm_yaml.as_bytes())
@@ -3563,7 +3563,7 @@ fn realm_with_doc(realm_yaml: &str, doc: &str) -> MockSystem {
 /// spoofed `author` from the payload.
 #[test]
 fn write_create_stamps_caller_identity_ignoring_spoof() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -3824,7 +3824,7 @@ fn assert_forbidden_error(err: &anyhow::Error, basename: &str) {
 fn write_refuses_forbidden_targets() {
     for basename in FORBIDDEN_TARGETS {
         let path = format!("/project/{basename}");
-        let system = MockSystem::new()
+        let system = MemorySystem::new()
             .with_current_dir("/project")
             .unwrap()
             .with_file(Path::new(&path), b"existing: true\n")
@@ -3856,7 +3856,7 @@ fn write_refuses_forbidden_targets_nested() {
     // cannot smuggle a write by nesting the file under another folder.
     for basename in FORBIDDEN_TARGETS {
         let nested = format!("/project/nested/{basename}");
-        let system = MockSystem::new()
+        let system = MemorySystem::new()
             .with_current_dir("/project")
             .unwrap()
             .with_dir(Path::new("/project/nested"))
@@ -3885,7 +3885,7 @@ fn write_refuses_forbidden_targets_nested() {
 fn write_allows_differently_named_yaml() {
     // Files with different basenames (e.g. backup.remargin.yaml) are NOT
     // subject to the ban.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/backup.remargin.yaml"), b"kept: true\n")
@@ -3906,7 +3906,7 @@ fn write_allows_differently_named_yaml() {
 #[test]
 fn write_create_refuses_forbidden_targets() {
     for basename in FORBIDDEN_TARGETS {
-        let system = MockSystem::new()
+        let system = MemorySystem::new()
             .with_current_dir("/project")
             .unwrap()
             .with_dir(Path::new("/project"))
@@ -3942,7 +3942,7 @@ fn write_create_refuses_forbidden_targets() {
 fn rm_refuses_forbidden_targets() {
     for basename in FORBIDDEN_TARGETS {
         let path = format!("/project/{basename}");
-        let system = MockSystem::new()
+        let system = MemorySystem::new()
             .with_current_dir("/project")
             .unwrap()
             .with_file(Path::new(&path), b"existing: true\n")
@@ -3963,7 +3963,7 @@ fn rm_refuses_forbidden_targets() {
 fn project_write_refuses_forbidden_targets() {
     for basename in FORBIDDEN_TARGETS {
         let path = format!("/project/{basename}");
-        let system = MockSystem::new()
+        let system = MemorySystem::new()
             .with_current_dir("/project")
             .unwrap()
             .with_file(Path::new(&path), b"existing: true\n")
@@ -3990,7 +3990,7 @@ fn project_write_refuses_forbidden_targets() {
 /// rides back on the successful outcome instead of blocking anything.
 #[test]
 fn write_advises_on_hard_wrapped_prose_without_blocking() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -4035,7 +4035,7 @@ fn write_advises_on_hard_wrapped_prose_without_blocking() {
 /// shape it had before advice existed.
 #[test]
 fn write_stays_silent_on_continuous_prose() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -4070,7 +4070,7 @@ fn write_stays_silent_on_continuous_prose() {
 /// with line numbers shifted onto the file's own numbering.
 #[test]
 fn write_partial_offsets_advice_onto_file_lines() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))
@@ -4107,7 +4107,7 @@ fn write_partial_offsets_advice_onto_file_lines() {
 /// existing thread in the document never draws advice.
 #[test]
 fn write_never_advises_about_stored_comment_blocks() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_dir(Path::new("/project"))

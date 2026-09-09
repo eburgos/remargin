@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 use serde_json::json;
 
 use super::{GuardDiagnostic, GuardDiagnosticInner, GuardOutcome, session_guard};
@@ -10,8 +10,8 @@ const EXE: &str = "/opt/bin/remargin";
 
 /// A mock whose `PATH` contains a directory holding a `remargin` file, so
 /// the on-PATH check passes and only the config check can fail.
-fn mock_with_remargin_on_path() -> MockSystem {
-    MockSystem::new()
+fn mock_with_remargin_on_path() -> MemorySystem {
+    MemorySystem::new()
         .with_dir(Path::new("/usr/bin"))
         .unwrap()
         .with_file(Path::new("/usr/bin/remargin"), b"")
@@ -22,7 +22,7 @@ fn mock_with_remargin_on_path() -> MockSystem {
 
 /// Project-scope settings declaring a `PreToolUse` entry that runs
 /// `command`, under a realm at `/r`.
-fn realm_with_hook_command(system: MockSystem, command: &str) -> MockSystem {
+fn realm_with_hook_command(system: MemorySystem, command: &str) -> MemorySystem {
     let settings = json!({
         "hooks": {
             "PreToolUse": [
@@ -45,7 +45,7 @@ fn realm_with_hook_command(system: MockSystem, command: &str) -> MockSystem {
 
 /// A realm at `/r` whose project-scope settings declare a live entry: an
 /// absolute command whose binary is on disk.
-fn realm_with_live_hook(system: MockSystem) -> MockSystem {
+fn realm_with_live_hook(system: MemorySystem) -> MemorySystem {
     realm_with_hook_command(
         system.with_file(Path::new(EXE), b"binary").unwrap(),
         &format!("{EXE} {HOOK_SUBCOMMAND}"),
@@ -145,7 +145,8 @@ fn no_hook_entry_in_either_scope_fails() {
 /// that resolves through it cannot spawn, so the guard fails.
 #[test]
 fn missing_path_var_fails() {
-    let system = realm_with_hook_command(MockSystem::new(), &format!("remargin {HOOK_SUBCOMMAND}"));
+    let system =
+        realm_with_hook_command(MemorySystem::new(), &format!("remargin {HOOK_SUBCOMMAND}"));
 
     assert!(matches!(
         session_guard(&system, Path::new("/r")),
@@ -158,7 +159,7 @@ fn missing_path_var_fails() {
 /// no longer a failure.
 #[test]
 fn absolute_hook_command_is_ok_without_the_binary_on_path() {
-    let system = realm_with_live_hook(MockSystem::new().with_env("PATH", "/usr/bin").unwrap());
+    let system = realm_with_live_hook(MemorySystem::new().with_env("PATH", "/usr/bin").unwrap());
 
     assert_eq!(session_guard(&system, Path::new("/r")), GuardOutcome::Ok);
 }
@@ -191,7 +192,7 @@ fn path_relative_hook_command_falls_back_to_the_path_probe() {
     assert_eq!(session_guard(&clean, Path::new("/r")), GuardOutcome::Ok);
 
     let broken = realm_with_hook_command(
-        MockSystem::new().with_env("PATH", "/usr/bin").unwrap(),
+        MemorySystem::new().with_env("PATH", "/usr/bin").unwrap(),
         &legacy,
     );
     let diag = expect_fail(session_guard(&broken, Path::new("/r")));

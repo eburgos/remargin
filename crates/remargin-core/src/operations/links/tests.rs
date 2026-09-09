@@ -2,14 +2,14 @@
 
 use std::path::Path;
 
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 
 use super::{Link, extract_links};
 
 /// Build a mock vault with a `/vault` dir and the given same-folder
 /// target files (name -> contents).
-fn vault(targets: &[(&str, &str)]) -> MockSystem {
-    let mut sys = MockSystem::new().with_dir(Path::new("/vault")).unwrap();
+fn vault(targets: &[(&str, &str)]) -> MemorySystem {
+    let mut sys = MemorySystem::new().with_dir(Path::new("/vault")).unwrap();
     for (name, contents) in targets {
         sys = sys
             .with_file(Path::new("/vault").join(name), contents.as_bytes())
@@ -18,7 +18,7 @@ fn vault(targets: &[(&str, &str)]) -> MockSystem {
     sys
 }
 
-fn run(body: &str, sys: &MockSystem) -> Vec<Link> {
+fn run(body: &str, sys: &MemorySystem) -> Vec<Link> {
     extract_links(body, Path::new("/vault"), sys)
 }
 

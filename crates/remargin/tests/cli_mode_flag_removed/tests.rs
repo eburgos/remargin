@@ -61,5 +61,5 @@ fn subcommand_mode_flag_is_rejected() {
 
 // The `resolve-mode` subcommand's behavior is covered in-process by
 // `resolve_mode_*` tests in `remargin-core/src/config/tests.rs`
-// against a MockSystem. The CLI smoke variant was deleted because
+// against a MemorySystem. The CLI smoke variant was deleted because
 // it walked up to the real `~/.remargin.yaml`.

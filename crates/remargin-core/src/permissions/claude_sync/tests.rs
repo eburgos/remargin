@@ -18,7 +18,7 @@ use core::slice::from_ref;
 use std::path::{Path, PathBuf};
 
 use os_shim::System as _;
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 use serde_json::{Value, json};
 
 use crate::config::permissions::resolve::{ResolvedTrustedRoot, TrustedRootPath};
@@ -552,9 +552,9 @@ fn anchor_argument_does_not_affect_output() {
 // apply_rules / revert_rules
 // ---------------------------------------------------------------------
 
-fn empty_anchor() -> (MockSystem, PathBuf) {
+fn empty_anchor() -> (MemorySystem, PathBuf) {
     let anchor = PathBuf::from("/r");
-    let system = MockSystem::new().with_dir(&anchor).unwrap();
+    let system = MemorySystem::new().with_dir(&anchor).unwrap();
     (system, anchor)
 }
 
@@ -575,7 +575,7 @@ fn settings_files(anchor: &Path) -> Vec<PathBuf> {
     ]
 }
 
-fn read_settings(system: &MockSystem, path: &Path) -> Value {
+fn read_settings(system: &MemorySystem, path: &Path) -> Value {
     let body = system.read_to_string(path).unwrap();
     serde_json::from_str(&body).unwrap()
 }

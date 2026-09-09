@@ -4,7 +4,7 @@ use super::{
 use image::codecs::jpeg::JpegEncoder;
 use image::codecs::png::PngEncoder;
 use image::{ImageBuffer, Rgb, RgbImage};
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 use std::path::Path;
 
 fn write_png(width: u32, height: u32) -> Vec<u8> {
@@ -65,7 +65,7 @@ fn output_format_parse_accepts_aliases() {
 #[test]
 fn downscales_png() {
     let png = write_png(2048, 1024);
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/pic.png"), &png)
@@ -93,7 +93,7 @@ fn downscales_png() {
 #[test]
 fn crops_then_scales() {
     let png = write_png(1000, 1000);
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/pic.png"), &png)
@@ -125,7 +125,7 @@ fn crops_then_scales() {
 #[test]
 fn clamps_crop_to_bounds() {
     let png = write_png(100, 100);
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/pic.png"), &png)
@@ -156,7 +156,7 @@ fn clamps_crop_to_bounds() {
 #[test]
 fn rejects_crop_outside_image() {
     let png = write_png(100, 100);
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/pic.png"), &png)
@@ -185,7 +185,7 @@ fn rejects_crop_outside_image() {
 #[test]
 fn jpeg_respects_byte_budget() {
     let jpeg = write_jpeg(1500, 1500);
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/photo.jpg"), &jpeg)
@@ -215,7 +215,7 @@ fn jpeg_respects_byte_budget() {
 #[test]
 fn rejects_max_bytes_below_floor() {
     let png = write_png(50, 50);
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/pic.png"), &png)
@@ -238,7 +238,7 @@ fn rejects_max_bytes_below_floor() {
 
 #[test]
 fn rejects_non_image_mime() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/doc.pdf"), b"%PDF-1.4\n")
@@ -258,7 +258,7 @@ fn rejects_non_image_mime() {
 
 #[test]
 fn rejects_svg() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/icon.svg"), b"<svg/>")
@@ -278,7 +278,7 @@ fn rejects_svg() {
 
 #[test]
 fn rejects_markdown_via_read_binary() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/notes.md"), b"# hi")
@@ -298,7 +298,7 @@ fn rejects_markdown_via_read_binary() {
 #[test]
 fn defaults_keep_small_image_intact() {
     let png = write_png(200, 100);
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_current_dir("/project")
         .unwrap()
         .with_file(Path::new("/project/small.png"), &png)

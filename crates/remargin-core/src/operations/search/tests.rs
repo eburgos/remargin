@@ -3,7 +3,7 @@
 use core::fmt::Write as _;
 use std::path::Path;
 
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 use serde_json::json;
 
 use crate::parser;
@@ -73,7 +73,7 @@ fn drifting_remargin_block(id: &str, content: &str) -> String {
 #[test]
 fn literal_match_in_body() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/docs/test.md"),
             b"# Title\n\nThe notification system works.\n",
@@ -95,7 +95,7 @@ fn file_path_searches_that_file() {
     // silently return an empty set (the file-path footgun).
     let base = Path::new("/docs");
     let file = Path::new("/docs/note.md");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(file, b"# Title\n\nThe notification system works.\n")
         .unwrap();
 
@@ -114,7 +114,7 @@ fn literal_match_in_comment() {
         "# Title\n\n{}",
         remargin_block("abc", "Run bd ready to check.")
     );
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/test.md"), doc.as_bytes())
         .unwrap();
 
@@ -133,7 +133,7 @@ fn scope_body_only() {
         "# Title\n\nNotification in body.\n\n{}",
         remargin_block("abc", "Notification in comment.")
     );
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/test.md"), doc.as_bytes())
         .unwrap();
 
@@ -152,7 +152,7 @@ fn scope_comments_only() {
         "# Title\n\nNotification in body.\n\n{}",
         remargin_block("abc", "Notification in comment.")
     );
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/test.md"), doc.as_bytes())
         .unwrap();
 
@@ -167,7 +167,7 @@ fn scope_comments_only() {
 #[test]
 fn regex_pattern() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/docs/test.md"),
             b"# Title\n\nRun bd ready now.\nAlso bd list works.\n",
@@ -191,7 +191,7 @@ fn regex_pattern() {
 #[test]
 fn case_insensitive() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/docs/test.md"),
             b"# Title\n\nNOTIFICATION system.\nnotification handler.\n",
@@ -208,7 +208,7 @@ fn case_insensitive() {
 #[test]
 fn context_lines() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/docs/test.md"),
             b"line 1\nline 2\ntarget line\nline 4\nline 5\n",
@@ -227,7 +227,7 @@ fn context_lines() {
 #[test]
 fn no_matches() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/test.md"), b"# Hello\n\nWorld.\n")
         .unwrap();
 
@@ -240,7 +240,7 @@ fn no_matches() {
 #[test]
 fn non_markdown_skipped() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/test.txt"), b"notification in txt\n")
         .unwrap()
         .with_file(Path::new("/docs/test.md"), b"notification in md\n")
@@ -256,7 +256,7 @@ fn non_markdown_skipped() {
 #[test]
 fn empty_pattern_rejected() {
     let base = Path::new("/docs");
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
 
     let result = search(&system, base, base, &literal_opts(""));
     result.unwrap_err();
@@ -265,7 +265,7 @@ fn empty_pattern_rejected() {
 #[test]
 fn multiple_files() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/a.md"), b"hello world\n")
         .unwrap()
         .with_file(Path::new("/docs/b.md"), b"hello there\n")
@@ -280,7 +280,7 @@ fn multiple_files() {
 #[test]
 fn search_match_json_shape_matches_schema() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/body.md"), b"hello world\n")
         .unwrap()
         .with_file(
@@ -341,7 +341,7 @@ fn multibyte_body_after_drifted_block_does_not_panic() {
         drifting_remargin_block("aaa", "first"),
         remargin_block("bbb", "second")
     );
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/test.md"), doc.as_bytes())
         .unwrap();
 
@@ -361,7 +361,7 @@ fn drifted_block_keeps_following_body_attribution() {
         drifting_remargin_block("aaa", "first"),
         remargin_block("bbb", "second")
     );
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/test.md"), doc.as_bytes())
         .unwrap();
 
@@ -417,7 +417,7 @@ fn attribution_matches_stored_block_spans() {
 fn limit_and_offset_return_bounded_window_with_true_total() {
     // Spec example: 320 matches, offset 50 limit 50 -> 50 matches, total 320.
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/docs/big.md"),
             corpus_with_needles(320).as_bytes(),
@@ -437,7 +437,7 @@ fn limit_and_offset_return_bounded_window_with_true_total() {
 #[test]
 fn offset_past_end_yields_empty_matches_with_true_total() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/docs/big.md"),
             corpus_with_needles(320).as_bytes(),
@@ -454,7 +454,7 @@ fn offset_past_end_yields_empty_matches_with_true_total() {
 #[test]
 fn no_limit_returns_all_matches_and_total_equals_len() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/docs/big.md"),
             corpus_with_needles(320).as_bytes(),
@@ -470,7 +470,7 @@ fn no_limit_returns_all_matches_and_total_equals_len() {
 #[test]
 fn limit_larger_than_total_returns_all_matches() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/docs/big.md"),
             corpus_with_needles(320).as_bytes(),
@@ -487,7 +487,7 @@ fn limit_larger_than_total_returns_all_matches() {
 #[test]
 fn offset_without_limit_returns_tail() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/docs/big.md"),
             corpus_with_needles(320).as_bytes(),
@@ -505,7 +505,7 @@ fn offset_without_limit_returns_tail() {
 #[test]
 fn compact_body_row_is_lowercase_with_null_comment_id() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/a.md"), b"the needle here\n")
         .unwrap();
     let results = search(&system, base, base, &literal_opts("needle")).unwrap();
@@ -525,7 +525,7 @@ fn compact_body_row_is_lowercase_with_null_comment_id() {
 #[test]
 fn compact_row_widens_with_context() {
     let base = Path::new("/docs");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/a.md"), b"one\nneedle\ntwo\n")
         .unwrap();
     let opts = literal_opts("needle").context_lines(1);
@@ -544,7 +544,7 @@ fn compact_row_widens_with_context() {
 fn compact_comment_row_carries_comment_id() {
     let base = Path::new("/docs");
     let doc = format!("# Title\n\n{}", remargin_block("cid1", "the needle here"));
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/a.md"), doc.as_bytes())
         .unwrap();
     let results = search(&system, base, base, &literal_opts("needle")).unwrap();
@@ -559,7 +559,7 @@ fn compact_comment_row_carries_comment_id() {
 fn group_compact_preserves_page_order_and_contiguity() {
     let base = Path::new("/docs");
     // Walk order is sorted (a.md, b.md), which is also first-match order.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/a.md"), b"needle 1\nneedle 2\n")
         .unwrap()
         .with_file(Path::new("/docs/b.md"), b"needle 3\n")

@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 
 use crate::config::Mode;
 use crate::config::permissions::op_name::OpName;
@@ -17,8 +17,8 @@ use crate::permissions::op_guard::{
     is_mutating_op, op_kind, pre_mutate_check,
 };
 
-fn realm_with(yaml: &str) -> MockSystem {
-    MockSystem::new()
+fn realm_with(yaml: &str) -> MemorySystem {
+    MemorySystem::new()
         .with_dir(Path::new("/r"))
         .unwrap()
         .with_file(Path::new("/r/.remargin.yaml"), yaml.as_bytes())
@@ -195,7 +195,7 @@ fn scenario_11_remargin_folder_special_cased_by_dot_folder_check() {
         }],
         trusted_roots_lock: None,
     };
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     check_against_resolved(
         &system,
         "write",
@@ -214,7 +214,7 @@ fn scenario_11_remargin_folder_special_cased_by_dot_folder_check() {
 fn scenario_12_multi_realm_walks_combine() {
     let parent = "permissions:\n  trusted_roots:\n    - path: '*'\n";
     let child = "permissions:\n  trusted_roots:\n    - path: '*'\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/r/sub"))
         .unwrap()
         .with_file(Path::new("/r/.remargin.yaml"), parent.as_bytes())
@@ -231,7 +231,7 @@ fn scenario_17_no_caching_per_op_reresolves() {
     let with_restrict_outside = "permissions:\n  trusted_roots:\n    - path: only-this-subdir\n";
     let without_restrict = "identity: alice\n";
 
-    let initial = MockSystem::new()
+    let initial = MemorySystem::new()
         .with_dir(Path::new("/r"))
         .unwrap()
         .with_file(
@@ -310,7 +310,7 @@ fn dot_folder_denial_active_for_read_ops() {
         }],
         trusted_roots_lock: None,
     };
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let err = check_against_resolved(&system, "get", Path::new("/r/src/.git/x.md"), &resolved)
         .unwrap_err();
     assert!(dot_folder_match(&err, ".git", "/r/.remargin.yaml"));
@@ -497,7 +497,7 @@ fn exceptions_bare_blanket_refuses() {
         trusted_roots_lock: None,
     };
     let caller = caller("alice", AuthorType::Human, Mode::Strict);
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let err = check_against_resolved_for_caller(
         &system,
         "purge",
@@ -522,7 +522,7 @@ fn exceptions_bare_unrelated_op_allowed() {
         trusted_roots_lock: None,
     };
     let caller = caller("alice", AuthorType::Human, Mode::Strict);
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     check_against_resolved_for_caller(
         &system,
         "comment",
@@ -546,7 +546,7 @@ fn exceptions_match_allows_caller() {
         trusted_roots_lock: None,
     };
     let caller = caller("eduardo-burgos", AuthorType::Human, Mode::Strict);
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     check_against_resolved_for_caller(
         &system,
         "purge",
@@ -570,7 +570,7 @@ fn exceptions_miss_refuses_caller() {
         trusted_roots_lock: None,
     };
     let caller = caller("someone-else", AuthorType::Human, Mode::Strict);
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let err = check_against_resolved_for_caller(
         &system,
         "purge",
@@ -603,7 +603,7 @@ fn exceptions_two_entries_first_matches() {
         trusted_roots_lock: None,
     };
     let caller = caller("eduardo-burgos", AuthorType::Human, Mode::Strict);
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     check_against_resolved_for_caller(
         &system,
         "write",
@@ -630,7 +630,7 @@ fn exceptions_two_entries_second_matches() {
         trusted_roots_lock: None,
     };
     let caller = caller("remargin_dev_agent", AuthorType::Agent, Mode::Strict);
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     check_against_resolved_for_caller(
         &system,
         "write",
@@ -651,7 +651,7 @@ fn exceptions_empty_list_acts_as_blanket() {
         trusted_roots_lock: None,
     };
     let caller = caller("eduardo-burgos", AuthorType::Human, Mode::Strict);
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let err = check_against_resolved_for_caller(
         &system,
         "purge",
@@ -683,7 +683,7 @@ fn exceptions_mixed_bare_and_full_list() {
         trusted_roots_lock: None,
     };
     let caller = caller("eduardo-burgos", AuthorType::Human, Mode::Strict);
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
 
     let sign_err = check_against_resolved_for_caller(
         &system,
@@ -742,7 +742,7 @@ fn exceptions_union_semantics_bare_wins_over_full() {
         trusted_roots_lock: None,
     };
     let caller = caller("eduardo-burgos", AuthorType::Human, Mode::Strict);
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let err = check_against_resolved_for_caller(
         &system,
         "purge",
@@ -770,7 +770,7 @@ fn exceptions_honored_in_open_mode() {
         trusted_roots_lock: None,
     };
     let caller = caller("eduardo-burgos", AuthorType::Human, Mode::Open);
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     check_against_resolved_for_caller(
         &system,
         "purge",
@@ -794,7 +794,7 @@ fn exceptions_honored_in_registered_mode() {
         trusted_roots_lock: None,
     };
     let caller = caller("eduardo-burgos", AuthorType::Human, Mode::Registered);
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     check_against_resolved_for_caller(
         &system,
         "purge",
@@ -818,7 +818,7 @@ fn exceptions_honored_in_strict_mode() {
         trusted_roots_lock: None,
     };
     let caller = caller("eduardo-burgos", AuthorType::Human, Mode::Strict);
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     check_against_resolved_for_caller(
         &system,
         "purge",
@@ -839,7 +839,7 @@ fn exceptions_entry_path_does_not_cover_target_allows() {
         trusted_roots_lock: None,
     };
     let caller = caller("alice", AuthorType::Human, Mode::Strict);
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     check_against_resolved_for_caller(
         &system,
         "purge",
@@ -868,7 +868,7 @@ fn exceptions_match_via_identity_id() {
         identity_name: Some(String::from("alice-display-name")),
         mode: Mode::Strict,
     };
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     check_against_resolved_for_caller(
         &system,
         "purge",
@@ -881,8 +881,8 @@ fn exceptions_match_via_identity_id() {
 
 // ~/.ssh/** agent default-deny
 
-fn ssh_test_system() -> MockSystem {
-    MockSystem::new().with_env("HOME", "/h").unwrap()
+fn ssh_test_system() -> MemorySystem {
+    MemorySystem::new().with_env("HOME", "/h").unwrap()
 }
 
 #[test]
@@ -990,7 +990,7 @@ fn rem_djfx_explicit_empty_trusted_roots_locks_reads_and_writes() {
 fn rem_djfx_lock_does_not_drop_inherited_parent_roots() {
     let parent = "permissions:\n  trusted_roots:\n    - path: top\n";
     let child = "permissions:\n  trusted_roots: []\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/r/sub"))
         .unwrap()
         .with_file(Path::new("/r/.remargin.yaml"), parent.as_bytes())
@@ -1036,7 +1036,7 @@ fn rem_djfx_remargin_dot_folder_read_parity() {
         }],
         trusted_roots_lock: None,
     };
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     check_against_resolved(
         &system,
         "get",

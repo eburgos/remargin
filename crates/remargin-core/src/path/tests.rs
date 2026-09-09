@@ -1,14 +1,14 @@
 use std::path::PathBuf;
 
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 
 use super::{ExpandPathError, expand_path};
 
 /// Helper: seed a mock system with a `HOME` env var and run expansion.
 /// Panics on test setup failure — this is test-only code and a HOME
 /// setter that cannot acquire its lock is a busted mock.
-fn make_system_with_home(home: &str) -> MockSystem {
-    MockSystem::new().with_env("HOME", home).unwrap()
+fn make_system_with_home(home: &str) -> MemorySystem {
+    MemorySystem::new().with_env("HOME", home).unwrap()
 }
 
 /// Helper: run expansion against a fresh mock with `HOME` set.
@@ -107,7 +107,7 @@ fn two_vars_concatenate() {
 
 #[test]
 fn undefined_bare_var_errors() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let result = expand_path(&system, "$FOO_NOT_SET_9/bar");
     assert_eq!(
         result,
@@ -119,7 +119,7 @@ fn undefined_bare_var_errors() {
 
 #[test]
 fn undefined_braced_var_errors() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let result = expand_path(&system, "${FOO_NOT_SET_9}/bar");
     assert_eq!(
         result,
@@ -131,28 +131,28 @@ fn undefined_braced_var_errors() {
 
 #[test]
 fn lone_dollar_is_literal() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let result = expand_path(&system, "$").unwrap();
     assert_eq!(result, PathBuf::from("$"));
 }
 
 #[test]
 fn dollar_then_slash_is_literal() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let result = expand_path(&system, "$/foo").unwrap();
     assert_eq!(result, PathBuf::from("$/foo"));
 }
 
 #[test]
 fn empty_braces_errors() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let result = expand_path(&system, "${}");
     assert!(matches!(result, Err(ExpandPathError::InvalidSyntax(_))));
 }
 
 #[test]
 fn unclosed_braces_errors() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let result = expand_path(&system, "${UNCLOSED");
     assert!(matches!(result, Err(ExpandPathError::InvalidSyntax(_))));
 }
@@ -161,7 +161,7 @@ fn unclosed_braces_errors() {
 
 #[test]
 fn tilde_plus_env_var_composes() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_env("HOME", "/home/alice")
         .unwrap()
         .with_env("SUB", "baz")
@@ -180,35 +180,35 @@ fn tilde_mid_path_after_env_is_literal() {
 
 #[test]
 fn absolute_path_passthrough() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let result = expand_path(&system, "/absolute/path").unwrap();
     assert_eq!(result, PathBuf::from("/absolute/path"));
 }
 
 #[test]
 fn relative_dot_path_passthrough() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let result = expand_path(&system, "./relative/path").unwrap();
     assert_eq!(result, PathBuf::from("./relative/path"));
 }
 
 #[test]
 fn relative_dotdot_path_passthrough() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let result = expand_path(&system, "../parent/path").unwrap();
     assert_eq!(result, PathBuf::from("../parent/path"));
 }
 
 #[test]
 fn bare_filename_passthrough() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let result = expand_path(&system, "just-a-name.md").unwrap();
     assert_eq!(result, PathBuf::from("just-a-name.md"));
 }
 
 #[test]
 fn empty_string_passthrough() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let result = expand_path(&system, "").unwrap();
     assert_eq!(result, PathBuf::new());
 }
@@ -218,7 +218,7 @@ fn empty_string_passthrough() {
 #[cfg(windows)]
 #[test]
 fn windows_userprofile_expands() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_env("USERPROFILE", r"C:\Users\alice")
         .unwrap();
     let result = expand_path(&system, "%USERPROFILE%").unwrap();
@@ -228,7 +228,7 @@ fn windows_userprofile_expands() {
 #[cfg(windows)]
 #[test]
 fn windows_userprofile_with_path_preserves_backslash() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_env("USERPROFILE", r"C:\Users\alice")
         .unwrap();
     let result = expand_path(&system, r"%USERPROFILE%\foo").unwrap();
@@ -238,7 +238,7 @@ fn windows_userprofile_with_path_preserves_backslash() {
 #[cfg(windows)]
 #[test]
 fn windows_undefined_percent_var_errors() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let result = expand_path(&system, "%FOO_NOT_SET_9%");
     assert_eq!(
         result,
@@ -251,7 +251,7 @@ fn windows_undefined_percent_var_errors() {
 #[cfg(windows)]
 #[test]
 fn windows_unclosed_percent_errors() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let result = expand_path(&system, "%UNCLOSED");
     assert!(matches!(result, Err(ExpandPathError::InvalidSyntax(_))));
 }
@@ -259,7 +259,7 @@ fn windows_unclosed_percent_errors() {
 #[cfg(windows)]
 #[test]
 fn windows_posix_dollar_home_also_works() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_env("HOME", r"C:\Users\alice")
         .unwrap();
     let result = expand_path(&system, "$HOME").unwrap();
@@ -273,7 +273,7 @@ fn windows_posix_dollar_home_also_works() {
 /// consistently over a table of representative inputs.
 #[test]
 fn adapter_parity_table() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_env("HOME", "/home/alice")
         .unwrap()
         .with_env("FOO", "bar")

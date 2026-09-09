@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, FixedOffset};
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 
 use crate::activity::{Change, gather_activity};
 
@@ -13,8 +13,8 @@ fn ts(s: &str) -> DateTime<FixedOffset> {
     DateTime::parse_from_rfc3339(s).unwrap()
 }
 
-fn realm_with(files: &[(&str, &str)]) -> MockSystem {
-    let mut system = MockSystem::new()
+fn realm_with(files: &[(&str, &str)]) -> MemorySystem {
+    let mut system = MemorySystem::new()
         .with_file(Path::new("/r/.remargin.yaml"), REALM_YAML.as_bytes())
         .unwrap();
     for (path, body) in files {
@@ -262,7 +262,7 @@ fn directory_walk_returns_one_entry_per_file_with_activity() {
 /// message.
 #[test]
 fn path_outside_realm_errors() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/elsewhere/note.md"), b"# hi")
         .unwrap();
     let err = gather_activity(&system, Path::new("/elsewhere/note.md"), None, "alice").unwrap_err();
@@ -344,7 +344,7 @@ fn sandbox_and_ack_carry_author_type_when_registry_resolves() {
     let prefix = "---\ntitle: t\nsandbox:\n  - bob@2026-04-06T13:00:00-04:00\n  - dave@2026-04-06T13:30:00-04:00\n---\n\n# Body\n";
     let comment = "```remargin\n---\nid: c1\nauthor: bob\ntype: human\nts: 2026-04-06T12:00:00-04:00\nchecksum: sha256:t\nack:\n  - carol@2026-04-06T14:00:00-04:00\n  - eve@2026-04-06T14:30:00-04:00\n---\nBody.\n```";
     let body = format!("{prefix}\n{comment}\n");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/r/.remargin.yaml"), REALM_YAML.as_bytes())
         .unwrap()
         .with_file(Path::new("/r/.remargin-registry.yaml"), registry.as_bytes())

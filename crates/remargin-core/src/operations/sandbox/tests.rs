@@ -6,7 +6,7 @@ use std::thread;
 
 use chrono::DateTime;
 use os_shim::System as _;
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 
 use crate::config::{Mode, ResolvedConfig};
 use crate::frontmatter;
@@ -90,9 +90,9 @@ Hello.
 "
 }
 
-fn write_file(system: &MockSystem, path: &str, content: &str) {
+fn write_file(system: &MemorySystem, path: &str, content: &str) {
     // `with_file` semantics: implicitly creates parent directories. We use
-    // the corresponding `MockSystem::create_dir_all` call here so that
+    // the corresponding `MemorySystem::create_dir_all` call here so that
     // subsequent writes succeed.
     if let Some(parent) = Path::new(path).parent() {
         system.create_dir_all(parent).unwrap();
@@ -100,7 +100,7 @@ fn write_file(system: &MockSystem, path: &str, content: &str) {
     system.write(Path::new(path), content.as_bytes()).unwrap();
 }
 
-fn read_file(system: &MockSystem, path: &str) -> String {
+fn read_file(system: &MemorySystem, path: &str) -> String {
     system.read_to_string(Path::new(path)).unwrap()
 }
 
@@ -159,7 +159,7 @@ fn parse_sandbox_entry_bad_timestamp() {
 
 #[test]
 fn add_to_new_file_adds_entry() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     write_file(&system, "/docs/a.md", simple_doc());
 
     let files = vec![PathBuf::from("/docs/a.md")];
@@ -184,7 +184,7 @@ fn add_to_new_file_adds_entry() {
 /// rewrites the file with the newer ts. The roster size stays at 1.
 #[test]
 fn add_refreshes_timestamp_on_repeat() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     write_file(&system, "/docs/a.md", simple_doc());
 
     let files = vec![PathBuf::from("/docs/a.md")];
@@ -209,7 +209,7 @@ fn add_refreshes_timestamp_on_repeat() {
 
 #[test]
 fn add_multi_identity_preserves_existing_entries() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     write_file(&system, "/docs/a.md", doc_with_jorge());
 
     let files = vec![PathBuf::from("/docs/a.md")];
@@ -222,7 +222,7 @@ fn add_multi_identity_preserves_existing_entries() {
 
 #[test]
 fn add_rejects_non_markdown_file() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     write_file(&system, "/tmp/foo.txt", "not markdown");
 
     let files = vec![PathBuf::from("/tmp/foo.txt")];
@@ -238,7 +238,7 @@ fn add_rejects_non_markdown_file() {
 
 #[test]
 fn add_partial_failure_best_effort() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     write_file(&system, "/docs/a.md", simple_doc());
     write_file(&system, "/docs/c.md", simple_doc());
 
@@ -265,7 +265,7 @@ fn add_partial_failure_best_effort() {
 
 #[test]
 fn remove_last_entry_deletes_key() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     write_file(&system, "/docs/a.md", simple_doc());
     let files = vec![PathBuf::from("/docs/a.md")];
     add_to_files(&system, &files, "eduardo", &open_config()).unwrap();
@@ -282,7 +282,7 @@ fn remove_last_entry_deletes_key() {
 
 #[test]
 fn remove_preserves_other_identities() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     write_file(&system, "/docs/a.md", doc_with_jorge());
     let files = vec![PathBuf::from("/docs/a.md")];
 
@@ -298,7 +298,7 @@ fn remove_preserves_other_identities() {
 
 #[test]
 fn remove_noop_when_no_entry() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     write_file(&system, "/docs/a.md", doc_with_jorge());
     let files = vec![PathBuf::from("/docs/a.md")];
 
@@ -313,7 +313,7 @@ fn remove_noop_when_no_entry() {
 
 #[test]
 fn remove_does_not_touch_other_identity_entries() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     write_file(&system, "/docs/a.md", doc_with_jorge());
 
     // Eduardo tries to remove jorge's entry — must be a no-op.
@@ -336,7 +336,7 @@ fn remove_does_not_touch_other_identity_entries() {
 
 #[test]
 fn list_walks_and_filters_by_identity() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     write_file(&system, "/root/a.md", simple_doc());
     write_file(&system, "/root/nested/b.md", simple_doc());
     write_file(&system, "/root/nested/c.md", simple_doc());
@@ -364,7 +364,7 @@ fn list_walks_and_filters_by_identity() {
 
 #[test]
 fn list_filters_jorge_returns_jorge_only_files() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     write_file(&system, "/root/shared.md", doc_with_jorge());
     add_to_files(
         &system,
@@ -389,7 +389,7 @@ fn list_filters_jorge_returns_jorge_only_files() {
 
 #[test]
 fn scan_all_entries_enumerates_every_identity() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     write_file(&system, "/root/shared.md", doc_with_jorge());
     write_file(&system, "/root/nested/b.md", simple_doc());
     // A non-markdown file whose text merely looks like sandbox state; the
@@ -427,7 +427,7 @@ fn scan_all_entries_enumerates_every_identity() {
 
 #[test]
 fn scan_all_entries_carries_author_and_timestamp() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     write_file(&system, "/root/d.md", doc_with_jorge());
 
     let scanned = scan_all_entries(&system, Path::new("/root")).unwrap();
@@ -448,7 +448,7 @@ fn scan_all_entries_carries_author_and_timestamp() {
 
 #[test]
 fn sandbox_mutation_preserves_signed_comment_payload() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     write_file(&system, "/docs/signed.md", doc_with_comment());
 
     let before = read_file(&system, "/docs/signed.md");

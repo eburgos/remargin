@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 
 use super::{
     PlanIdentity, PlanRequest, diff_comment_sets, dispatch, project_doc_report, project_report,
@@ -174,7 +174,7 @@ fn project_doc_report_clean_projection_has_no_subset_gate() {
     let before = parser::parse(DOC_ONE_COMMENT).unwrap();
     let after = parser::parse(DOC_TWO_COMMENTS).unwrap();
     let path = Path::new("/d/file.md");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(path, DOC_ONE_COMMENT.as_bytes())
         .unwrap();
 
@@ -200,7 +200,7 @@ fn project_doc_report_introduced_anomaly_populates_subset_gate() {
     let before = parser::parse(DOC_ONE_COMMENT).unwrap();
     let after = parser::parse(DOC_AAA_BAD_CHECKSUM).unwrap();
     let path = Path::new("/d/file.md");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(path, DOC_ONE_COMMENT.as_bytes())
         .unwrap();
 
@@ -234,7 +234,7 @@ fn project_doc_report_pre_existing_anomaly_does_not_refuse() {
     let before = parser::parse(DOC_AAA_BAD_CHECKSUM).unwrap();
     let after = parser::parse(DOC_AAA_BAD_CHECKSUM).unwrap();
     let path = Path::new("/d/file.md");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(path, DOC_AAA_BAD_CHECKSUM.as_bytes())
         .unwrap();
 
@@ -260,7 +260,7 @@ fn project_doc_report_escalates_mode_to_realm_yaml() {
     // either way; we assert the gate's `mode` field reflects the
     // *realm* mode, proving escalate_mode_for_doc ran.
     let path = Path::new("/d/file.md");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/d/.remargin.yaml"), b"mode: strict\n")
         .unwrap()
         .with_file(path, DOC_ONE_COMMENT.as_bytes())
@@ -285,8 +285,8 @@ fn project_doc_report_escalates_mode_to_realm_yaml() {
     assert!(!report.would_commit);
 }
 
-fn system_with_one_comment() -> MockSystem {
-    MockSystem::new()
+fn system_with_one_comment() -> MemorySystem {
+    MemorySystem::new()
         .with_file(Path::new("/docs/test.md"), DOC_ONE_COMMENT.as_bytes())
         .unwrap()
 }

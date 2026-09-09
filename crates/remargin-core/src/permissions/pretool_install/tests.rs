@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use os_shim::System;
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 use serde_json::{Value, json};
 
 use super::{
@@ -17,8 +17,8 @@ fn settings_path() -> PathBuf {
 
 /// A mock whose `current_exe` is the binary the installer must embed, and
 /// which has that binary on disk so the entry reads as live.
-fn mock() -> MockSystem {
-    MockSystem::new()
+fn mock() -> MemorySystem {
+    MemorySystem::new()
         .with_current_exe(Path::new(EXE))
         .unwrap()
         .with_file(Path::new(EXE), b"binary")
@@ -35,7 +35,7 @@ fn read_json(system: &dyn System, path: &Path) -> Value {
     serde_json::from_str(&body).unwrap()
 }
 
-fn seed(system: MockSystem, path: &Path, body: &str) -> MockSystem {
+fn seed(system: MemorySystem, path: &Path, body: &str) -> MemorySystem {
     system.with_file(path, body.as_bytes()).unwrap()
 }
 
@@ -299,7 +299,9 @@ fn install_upgrades_drifted_matcher_in_place() {
 fn test_reports_broken_when_binary_vanished() {
     // The install resolves `current_exe`, but that binary is never on disk
     // — the state a user reaches by moving or deleting it after installing.
-    let system = MockSystem::new().with_current_exe(Path::new(EXE)).unwrap();
+    let system = MemorySystem::new()
+        .with_current_exe(Path::new(EXE))
+        .unwrap();
     let path = settings_path();
     install(&system, &path).unwrap();
 

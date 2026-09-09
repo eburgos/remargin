@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use os_shim::System as _;
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 
 use crate::config::{Mode, ResolvedConfig};
 use crate::operations::purge::{purge, purge_dir};
@@ -68,7 +68,7 @@ Text after.
 
 #[test]
 fn simple_purge() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/test.md"), doc_with_comments().as_bytes())
         .unwrap();
 
@@ -84,7 +84,7 @@ fn simple_purge() {
 
 #[test]
 fn body_text_preserved() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/test.md"), doc_with_comments().as_bytes())
         .unwrap();
 
@@ -99,7 +99,7 @@ fn body_text_preserved() {
 
 #[test]
 fn frontmatter_cleanup() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/test.md"), doc_with_comments().as_bytes())
         .unwrap();
 
@@ -128,7 +128,7 @@ fn frontmatter_cleanup() {
 #[test]
 fn purge_refused_when_target_outside_allow_list() {
     let yaml = "permissions:\n  trusted_roots:\n    - path: elsewhere\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/test.md"), doc_with_comments().as_bytes())
         .unwrap()
         .with_file(Path::new("/docs/.remargin.yaml"), yaml.as_bytes())
@@ -145,7 +145,7 @@ fn purge_refused_when_target_outside_allow_list() {
 #[test]
 fn purge_refused_when_deny_ops_lists_purge() {
     let yaml = "permissions:\n  deny_ops:\n    - path: test.md\n      ops: [purge]\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/test.md"), doc_with_comments().as_bytes())
         .unwrap()
         .with_file(Path::new("/docs/.remargin.yaml"), yaml.as_bytes())
@@ -162,7 +162,7 @@ fn purge_refused_when_deny_ops_lists_purge() {
 #[test]
 fn purge_allowed_when_deny_ops_lists_other_op() {
     let yaml = "permissions:\n  deny_ops:\n    - path: test.md\n      ops: [delete]\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/test.md"), doc_with_comments().as_bytes())
         .unwrap()
         .with_file(Path::new("/docs/.remargin.yaml"), yaml.as_bytes())
@@ -174,7 +174,7 @@ fn purge_allowed_when_deny_ops_lists_other_op() {
 #[test]
 fn no_comments() {
     let plain = "---\ntitle: Plain\n---\n\n# Just text\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/test.md"), plain.as_bytes())
         .unwrap();
 
@@ -186,7 +186,7 @@ fn no_comments() {
 
 #[test]
 fn no_excessive_blank_lines() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/test.md"), doc_with_comments().as_bytes())
         .unwrap();
 
@@ -210,7 +210,7 @@ fn no_excessive_blank_lines() {
 
 #[test]
 fn purge_dir_purges_every_md_file() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/realm"))
         .unwrap()
         .with_file(Path::new("/realm/a.md"), doc_with_comments().as_bytes())
@@ -240,7 +240,7 @@ fn purge_dir_purges_every_md_file() {
 
 #[test]
 fn purge_dir_skips_non_markdown_files() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/realm"))
         .unwrap()
         .with_file(Path::new("/realm/a.md"), doc_with_comments().as_bytes())
@@ -259,7 +259,7 @@ fn purge_dir_skips_non_markdown_files() {
 
 #[test]
 fn purge_dir_empty_dir_is_noop() {
-    let system = MockSystem::new().with_dir(Path::new("/empty")).unwrap();
+    let system = MemorySystem::new().with_dir(Path::new("/empty")).unwrap();
 
     let result = purge_dir(&system, Path::new("/empty"), &open_config()).unwrap();
 
@@ -270,7 +270,7 @@ fn purge_dir_empty_dir_is_noop() {
 
 #[test]
 fn purge_dir_zero_md_files_is_noop() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/realm"))
         .unwrap()
         .with_file(Path::new("/realm/a.txt"), b"plain text")
@@ -287,7 +287,7 @@ fn purge_dir_zero_md_files_is_noop() {
 
 #[test]
 fn purge_dir_missing_directory_errors() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let err = purge_dir(&system, Path::new("/nope"), &open_config()).unwrap_err();
     assert!(
         format!("{err}").contains("does not exist"),
@@ -297,7 +297,7 @@ fn purge_dir_missing_directory_errors() {
 
 #[test]
 fn purge_dir_target_is_a_file_errors() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/realm/a.md"), b"# header\n")
         .unwrap();
     let err = purge_dir(&system, Path::new("/realm/a.md"), &open_config()).unwrap_err();
@@ -310,7 +310,7 @@ fn purge_dir_target_is_a_file_errors() {
 #[test]
 fn purge_dir_records_skipped_when_no_comments() {
     let plain = "---\ntitle: Plain\n---\n\n# Just text\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/realm"))
         .unwrap()
         .with_file(Path::new("/realm/a.md"), doc_with_comments().as_bytes())
@@ -330,7 +330,7 @@ fn purge_dir_records_skipped_when_no_comments() {
 fn purge_dir_partial_block_with_deny_ops() {
     // deny_ops blocks purge only on b.md; a.md should still be purged.
     let yaml = "permissions:\n  deny_ops:\n    - path: b.md\n      ops: [purge]\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/realm"))
         .unwrap()
         .with_file(Path::new("/realm/.remargin.yaml"), yaml.as_bytes())
@@ -358,7 +358,7 @@ fn purge_dir_deny_ops_on_parent_blocks_every_file() {
     // deny_ops `path: .` covers every nested file via op_guard: every
     // file is refused with DeniedOp, no file is mutated.
     let yaml = "permissions:\n  deny_ops:\n    - path: .\n      ops: [purge]\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/realm"))
         .unwrap()
         .with_file(Path::new("/realm/.remargin.yaml"), yaml.as_bytes())
@@ -390,7 +390,7 @@ fn purge_dir_deny_ops_on_parent_blocks_every_file() {
 fn purge_dir_skips_dot_folders() {
     // walk_dir(hidden=false) excludes dot-folders entirely; the .git
     // file should not be visited.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/realm"))
         .unwrap()
         .with_dir(Path::new("/realm/.git"))
@@ -417,7 +417,7 @@ fn purge_dir_skips_dot_folders() {
 
 #[test]
 fn purge_dir_recurses_into_subdirectories() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/realm"))
         .unwrap()
         .with_dir(Path::new("/realm/notes"))
@@ -456,7 +456,7 @@ fn purge_dir_recurses_into_subdirectories() {
 fn purge_dir_replan_after_apply_is_noop() {
     // Apply -> re-walk: every file should land in `skipped` because
     // the comments are gone.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/realm"))
         .unwrap()
         .with_file(Path::new("/realm/a.md"), doc_with_comments().as_bytes())

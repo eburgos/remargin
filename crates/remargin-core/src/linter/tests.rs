@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 
 use crate::linter::{lint, lint_doc, lint_or_fail};
 
@@ -374,8 +374,8 @@ line 4
     assert_eq!(errors[0].0, 3, "unclosed fence should be on line 3");
 }
 
-fn build_lint_system(doc_content: &str, realm_yaml: &str) -> MockSystem {
-    MockSystem::new()
+fn build_lint_system(doc_content: &str, realm_yaml: &str) -> MemorySystem {
+    MemorySystem::new()
         .with_file(Path::new("/vault/doc.md"), doc_content.as_bytes())
         .unwrap()
         .with_file(Path::new("/vault/.remargin.yaml"), realm_yaml.as_bytes())
@@ -415,7 +415,7 @@ fn lint_doc_strict_unknown_recipient_finding() {
 /// Scenario 13: open mode — same doc has no recipient findings.
 #[test]
 fn lint_doc_open_mode_no_recipient_findings() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/vault/doc.md"),
             DOC_WITH_UNKNOWN_RECIPIENT.as_bytes(),
@@ -454,7 +454,7 @@ fn lint_doc_registered_mode_revoked_recipient_finding() {
 /// Scenario 16: no registry present in registered mode → silently skipped.
 #[test]
 fn lint_doc_missing_registry_skipped() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/vault/doc.md"),
             DOC_WITH_UNKNOWN_RECIPIENT.as_bytes(),

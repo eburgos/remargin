@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 use remargin_core::config;
 use remargin_core::config::registry::Registry;
 use remargin_core::display::render_activity_cutoff_header;
@@ -94,7 +94,7 @@ fn parse_line_range_rejects_non_numeric_end() {
 
 #[test]
 fn content_from_positional_arg() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let cwd = Path::new("/project");
     let content = String::from("Hello from arg");
 
@@ -104,7 +104,7 @@ fn content_from_positional_arg() {
 
 #[test]
 fn content_from_file() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/project/comment.txt"), b"Hello from file")
         .unwrap();
     let cwd = Path::new("/project");
@@ -116,7 +116,7 @@ fn content_from_file() {
 
 #[test]
 fn content_from_absolute_file_path() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/elsewhere/note.md"), b"Absolute path content")
         .unwrap();
     let cwd = Path::new("/project");
@@ -128,7 +128,7 @@ fn content_from_absolute_file_path() {
 
 #[test]
 fn error_when_neither_content_nor_file() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let cwd = Path::new("/project");
 
     let err = resolve_comment_content(&system, cwd, None, None).unwrap_err();
@@ -141,7 +141,7 @@ fn error_when_neither_content_nor_file() {
 
 #[test]
 fn error_when_file_not_found() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let cwd = Path::new("/project");
     let path = PathBuf::from("missing.txt");
 
@@ -154,7 +154,7 @@ fn error_when_file_not_found() {
 }
 
 fn registry_with_yaml(yaml: &str) -> Registry {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/project/.remargin-registry.yaml"),
             yaml.as_bytes(),

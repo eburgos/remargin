@@ -1,6 +1,6 @@
 //! Unit tests for [`crate::io`].
 
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 
 use super::{expand_cli_path, parse_line_range, truncate_content};
 
@@ -61,7 +61,7 @@ fn truncate_content_empty() {
 
 #[test]
 fn expand_cli_path_home_expansion() {
-    let system = MockSystem::new().with_env("HOME", "/home/test").unwrap();
+    let system = MemorySystem::new().with_env("HOME", "/home/test").unwrap();
     let result = expand_cli_path(&system, "~/docs/file.md").unwrap();
     assert_eq!(result.to_string_lossy(), "/home/test/docs/file.md");
 }

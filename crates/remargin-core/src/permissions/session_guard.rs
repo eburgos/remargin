@@ -198,7 +198,7 @@ fn settings_files(system: &dyn System, cwd: &Path) -> Vec<PathBuf> {
 /// child `remargin claude pretool` invocation would perform when the entry
 /// names no absolute path. [`split_paths`]
 /// operates on the value we read — it does not touch process env — so it
-/// stays hermetic under `MockSystem`.
+/// stays hermetic under `MemorySystem`.
 fn remargin_on_path(system: &dyn System) -> bool {
     let Ok(path_var) = system.env_var("PATH") else {
         return false;

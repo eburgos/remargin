@@ -1,12 +1,12 @@
 use std::path::Path;
 
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 
 use super::{DEFAULT_PROMPT_BODY, resolve_system_prompt};
 
 #[test]
 fn nearest_ancestor_wins() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/vault/a/b/c"))
         .unwrap()
         .with_file(
@@ -32,7 +32,7 @@ fn nearest_ancestor_wins() {
 
 #[test]
 fn walk_skips_configs_without_system_prompt() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/vault/a/b/c"))
         .unwrap()
         .with_file(
@@ -53,7 +53,7 @@ fn walk_skips_configs_without_system_prompt() {
 
 #[test]
 fn walk_exhausts_to_default() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/vault/a/b/c"))
         .unwrap();
 
@@ -66,7 +66,7 @@ fn walk_exhausts_to_default() {
 
 #[test]
 fn name_absent_falls_back_to_folder_basename() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/vault/remargin"))
         .unwrap()
         .with_file(
@@ -81,7 +81,7 @@ fn name_absent_falls_back_to_folder_basename() {
 
 #[test]
 fn explicit_name_overrides_folder() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/vault/remargin"))
         .unwrap()
         .with_file(
@@ -96,7 +96,7 @@ fn explicit_name_overrides_folder() {
 
 #[test]
 fn directory_input_starts_walk_at_directory() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/vault/a/b"))
         .unwrap()
         .with_file(
@@ -111,7 +111,7 @@ fn directory_input_starts_walk_at_directory() {
 
 #[test]
 fn empty_prompt_returned_verbatim() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/vault/a"))
         .unwrap()
         .with_file(
@@ -127,7 +127,7 @@ fn empty_prompt_returned_verbatim() {
 
 #[test]
 fn malformed_yaml_errors_with_path() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/vault/a"))
         .unwrap()
         .with_file(
@@ -143,7 +143,7 @@ fn malformed_yaml_errors_with_path() {
 
 #[test]
 fn legacy_config_without_system_prompt_continues_walk() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/vault/a/b"))
         .unwrap()
         .with_file(
@@ -163,7 +163,7 @@ fn legacy_config_without_system_prompt_continues_walk() {
 
 #[test]
 fn vault_root_explicit_prompt_not_default() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/vault/a"))
         .unwrap()
         .with_file(
@@ -180,7 +180,7 @@ fn vault_root_explicit_prompt_not_default() {
 
 #[test]
 fn runner_carried_on_hit_and_null_when_absent() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/vault/a"))
         .unwrap()
         .with_dir(Path::new("/vault/b"))
@@ -204,7 +204,7 @@ fn runner_carried_on_hit_and_null_when_absent() {
 
 #[test]
 fn default_fallback_has_no_runner() {
-    let system = MockSystem::new().with_dir(Path::new("/vault/a")).unwrap();
+    let system = MemorySystem::new().with_dir(Path::new("/vault/a")).unwrap();
 
     let resolved = resolve_system_prompt(&system, Path::new("/vault/a/file.md")).unwrap();
     assert!(resolved.is_default);
@@ -213,7 +213,7 @@ fn default_fallback_has_no_runner() {
 
 #[test]
 fn multiline_runner_errors() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/vault/a"))
         .unwrap()
         .with_file(
@@ -229,7 +229,7 @@ fn multiline_runner_errors() {
 
 #[test]
 fn render_resolved_prompt_includes_runner_line() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/vault/a"))
         .unwrap()
         .with_file(
@@ -245,7 +245,7 @@ fn render_resolved_prompt_includes_runner_line() {
 
 #[test]
 fn missing_prompt_field_errors() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/vault/a"))
         .unwrap()
         .with_file(

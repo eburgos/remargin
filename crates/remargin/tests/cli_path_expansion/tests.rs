@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use assert_cmd::Command;
 use os_shim::System as _;
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 use remargin_core::config::ResolvedConfig;
 use remargin_core::config::identity::IdentityFlags;
 use remargin_core::mcp;
@@ -12,10 +12,10 @@ use remargin_core::path::{ExpandPathError, expand_path};
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
-/// Prepare a `MockSystem` with a fake HOME and a seeded markdown
+/// Prepare a `MemorySystem` with a fake HOME and a seeded markdown
 /// fixture under `<home>/note.md`.
-fn make_mock_home_with_note() -> (MockSystem, String) {
-    let system = MockSystem::new().with_env("HOME", "/home/alice").unwrap();
+fn make_mock_home_with_note() -> (MemorySystem, String) {
+    let system = MemorySystem::new().with_env("HOME", "/home/alice").unwrap();
     system.create_dir_all(Path::new("/home/alice")).unwrap();
     system
         .write(Path::new("/home/alice/note.md"), b"# Hello\n\nBody.\n")
@@ -25,7 +25,7 @@ fn make_mock_home_with_note() -> (MockSystem, String) {
 
 // --- Core helper contract ------------------------------------------
 
-/// `~` works against the `MockSystem` HOME env var.
+/// `~` works against the `MemorySystem` HOME env var.
 #[test]
 fn expand_tilde_in_mock_system() {
     let (system, home) = make_mock_home_with_note();
@@ -50,7 +50,7 @@ fn expand_tilde_user_errors_clearly() {
 /// it without staring at a "file not found" red herring.
 #[test]
 fn expand_undefined_var_names_the_variable() {
-    let system = MockSystem::new();
+    let system = MemorySystem::new();
     let err = expand_path(&system, "$DEFINITELY_UNSET_FOO/bar").unwrap_err();
     assert_eq!(
         err,
@@ -97,7 +97,7 @@ fn cli_get_expands_tilde_against_child_home() {
 
 // --- MCP surface ----------------------------------------------------
 
-fn mcp_test_config(system: &MockSystem, base: &Path) -> ResolvedConfig {
+fn mcp_test_config(system: &MemorySystem, base: &Path) -> ResolvedConfig {
     ResolvedConfig::resolve(system, base, &IdentityFlags::default(), None).unwrap()
 }
 
@@ -177,7 +177,7 @@ fn mcp_undefined_var_surfaces_named_error() {
 /// construction. This test pins the contract.
 #[test]
 fn cli_and_mcp_expand_identically_over_representative_inputs() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_env("HOME", "/home/alice")
         .unwrap()
         .with_env("FOO", "bar")

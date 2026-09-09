@@ -228,7 +228,7 @@ pub fn check_against_resolved(
     check_against_resolved_for_caller(system, op, target, permissions, &CallerInfo::default())
 }
 
-/// Caller-aware variant. Reads HOME via `system` so `MockSystem`
+/// Caller-aware variant. Reads HOME via `system` so `MemorySystem`
 /// tests drive `~/.ssh/**` via `with_env`.
 ///
 /// # Errors

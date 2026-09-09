@@ -4,7 +4,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use os_shim::System as _;
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 
 use crate::operations::plan::{
     UnprotectConfigDiff, UnprotectConflict, UnprotectEntryAction, UnprotectSidecarDiff,
@@ -23,7 +23,7 @@ use crate::permissions::unprotect::UnprotectArgs;
 /// or sidecar (the hook is the single source of truth), so tests that
 /// exercise the sidecar-driven reverse must seed it here.
 fn restrict_with_legacy_sidecar(
-    system: &MockSystem,
+    system: &MemorySystem,
     realm: &Path,
     path: &str,
     settings: &[PathBuf],
@@ -50,7 +50,7 @@ fn restrict_with_legacy_sidecar(
     .unwrap();
 }
 
-fn snapshot(system: &MockSystem, paths: &[&Path]) -> Vec<(PathBuf, Result<String, io::Error>)> {
+fn snapshot(system: &MemorySystem, paths: &[&Path]) -> Vec<(PathBuf, Result<String, io::Error>)> {
     paths
         .iter()
         .map(|p| (p.to_path_buf(), system.read_to_string(p)))
@@ -60,9 +60,9 @@ fn snapshot(system: &MockSystem, paths: &[&Path]) -> Vec<(PathBuf, Result<String
 /// Realm fixture: `<r>/.claude/` exists, no `.remargin.yaml`, no
 /// settings files. Anchor is `<r>`. Returns `(system, realm_root,
 /// project_settings, user_settings)`.
-fn fresh_realm() -> (MockSystem, PathBuf, PathBuf, PathBuf) {
+fn fresh_realm() -> (MemorySystem, PathBuf, PathBuf, PathBuf) {
     let realm = PathBuf::from("/realm");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(&realm)
         .unwrap()
         .with_dir(realm.join(".claude"))
@@ -340,7 +340,7 @@ fn wildcard_projection_after_wildcard_restrict() {
 #[test]
 fn no_anchor_returns_reject() {
     let cwd = PathBuf::from("/orphan");
-    let system = MockSystem::new().with_dir(&cwd).unwrap();
+    let system = MemorySystem::new().with_dir(&cwd).unwrap();
     let projection = project_unprotect(&system, &cwd, &unprotect_args("foo")).unwrap();
     let reason = reject_or_fail(projection);
     assert!(

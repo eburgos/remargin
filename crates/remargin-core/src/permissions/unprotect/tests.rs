@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use os_shim::System as _;
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 use serde_yaml::Value;
 
 use crate::permissions::claude_sync::{RuleSet, apply_rules};
@@ -22,7 +22,7 @@ use crate::permissions::unprotect::{UnprotectArgs, unprotect};
 /// carries into the migration. The current `restrict` writes no settings
 /// or sidecar (the hook is the single source of truth).
 fn restrict_with_legacy_sidecar(
-    system: &MockSystem,
+    system: &MemorySystem,
     anchor: &Path,
     path: &str,
     settings: &[PathBuf],
@@ -49,9 +49,9 @@ fn restrict_with_legacy_sidecar(
     .unwrap();
 }
 
-fn realm_with_claude() -> (MockSystem, PathBuf) {
+fn realm_with_claude() -> (MemorySystem, PathBuf) {
     let anchor = PathBuf::from("/r");
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(&anchor)
         .unwrap()
         .with_dir(anchor.join(".claude"))
@@ -70,7 +70,7 @@ fn restrict_args(path: &str) -> RestrictArgs {
     RestrictArgs::new(String::from(path), Vec::new(), false)
 }
 
-fn read_yaml(system: &MockSystem, path: &Path) -> Value {
+fn read_yaml(system: &MemorySystem, path: &Path) -> Value {
     let body = system.read_to_string(path).unwrap();
     serde_yaml::from_str(&body).unwrap()
 }
@@ -293,7 +293,7 @@ fn wildcard_restrict_and_unprotect_round_trip() {
 /// Scenario 7: no `.claude/` ancestor → clear error.
 #[test]
 fn anchor_not_found_errors() {
-    let system = MockSystem::new().with_dir(Path::new("/r")).unwrap();
+    let system = MemorySystem::new().with_dir(Path::new("/r")).unwrap();
     let err = unprotect(
         &system,
         Path::new("/r"),

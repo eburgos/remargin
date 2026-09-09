@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 
 use crate::operations::query::{
     QueryFilter, query, render_query_plain, resolve_comment_id, to_compact_row,
@@ -50,8 +50,8 @@ Already reviewed.
 "
 }
 
-fn setup_system() -> MockSystem {
-    MockSystem::new()
+fn setup_system() -> MemorySystem {
+    MemorySystem::new()
         .with_dir(Path::new("/project"))
         .unwrap()
         .with_dir(Path::new("/project/docs"))
@@ -127,7 +127,7 @@ fn query_by_author() {
 
 #[test]
 fn query_empty_dir() {
-    let system = MockSystem::new().with_dir(Path::new("/empty")).unwrap();
+    let system = MemorySystem::new().with_dir(Path::new("/empty")).unwrap();
 
     let filter = QueryFilter::default();
     let results = query(&system, Path::new("/empty"), &filter).unwrap();
@@ -223,7 +223,7 @@ fn query_by_comment_id_not_found_returns_empty() {
 
 #[test]
 fn query_by_comment_id_empty_folder_returns_empty() {
-    let system = MockSystem::new().with_dir(Path::new("/empty")).unwrap();
+    let system = MemorySystem::new().with_dir(Path::new("/empty")).unwrap();
     let filter = QueryFilter {
         comment_id: Some(String::from("abc")),
         ..QueryFilter::default()
@@ -251,7 +251,7 @@ fn resolve_comment_id_not_found() {
 #[test]
 fn resolve_comment_id_ambiguous() {
     // Create two documents with the same comment ID.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/multi"))
         .unwrap()
         .with_file(Path::new("/multi/a.md"), doc_with_pending().as_bytes())
@@ -349,8 +349,8 @@ Comment from carol.
 "
 }
 
-fn setup_expanded_system() -> MockSystem {
-    MockSystem::new()
+fn setup_expanded_system() -> MemorySystem {
+    MemorySystem::new()
         .with_dir(Path::new("/exp"))
         .unwrap()
         .with_file(Path::new("/exp/review.md"), doc_expanded().as_bytes())
@@ -611,7 +611,7 @@ checksum: sha256:zzz
 Please review.
 ```
 ";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/z"))
         .unwrap()
         .with_file(Path::new("/z/a.md"), doc.as_bytes())
@@ -712,8 +712,8 @@ Fully acked by both.
 "
 }
 
-fn setup_pending_system() -> MockSystem {
-    MockSystem::new()
+fn setup_pending_system() -> MemorySystem {
+    MemorySystem::new()
         .with_dir(Path::new("/pend"))
         .unwrap()
         .with_file(
@@ -882,7 +882,7 @@ checksum: sha256:b1b1
 No to field at all.
 ```
 ";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/bonly"))
         .unwrap()
         .with_file(Path::new("/bonly/note.md"), broadcast_only.as_bytes())
@@ -931,7 +931,7 @@ ack:
 Broadcast, already closed by an ack.
 ```
 ";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/bclosed"))
         .unwrap()
         .with_file(Path::new("/bclosed/note.md"), acked_broadcast.as_bytes())
@@ -1218,7 +1218,7 @@ fn expanded_comment_skips_none_options_in_json() {
     // Feed a file with a minimal comment (no reply_to/thread/signature)
     // and make sure those fields are omitted from the JSON so the Zod
     // `strictObject` schema treats them as `undefined`.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/mini"))
         .unwrap()
         .with_file(
@@ -1348,7 +1348,7 @@ checksum: sha256:m2
 Nothing match-worthy here.
 ```
 ";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/d"))
         .unwrap()
         .with_file(Path::new("/d/x.md"), doc.as_bytes())
@@ -1469,8 +1469,8 @@ Directed to alice, acked.
 "
 }
 
-fn setup_four_shapes_system() -> MockSystem {
-    MockSystem::new()
+fn setup_four_shapes_system() -> MemorySystem {
+    MemorySystem::new()
         .with_dir(Path::new("/four"))
         .unwrap()
         .with_file(Path::new("/four/shapes.md"), doc_four_shapes().as_bytes())
@@ -1687,8 +1687,8 @@ no tags at all
 "
 }
 
-fn kind_system() -> MockSystem {
-    MockSystem::new()
+fn kind_system() -> MemorySystem {
+    MemorySystem::new()
         .with_dir(Path::new("/kinds"))
         .unwrap()
         .with_file(Path::new("/kinds/doc.md"), kind_doc().as_bytes())
@@ -2215,7 +2215,7 @@ Bob's broadcast, zero acks.
 
 #[test]
 fn pending_broadcast_excludes_callers_own_broadcast() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/two"))
         .unwrap()
         .with_file(Path::new("/two/b.md"), doc_two_broadcasts().as_bytes())

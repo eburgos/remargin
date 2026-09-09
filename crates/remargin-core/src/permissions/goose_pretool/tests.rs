@@ -4,19 +4,19 @@
 //! install/uninstall lifecycle).
 //!
 //! Every test feeds a synthetic goose `PreToolUse` envelope through
-//! `goose_pretool()` against a `MockSystem` realm. The core function is
+//! `goose_pretool()` against a `MemorySystem` realm. The core function is
 //! pure, so the binary never spawns.
 
 use std::path::Path;
 
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 use serde_json::{Value, json};
 
 use crate::permissions::goose_pretool::{BlockDecision, GooseVerdict, goose_pretool};
 use crate::permissions::pretool::ToolPrefix;
 
-fn mock_with(files: &[(&str, &str)]) -> MockSystem {
-    let mut system = MockSystem::new();
+fn mock_with(files: &[(&str, &str)]) -> MemorySystem {
+    let mut system = MemorySystem::new();
     for (path, body) in files {
         system = system.with_file(Path::new(path), body.as_bytes()).unwrap();
     }
@@ -24,7 +24,7 @@ fn mock_with(files: &[(&str, &str)]) -> MockSystem {
 }
 
 /// A realm at `/r` whose `secret/` subtree is remargin-managed.
-fn realm() -> MockSystem {
+fn realm() -> MemorySystem {
     mock_with(&[(
         "/r/.remargin.yaml",
         "permissions:\n  trusted_roots:\n    - path: secret\n",

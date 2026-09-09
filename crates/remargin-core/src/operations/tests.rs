@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::thread;
 
 use os_shim::System as _;
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 
 use crate::comment_style;
 use crate::config::{Mode, ResolvedConfig};
@@ -183,8 +183,8 @@ fn open_config() -> ResolvedConfig {
 }
 
 /// Create a mock system with a document file.
-fn system_with_doc(content: &str) -> MockSystem {
-    MockSystem::new()
+fn system_with_doc(content: &str) -> MemorySystem {
+    MemorySystem::new()
         .with_file(Path::new("/docs/test.md"), content.as_bytes())
         .unwrap()
 }
@@ -225,9 +225,9 @@ participants:
     }
 }
 
-/// `MockSystem` seeded with a document and the matching signing key.
-fn sign_system(doc: &str) -> MockSystem {
-    MockSystem::new()
+/// `MemorySystem` seeded with a document and the matching signing key.
+fn sign_system(doc: &str) -> MemorySystem {
+    MemorySystem::new()
         .with_file(Path::new("/docs/test.md"), doc.as_bytes())
         .unwrap()
         .with_file(
@@ -364,7 +364,7 @@ Body.
 
 #[test]
 fn create_with_attachment() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/test.md"), MINIMAL_DOC.as_bytes())
         .unwrap()
         .with_file(Path::new("/tmp/screenshot.png"), b"PNG_DATA")
@@ -2519,7 +2519,7 @@ fn project_edit_cascades_ack_clear_to_descendants() {
 /// `create_comment` helper so checksums and frontmatter match what
 /// `verify` expects (same pattern as [`seed_with_comment`] below,
 /// extended to produce a second comment).
-fn seed_two_comments() -> (MockSystem, ResolvedConfig, String, String) {
+fn seed_two_comments() -> (MemorySystem, ResolvedConfig, String, String) {
     let system = system_with_doc(MINIMAL_DOC);
     let config = open_config();
     let pos = InsertPosition::Append;
@@ -2543,7 +2543,7 @@ fn seed_two_comments() -> (MockSystem, ResolvedConfig, String, String) {
 
 /// Seed a one-comment document via the real `create_comment` helper
 /// so subsequent plan projections see a verify-clean baseline.
-fn seed_with_comment() -> (MockSystem, ResolvedConfig, String) {
+fn seed_with_comment() -> (MemorySystem, ResolvedConfig, String) {
     let system = system_with_doc(MINIMAL_DOC);
     let config = open_config();
     let pos = InsertPosition::Append;
@@ -2766,7 +2766,7 @@ fn project_sandbox_remove_clears_entry_without_writing_disk() {
 
 #[test]
 fn project_sandbox_add_rejects_non_markdown_path() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(Path::new("/docs/test.txt"), b"not markdown")
         .unwrap();
     let config = open_config();
@@ -2940,7 +2940,7 @@ fn project_sign_ids_unknown_errors_out() {
 
 #[test]
 fn project_sign_missing_key_bails() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/docs/test.md"),
             two_author_doc_for_sign().as_bytes(),
@@ -3031,9 +3031,9 @@ fn assert_forbidden_ops_error(err: &anyhow::Error, basename: &str) {
     );
 }
 
-fn system_with_forbidden(basename: &str, contents: &[u8]) -> (MockSystem, PathBuf) {
+fn system_with_forbidden(basename: &str, contents: &[u8]) -> (MemorySystem, PathBuf) {
     let path = PathBuf::from(format!("/docs/{basename}"));
-    let system = MockSystem::new().with_file(&path, contents).unwrap();
+    let system = MemorySystem::new().with_file(&path, contents).unwrap();
     (system, path)
 }
 
@@ -3219,7 +3219,7 @@ fn sandbox_remove_refuses_forbidden_targets() {
     }
 }
 
-fn read_file(system: &MockSystem, path: &Path) -> Vec<u8> {
+fn read_file(system: &MemorySystem, path: &Path) -> Vec<u8> {
     use std::io::Read as _;
     let mut reader = system.open(path).unwrap();
     let mut buf = Vec::new();
@@ -3262,8 +3262,8 @@ Body.
 "
 }
 
-fn system_with_doc_and_yaml(doc: &str, yaml: &str) -> MockSystem {
-    MockSystem::new()
+fn system_with_doc_and_yaml(doc: &str, yaml: &str) -> MemorySystem {
+    MemorySystem::new()
         .with_file(Path::new("/docs/test.md"), doc.as_bytes())
         .unwrap()
         .with_file(Path::new("/docs/.remargin.yaml"), yaml.as_bytes())
@@ -3637,7 +3637,7 @@ fn sandbox_remove_refused_when_deny_ops_lists_sandbox_remove() {
 #[test]
 fn sign_refused_when_target_under_restrict() {
     let yaml = "permissions:\n  trusted_roots:\n    - path: elsewhere\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/docs/test.md"),
             doc_with_one_comment_for_guard().as_bytes(),
@@ -3665,7 +3665,7 @@ fn sign_refused_when_target_under_restrict() {
 #[test]
 fn sign_refused_when_deny_ops_lists_sign() {
     let yaml = "permissions:\n  deny_ops:\n    - path: test.md\n      ops: [sign]\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_file(
             Path::new("/docs/test.md"),
             doc_with_one_comment_for_guard().as_bytes(),
@@ -3748,8 +3748,8 @@ fn read_ops_unaffected_by_restrict() {
     assert!(!parsed.comments().is_empty());
 }
 
-fn strict_recipient_system(doc: &str) -> MockSystem {
-    MockSystem::new()
+fn strict_recipient_system(doc: &str) -> MemorySystem {
+    MemorySystem::new()
         .with_file(Path::new("/docs/test.md"), doc.as_bytes())
         .unwrap()
         .with_file(

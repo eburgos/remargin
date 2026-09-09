@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::DateTime;
 use os_shim::System as _;
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 
 use crate::config::registry::Registry;
 use crate::config::{Mode, ResolvedConfig};
@@ -137,7 +137,7 @@ checksum: {bob_cksum}
 
 /// Single-comment doc, already signed with the matching test key.
 /// Useful for idempotency / skip-already-signed cases.
-fn pre_signed_doc(system_for_signing: &MockSystem) -> String {
+fn pre_signed_doc(system_for_signing: &MemorySystem) -> String {
     let content = "alice's note";
     let cksum = crypto::compute_checksum(content, &[]);
 
@@ -186,7 +186,7 @@ signature: {sig}
     )
 }
 
-fn mock_with(content: &str) -> MockSystem {
+fn mock_with(content: &str) -> MemorySystem {
     let registry_yaml = format!(
         "\
 participants:
@@ -202,7 +202,7 @@ participants:
       - {TEST_PUBLIC_KEY}
 "
     );
-    MockSystem::new()
+    MemorySystem::new()
         .with_file(Path::new("/keys/ed25519"), TEST_PRIVATE_KEY.as_bytes())
         .unwrap()
         .with_file(Path::new("/d/.remargin.yaml"), b"mode: registered\n")
@@ -342,7 +342,7 @@ fn sign_ids_already_signed_reported_as_skipped() {
     // caller lists an id that is already signed under `--ids`. The op
     // must NOT re-sign; it must report it as skipped with the canonical
     // reason string.
-    let pre_system = MockSystem::new()
+    let pre_system = MemorySystem::new()
         .with_file(Path::new("/keys/ed25519"), TEST_PRIVATE_KEY.as_bytes())
         .unwrap();
     let doc_text = pre_signed_doc(&pre_system);
@@ -491,7 +491,7 @@ fn legacy_zero_offset_signature_survives_the_z_rewrite() {
         to: Vec::new(),
         ts: DateTime::parse_from_rfc3339("2026-04-06T12:00:00+00:00").unwrap(),
     };
-    let signing_system = MockSystem::new()
+    let signing_system = MemorySystem::new()
         .with_file(Path::new("/keys/ed25519"), TEST_PRIVATE_KEY.as_bytes())
         .unwrap();
     let sig = compute_signature(&comment, Path::new("/keys/ed25519"), &signing_system).unwrap();
@@ -517,7 +517,7 @@ signature: {sig}
 ```
 "
     );
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(Path::new("/d"))
         .unwrap()
         .with_file(Path::new("/d/legacy.md"), legacy_doc.as_bytes())
@@ -709,7 +709,7 @@ fn sign_with_repair_checksum_overwrites_stale_signature_on_tampered_comment() {
     // with reason="already_signed" because `signature.is_some()`;
     // under --repair-checksum the op is supposed to re-vouch, which
     // means overwriting both fields.
-    let pre_system = MockSystem::new()
+    let pre_system = MemorySystem::new()
         .with_file(Path::new("/keys/ed25519"), TEST_PRIVATE_KEY.as_bytes())
         .unwrap();
     let pre_signed = pre_signed_doc(&pre_system);

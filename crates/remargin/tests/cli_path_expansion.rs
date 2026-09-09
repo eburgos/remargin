@@ -11,7 +11,7 @@
 //! - Undefined env vars and `~user` produce a clear named error.
 //!
 //! Env-var manipulation is done via a hermetic fixture home: we set
-//! `HOME` in the child process (for CLI runs) and on a `MockSystem`
+//! `HOME` in the child process (for CLI runs) and on a `MemorySystem`
 //! (for MCP runs). No test mutates the parent process environment.
 
 #[cfg(test)]

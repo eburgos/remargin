@@ -5,7 +5,7 @@ use std::env::VarError;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
-use os_shim::mock::MockSystem;
+use os_shim::mock::MemorySystem;
 use os_shim::{FileMetadata, System, TempDirHandle, WalkEntry};
 
 use crate::config::{Mode, ResolvedConfig};
@@ -13,16 +13,16 @@ use crate::operations::mv::{MvArgs, mv};
 use crate::parser::AuthorType;
 
 /// Wrapper that turns the first `rename` call into an EXDEV error so we
-/// can exercise the cross-filesystem fallback against a `MockSystem`
+/// can exercise the cross-filesystem fallback against a `MemorySystem`
 /// without needing two real mounts. Subsequent operations delegate
 /// straight through.
 struct ExdevSystem<'sys> {
     fired: AtomicBool,
-    inner: &'sys MockSystem,
+    inner: &'sys MemorySystem,
 }
 
 impl<'sys> ExdevSystem<'sys> {
-    fn new(inner: &'sys MockSystem) -> Self {
+    fn new(inner: &'sys MemorySystem) -> Self {
         Self {
             fired: AtomicBool::new(false),
             inner,
@@ -147,8 +147,8 @@ fn open_config() -> ResolvedConfig {
     }
 }
 
-fn realm_with(file: &str, contents: &[u8]) -> MockSystem {
-    MockSystem::new()
+fn realm_with(file: &str, contents: &[u8]) -> MemorySystem {
+    MemorySystem::new()
         .with_dir(base())
         .unwrap()
         .with_file(base().join(file), contents)
@@ -174,7 +174,7 @@ fn cross_filesystem_rename_falls_back_to_copy() {
 
 #[test]
 fn force_overwrites_destination() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(base())
         .unwrap()
         .with_file(base().join("a.md"), b"new")
@@ -193,7 +193,7 @@ fn force_overwrites_destination() {
 #[test]
 fn idempotent_when_source_already_at_destination() {
     // src is missing, dst exists — pretend a previous mv already succeeded.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(base())
         .unwrap()
         .with_file(base().join("b.md"), b"already moved")
@@ -211,7 +211,7 @@ fn idempotent_when_source_already_at_destination() {
 
 #[test]
 fn missing_source_and_destination_errors() {
-    let system = MockSystem::new().with_dir(base()).unwrap();
+    let system = MemorySystem::new().with_dir(base()).unwrap();
     let args = MvArgs::new(PathBuf::from("a.md"), PathBuf::from("b.md"));
     let err = mv(&system, base(), &open_config(), &args).unwrap_err();
     assert!(format!("{err}").contains("source not found"));
@@ -219,7 +219,7 @@ fn missing_source_and_destination_errors() {
 
 #[test]
 fn moves_across_directories() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(base())
         .unwrap()
         .with_dir(base().join("notes"))
@@ -242,7 +242,7 @@ fn moves_across_directories() {
 
 #[test]
 fn refuses_destination_directory() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(base())
         .unwrap()
         .with_file(base().join("a.md"), b"x")
@@ -260,7 +260,7 @@ fn refuses_destination_directory() {
 
 #[test]
 fn refuses_existing_destination_without_force() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(base())
         .unwrap()
         .with_file(base().join("a.md"), b"src")
@@ -282,7 +282,7 @@ fn refuses_forbidden_source_basename() {
     // `.remargin.yaml` is on the forbidden-target list — moving it
     // would let an agent route around the config-file write
     // protection.
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(base())
         .unwrap()
         .with_file(base().join(".remargin.yaml"), b"identity: alice\n")
@@ -312,7 +312,7 @@ fn refuses_path_escape_on_source() {
 /// directory succeeds and reports `is_directory = true`.
 #[test]
 fn renames_empty_directory() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(base())
         .unwrap()
         .with_dir(base().join("a"))
@@ -370,7 +370,7 @@ fn same_path_is_noop() {
 
 #[test]
 fn renames_directory_with_nested_md_files() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(base())
         .unwrap()
         .with_dir(base().join("notes"))
@@ -399,7 +399,7 @@ fn renames_directory_with_nested_md_files() {
 
 #[test]
 fn renames_directory_with_mixed_content_and_subdirectory() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(base())
         .unwrap()
         .with_dir(base().join("src"))
@@ -437,7 +437,7 @@ fn renames_directory_with_mixed_content_and_subdirectory() {
 
 #[test]
 fn directory_same_path_is_noop() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(base())
         .unwrap()
         .with_dir(base().join("notes"))
@@ -455,7 +455,7 @@ fn directory_same_path_is_noop() {
 
 #[test]
 fn directory_refuses_existing_destination_without_force() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(base())
         .unwrap()
         .with_dir(base().join("src"))
@@ -474,7 +474,7 @@ fn directory_refuses_existing_destination_without_force() {
 
 #[test]
 fn directory_force_overwrites_existing_destination() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(base())
         .unwrap()
         .with_dir(base().join("src"))
@@ -502,7 +502,7 @@ fn directory_force_overwrites_existing_destination() {
 
 #[test]
 fn directory_refuses_dot_prefixed_source() {
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(base())
         .unwrap()
         .with_dir(base().join(".hidden"))
@@ -517,7 +517,7 @@ fn directory_refuses_dot_prefixed_source() {
 #[test]
 fn directory_refused_when_deny_ops_covers_source() {
     let yaml = "permissions:\n  deny_ops:\n    - path: notes\n      ops: [mv]\n";
-    let system = MockSystem::new()
+    let system = MemorySystem::new()
         .with_dir(base())
         .unwrap()
         .with_file(base().join(".remargin.yaml"), yaml.as_bytes())
