@@ -721,9 +721,9 @@ fn resolve_trusted_roots_for_cwd_locked_returns_empty() {
 // cli_allowed: folder-level CLI policy — nearest-wins resolver tests
 // ---------------------------------------------------------------------
 
-/// T1: no `cli_allowed` anywhere in walk → effective = true (default allow).
+/// T1: no `cli_allowed` anywhere in walk → effective = false (default deny).
 #[test]
-fn cli_allowed_default_allow_when_absent() {
+fn cli_allowed_default_deny_when_absent() {
     let system = MemorySystem::new()
         .with_dir(Path::new("/realm"))
         .unwrap()
@@ -734,11 +734,11 @@ fn cli_allowed_default_allow_when_absent() {
         resolved.cli_allowed.is_none(),
         "expected None (not declared)"
     );
-    assert!(resolved.cli_allowed(), "effective default must be true");
+    assert!(!resolved.cli_allowed(), "effective default must be false");
 }
 
 /// T2: nearest-wins deny — root + A absent, A.A declares deny.
-/// Deny in A.A subtree; allow elsewhere.
+/// Deny everywhere: A.A explicitly, the undeclared walks by default.
 #[test]
 fn cli_allowed_nearest_wins_deny() {
     let root_yaml = "identity: alice\n";
@@ -762,15 +762,15 @@ fn cli_allowed_nearest_wins_deny() {
     assert_eq!(from_aa.cli_allowed, Some(false));
     assert!(!from_aa.cli_allowed());
 
-    // Walk from A: no declaration in A or root → default allow.
+    // Walk from A: no declaration in A or root → default deny.
     let from_a = resolve_permissions(&system, Path::new("/realm/a")).unwrap();
     assert!(from_a.cli_allowed.is_none());
-    assert!(from_a.cli_allowed());
+    assert!(!from_a.cli_allowed());
 
-    // Walk from root: no declaration → default allow.
+    // Walk from root: no declaration → default deny.
     let from_root = resolve_permissions(&system, Path::new("/realm")).unwrap();
     assert!(from_root.cli_allowed.is_none());
-    assert!(from_root.cli_allowed());
+    assert!(!from_root.cli_allowed());
 }
 
 /// T3: root declares `allow` — inherited everywhere below (no override).

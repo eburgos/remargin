@@ -92,7 +92,7 @@ pub struct Permissions {
     /// Folder-level CLI policy. `None` = not declared at this level
     /// (inherit from parent walk). `Some(true)` = CLI allowed.
     /// `Some(false)` = CLI denied. Resolved with nearest-wins
-    /// semantics; effective default when absent everywhere = allowed.
+    /// semantics; effective default when absent everywhere = denied.
     #[serde(default)]
     pub cli_allowed: Option<bool>,
 

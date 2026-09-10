@@ -337,6 +337,21 @@ fn every_deny_family_names_goose_namespaced_ops() {
     assert_goose_namespaced(&reason);
 }
 
+/// No `cli_allowed` declared in the walk → the CLI is denied by default,
+/// and the reason renders goose's tool namespacing with the opt-in hint.
+#[test]
+fn cli_default_deny_names_goose_namespaced_ops() {
+    let stdin = event_json(
+        "developer__shell",
+        "/tmp",
+        &json!({ "command": "remargin ls" }),
+    );
+    let reason = expect_block(goose_pretool(&mock_with(&[]), &stdin));
+    assert!(reason.contains("cli_allowed: true"), "reason: {reason}");
+    assert!(!reason.contains("cli_allowed: false"), "reason: {reason}");
+    assert_goose_namespaced(&reason);
+}
+
 // ---- 7. verdict payload shape ------------------------------------------
 
 /// The stdout channel carries goose's documented block object verbatim.

@@ -103,8 +103,8 @@ pub struct ResolvedPermissions {
 
     /// Effective folder-level CLI policy resolved by nearest-wins
     /// parent-walk. `None` means no `.remargin.yaml` in the walk
-    /// declared `cli_allowed`; callers treat `None` as allowed
-    /// (effective default = true).
+    /// declared `cli_allowed`; callers treat `None` as denied
+    /// (effective default = false).
     pub cli_allowed: Option<bool>,
 
     pub deny_ops: Vec<ResolvedDenyOps>,
@@ -127,13 +127,14 @@ impl ResolvedPermissions {
             .collect()
     }
 
-    /// Effective CLI policy: `true` = CLI allowed (default when absent).
-    /// Nearest-wins declaration in the parent walk wins; absent = allowed.
+    /// Effective CLI policy: `true` = CLI allowed for agents. The
+    /// nearest declaration in the parent walk wins; when no
+    /// `.remargin.yaml` in the walk declares it, the CLI is denied.
     #[must_use]
     pub const fn cli_allowed(&self) -> bool {
         match self.cli_allowed {
             Some(v) => v,
-            None => true,
+            None => false,
         }
     }
 

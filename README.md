@@ -791,6 +791,11 @@ remargin permissions show [--json]
 remargin permissions check <PATH> [--why]
 ```
 
+Two distinct `cli_allowed` fields exist and they gate different things:
+
+- **Folder-level `permissions: cli_allowed:`** in `.remargin.yaml` is the policy the `PreToolUse` hook reads: a Bash `remargin …` invocation from an agent is denied unless the nearest declaration in the walk from the session cwd is `cli_allowed: true`. When no `.remargin.yaml` in the walk declares the key, the CLI is **denied by default** — declare `permissions: cli_allowed: true` to opt a realm in.
+- **Per-entry `cli_allowed`** on a `trusted_roots` entry (the `--cli-allowed` restrict flag above, shown by `permissions show`) only suppresses the legacy projected `Bash(remargin *)` settings deny for that entry. The hook never reads it.
+
 Because the hook is the single source of truth, a fresh `claude restrict` writes **only** the `.remargin.yaml` entry — no `permissions.deny` rules, and therefore no sidecar. The sidecar at `<.claude-anchor>/.claude/.remargin-restrictions.json` survives only for realms an older remargin projected rules into: `claude unrestrict` reads it to scrub those legacy rules cleanly without ever touching user-added rules, and `remargin doctor` flags any that were never reversed. When present, it is `.gitignore`d automatically (its absolute paths and per-machine timestamps don't belong in version control).
 
 `permissions check <path>` exits gitignore-style: 0 when the path is restricted, 1 when not. Pair with `--why` for the matching rule's kind, source file, and rule text.

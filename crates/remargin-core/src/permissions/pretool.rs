@@ -233,7 +233,7 @@ pub fn decide(
                     return PretoolOutcome::Fail(format!("permissions resolve failed: {err}"));
                 }
             };
-            bash_decision(system, policy.cli_allowed(), command, cwd, tool_prefix)
+            bash_decision(system, policy.cli_allowed, command, cwd, tool_prefix)
         }
     }
 }
@@ -457,17 +457,17 @@ fn word_covers_root(word: &Path, anchor: &Path) -> bool {
 /// a gate; it only selects the deny-message guidance.
 fn bash_decision(
     system: &dyn System,
-    cli_allowed: bool,
+    cli_policy: Option<bool>,
     command: &str,
     event_cwd: &Path,
     tool_prefix: ToolPrefix,
 ) -> PretoolOutcome {
     let commands = split_into_simple_commands(command);
 
-    // Folder-level CLI policy: deny any `remargin` CLI invocation when
-    // the effective policy is false (nearest-wins, default = allowed).
-    if !cli_allowed && first_verb_is_remargin(&commands) {
-        return PretoolOutcome::Deny(build_cli_denied_decision(tool_prefix));
+    // Folder-level CLI policy: deny any `remargin` CLI invocation unless
+    // the nearest declaration is `cli_allowed: true` (absent = denied).
+    if cli_policy != Some(true) && first_verb_is_remargin(&commands) {
+        return PretoolOutcome::Deny(build_cli_denied_decision(tool_prefix, cli_policy.is_some()));
     }
 
     // In-realm cwds get the same per-word scan; a bare word with no path
@@ -979,15 +979,24 @@ fn build_decision(tool: &str, path: &Path, tool_prefix: ToolPrefix) -> Decision 
     }
 }
 
-fn build_cli_denied_decision(tool_prefix: ToolPrefix) -> Decision {
+fn build_cli_denied_decision(tool_prefix: ToolPrefix, declared: bool) -> Decision {
+    let permission_decision_reason = if declared {
+        format!(
+            "The remargin CLI is denied for agents in this folder (cli_allowed: false). \
+             Use the {tool_prefix}* tools instead."
+        )
+    } else {
+        format!(
+            "The remargin CLI is denied for agents by default: no .remargin.yaml in this \
+             folder's walk declares `permissions: cli_allowed`. Use the {tool_prefix}* \
+             tools instead, or declare `permissions: cli_allowed: true` to allow the CLI here."
+        )
+    };
     Decision {
         hook_specific_output: DecisionInner {
             hook_event_name: "PreToolUse",
             permission_decision: PermissionDecision::Deny,
-            permission_decision_reason: format!(
-                "The remargin CLI is denied for agents in this folder (cli_allowed: false). \
-                 Use the {tool_prefix}* tools instead."
-            ),
+            permission_decision_reason,
         },
     }
 }

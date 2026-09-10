@@ -367,6 +367,52 @@ fn grep_realm_root_ancestor_denies() {
     assert!(reason.contains("mcp__remargin__search"));
 }
 
+/// CLI policy, end-to-end: a walk that never declares
+/// `permissions: cli_allowed` denies `remargin ls` by default, and the
+/// reason carries the opt-in hint rather than the explicit-`false` message.
+#[test]
+fn bash_remargin_cli_denied_by_default_when_undeclared() {
+    let realm = TempDir::new().unwrap();
+    fs::write(realm.path().join(".remargin.yaml"), "identity: alice\n").unwrap();
+
+    let stdin = envelope("Bash", realm.path(), &json!({ "command": "remargin ls" }));
+
+    let out = run_pretool(&stdin);
+    assert_eq!(out.status.code(), Some(0_i32));
+    let payload: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        payload["hookSpecificOutput"]["permissionDecision"],
+        json!("deny")
+    );
+    let reason = payload["hookSpecificOutput"]["permissionDecisionReason"]
+        .as_str()
+        .unwrap();
+    assert!(reason.contains("cli_allowed: true"), "reason: {reason}");
+    assert!(!reason.contains("cli_allowed: false"), "reason: {reason}");
+}
+
+/// CLI policy, end-to-end: declaring `permissions: cli_allowed: true`
+/// opts the realm back in — `remargin ls` silently allows.
+#[test]
+fn bash_remargin_cli_allowed_when_declared_true() {
+    let realm = TempDir::new().unwrap();
+    fs::write(
+        realm.path().join(".remargin.yaml"),
+        "identity: alice\npermissions:\n  cli_allowed: true\n",
+    )
+    .unwrap();
+
+    let stdin = envelope("Bash", realm.path(), &json!({ "command": "remargin ls" }));
+
+    let out = run_pretool(&stdin);
+    assert_eq!(out.status.code(), Some(0_i32));
+    assert!(
+        out.stdout.is_empty(),
+        "expected silent allow, got: {}",
+        String::from_utf8_lossy(&out.stdout),
+    );
+}
+
 fn run_pretool_args(args: &[&str], cwd: &Path, home: &Path) -> Output {
     Command::cargo_bin("remargin")
         .unwrap()
