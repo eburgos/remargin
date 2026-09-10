@@ -237,7 +237,10 @@ pub enum Commands {
         /// Insert after this line number (1-indexed).
         #[arg(long, conflicts_with_all = ["after_comment", "after_heading"])]
         after_line: Option<usize>,
-        /// Attachments to include.
+        /// File paths to upload. Each file is copied beside the document
+        /// and listed in the comment's `attachments` header — stored, not
+        /// displayed. To show an image inline, also write
+        /// `![alt](assets/<filename>)` in the comment body.
         #[arg(long)]
         attach: Vec<PathBuf>,
         /// Acknowledge the parent comment when replying. Default (omitted):

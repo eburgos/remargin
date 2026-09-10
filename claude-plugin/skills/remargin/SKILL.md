@@ -119,7 +119,7 @@ stop at the first match:
 
 9. **Every comment is structured markdown, and it leads with the answer.** A comment body renders as markdown for a human scanning a thread months later, sometimes in a narrow sidebar and sometimes on a very wide screen. Three requirements, ordered by how often each is broken:
    - **Lead with the outcome.** The first line states the decision, the finding, or the answer. No run-up, no restating the question, no narrating how you got there.
-   - **Match the container to the shape of the content.** One fact is one line. Two to four parallel items with short values are a bullet list. Three or more items each carrying two or more attributes are a table. An ordered procedure is a numbered list. Code, config, command output, or a wire payload is a fenced block with a language tag. A flow with branches, a state machine, a sequence of interactions between parties, or a dependency graph is a fenced ```mermaid block — it renders inline as a diagram in the comment view, so a chart costs the reader nothing. Two boxes and one arrow is a sentence, not a chart. One topic with distinct phases takes `###` headings — but distinct *topics* are separate replies, not headings (rule 12). A horizontal rule (`---`) between major blocks of a long comment is welcome.
+   - **Match the container to the shape of the content.** One fact is one line. Two to four parallel items with short values are a bullet list. Three or more items each carrying two or more attributes are a table. An ordered procedure is a numbered list. Code, config, command output, or a wire payload is a fenced block with a language tag. A flow with branches, a state machine, a sequence of interactions between parties, or a dependency graph is a fenced ```mermaid block — it renders inline as a diagram in the comment view, so a chart costs the reader nothing. Two boxes and one arrow is a sentence, not a chart. A screenshot or diagram file is `![alt](assets/<filename>)` in the body, with the file passed to `attachments` in the same call — attaching alone stores the file but renders nothing. One topic with distinct phases takes `###` headings — but distinct *topics* are separate replies, not headings (rule 12). A horizontal rule (`---`) between major blocks of a long comment is welcome.
    - **Blank line between every block.** A comment that arrives as one unbroken slab of prose is a defect at any length, and it is the single most common complaint about agent comments.
 
    Also: inline `` `code` `` for paths, identifiers, op names and commands; fenced code blocks for multi-line code, YAML, JSON, command output; **bold** on the line carrying the takeaway, never a whole paragraph; markdown links (`[label](url)`) for external references.
@@ -283,6 +283,10 @@ Applies to every syntax:
 - Relative or absolute paths inside any of the above
 
 Use `get path=... binary=true` for the image. Run `metadata` first if you need to check size.
+
+### Q: How do I post an image in my own comment?
+
+Two halves, one call: pass the file's path in `attachments` AND write `![alt](assets/<filename>)` in the comment body. `attachments` copies the file beside the document and lists it in the comment's `attachments` header — that stores it, it does not display it. The body's image line is what renders, and its path is the same one that appears in the `attachments` header. Attaching without the body line produces a comment that shows no image; deleting the comment removes its uploaded files.
 
 ### Q: How do I declare identity for a mutating call?
 

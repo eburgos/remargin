@@ -26,10 +26,13 @@ None of those comments was missing information. Each one was missing *shape* —
 | Ordered procedure | Numbered list |
 | Code, config, command output, wire payload | Fenced block with a language tag |
 | Flow with branches, state machine, sequence, dependency graph | Fenced ```mermaid block |
+| Screenshot or diagram file | `![alt](assets/<filename>)` in the body, with the file passed to `attachments` in the same call |
 | One topic with distinct phases | `###` headings |
 | Distinct topics | Separate replies (rule 12), never headings |
 
 A horizontal rule (`---`) between major blocks of a long comment is welcome.
+
+**Attaching alone renders nothing.** `attachments` uploads the file beside the document and lists it in the comment's `attachments` header; only the `![alt](assets/<filename>)` line in the body displays it. Use both in the same call, with the body path matching the header entry.
 
 **Width cuts both ways.** The same three-column table was cramped in a narrow sidebar and stretched with dead space on a wide monitor. Keep cells short, and put the longest value in the last column so it has somewhere to run.
 

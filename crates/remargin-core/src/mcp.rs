@@ -421,7 +421,7 @@ fn desc_comment() -> ToolDesc {
                 "attachments": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "File paths to attach",
+                    "description": "File paths to upload. Each file is copied beside the document and listed in the comment's `attachments` header - this stores the file, it does not display it. To show an image inline, also write `![alt](assets/<filename>)` in the comment body.",
                     "default": []
                 },
                 "after_line": { "type": "integer", "description": "Insert after this line number (1-indexed)" },
@@ -915,7 +915,7 @@ fn desc_reply() -> ToolDesc {
                 "attachments": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "File paths to attach",
+                    "description": "File paths to upload. Each file is copied beside the document and listed in the comment's `attachments` header - this stores the file, it does not display it. To show an image inline, also write `![alt](assets/<filename>)` in the comment body.",
                     "default": []
                 },
                 "sandbox": {
