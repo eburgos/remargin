@@ -108,6 +108,8 @@ as_conversions = "allow"
 unwrap_used = "allow"
 # Pattern matching through references is idiomatic in filter_map closures.
 pattern_type_mismatch = "allow"
+# Contradicts rest_pattern_accessible_field; only one of the pair can be enforced.
+unneeded_field_pattern = "allow"
 # Single-char identifiers are fine in tight scopes (loop vars, closures).
 min_ident_chars = "allow"
 # Test function naming is clearer with descriptive names, not enforced prefix rules.

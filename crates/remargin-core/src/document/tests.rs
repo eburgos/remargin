@@ -12,6 +12,7 @@ use crate::config::{Mode, ResolvedConfig};
 use crate::document::{
     self, RmDirReport, RmOutcome, RmResult, WriteOptions, WriteProjection, allowlist,
 };
+use crate::operations::links::Link;
 use crate::operations::purge::{purge, purge_dir};
 use crate::parser::AuthorType;
 use crate::writer::FORBIDDEN_TARGETS;
@@ -495,7 +496,7 @@ fn get_with_links_empty_when_no_links() {
     )
     .unwrap();
     assert_eq!(result.content, "# Hello\nWorld");
-    assert!(result.links.is_empty());
+    assert_eq!(result.links, [] as [Link; 0]);
 }
 
 #[test]
@@ -644,7 +645,7 @@ fn metadata_binary_file_returns_file_level_fields_only() {
     assert_eq!(meta.comment_count, None);
     assert_eq!(meta.line_count, None);
     assert_eq!(meta.pending_count, None);
-    assert!(meta.pending_for.is_empty());
+    assert_eq!(meta.pending_for, [] as [String; 0]);
     assert!(meta.last_activity.is_none());
     assert!(meta.frontmatter.is_none());
 }
@@ -2217,12 +2218,12 @@ fn rm_removes_empty_directory() {
         document::rm(&system, Path::new("/project"), Path::new("subdir"), &config).unwrap();
 
     let report = rm_dir(&outcome).unwrap();
-    assert!(report.files_deleted.is_empty());
+    assert_eq!(report.files_deleted, [] as [PathBuf; 0]);
     assert_eq!(
         report.folders_removed,
         vec![PathBuf::from("/project/subdir")]
     );
-    assert!(report.folders_left_behind.is_empty());
+    assert_eq!(report.folders_left_behind, [] as [PathBuf; 0]);
     assert!(!system.exists(Path::new("/project/subdir")).unwrap());
 }
 
@@ -2334,7 +2335,7 @@ fn rm_dir_removes_all_visible_files_and_reports_them() {
     let report = rm_dir(&outcome).unwrap();
     assert_eq!(report.files_deleted.len(), 3, "all three files reported");
     assert_eq!(report.folders_removed, vec![PathBuf::from("/project/docs")]);
-    assert!(report.folders_left_behind.is_empty());
+    assert_eq!(report.folders_left_behind, [] as [PathBuf; 0]);
     assert!(!system.exists(Path::new("/project/docs")).unwrap());
 }
 
@@ -2364,7 +2365,7 @@ fn rm_dir_removes_nested_subdirs_bottom_up() {
             PathBuf::from("/project/tree"),
         ]
     );
-    assert!(report.folders_left_behind.is_empty());
+    assert_eq!(report.folders_left_behind, [] as [PathBuf; 0]);
     assert!(!system.exists(Path::new("/project/tree")).unwrap());
 }
 
@@ -2388,7 +2389,7 @@ fn rm_dir_with_only_hidden_file_leaves_folder_behind() {
         report.files_deleted,
         vec![PathBuf::from("/project/box/visible.md")]
     );
-    assert!(report.folders_removed.is_empty());
+    assert_eq!(report.folders_removed, [] as [PathBuf; 0]);
     assert_eq!(
         report.folders_left_behind,
         vec![PathBuf::from("/project/box")]
@@ -3276,7 +3277,14 @@ fn project_write_happy_path_projects_markdown_without_mutating_disk() {
     .unwrap();
 
     assert!(
-        matches!(projection, WriteProjection::Markdown { .. }),
+        matches!(
+            projection,
+            WriteProjection::Markdown {
+                after: _,
+                before: _,
+                noop: _
+            }
+        ),
         "expected Markdown projection, got {projection:?}"
     );
     let WriteProjection::Markdown {
@@ -3349,10 +3357,22 @@ fn project_write_detects_noop_when_content_matches() {
     .unwrap();
 
     assert!(
-        matches!(projection, WriteProjection::Markdown { .. }),
+        matches!(
+            projection,
+            WriteProjection::Markdown {
+                after: _,
+                before: _,
+                noop: _
+            }
+        ),
         "expected Markdown projection, got {projection:?}"
     );
-    let WriteProjection::Markdown { noop, .. } = projection else {
+    let WriteProjection::Markdown {
+        noop,
+        after: _,
+        before: _,
+    } = projection
+    else {
         return;
     };
     assert!(noop, "re-submitting canonical bytes should be a noop");
@@ -3387,7 +3407,14 @@ fn project_write_create_returns_empty_before_and_leaves_disk_untouched() {
     .unwrap();
 
     assert!(
-        matches!(projection, WriteProjection::Markdown { .. }),
+        matches!(
+            projection,
+            WriteProjection::Markdown {
+                after: _,
+                before: _,
+                noop: _
+            }
+        ),
         "expected Markdown projection, got {projection:?}"
     );
     let WriteProjection::Markdown {
@@ -3439,7 +3466,7 @@ fn project_write_raw_mode_returns_unsupported() {
     .unwrap();
 
     assert!(
-        matches!(projection, WriteProjection::Unsupported { .. }),
+        matches!(projection, WriteProjection::Unsupported { reason: _ }),
         "raw mode must degrade to Unsupported, got {projection:?}"
     );
     let WriteProjection::Unsupported { reason } = projection else {
@@ -3477,7 +3504,7 @@ fn project_write_binary_mode_returns_unsupported() {
     .unwrap();
 
     assert!(
-        matches!(projection, WriteProjection::Unsupported { .. }),
+        matches!(projection, WriteProjection::Unsupported { reason: _ }),
         "binary mode must degrade to Unsupported, got {projection:?}"
     );
     let WriteProjection::Unsupported { reason } = projection else {

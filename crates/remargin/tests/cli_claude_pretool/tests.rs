@@ -79,7 +79,7 @@ fn end_to_end_against_real_claude_restricted_realm() {
     let out = run_pretool(&stdin);
     assert_eq!(out.status.code(), Some(0_i32));
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(!stdout.is_empty());
+    assert_ne!(stdout, "");
     let payload: Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(
         payload["hookSpecificOutput"]["hookEventName"],

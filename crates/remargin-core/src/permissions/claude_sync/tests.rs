@@ -780,7 +780,7 @@ fn revert_after_apply_restores_clean_state() {
     let deny = after["permissions"]["deny"].as_array().unwrap();
     assert!(deny.is_empty(), "{after:#?}");
     let allow = after["permissions"]["allow"].as_array().unwrap();
-    assert!(allow.is_empty());
+    assert_eq!(allow.as_slice(), [] as [Value; 0]);
     assert_eq!(after["env"]["PRESERVE"], json!("true"));
 
     let sidecar = sidecar::load(&system, &anchor).unwrap();
@@ -828,8 +828,8 @@ fn revert_warns_on_manually_deleted_rules() {
 fn revert_empty_when_no_sidecar_entry() {
     let (system, anchor) = empty_anchor();
     let report = revert_rules(&system, &anchor, "/r/never-tracked").unwrap();
-    assert!(report.warnings.is_empty());
-    assert!(report.touched_files.is_empty());
+    assert_eq!(report.warnings, [] as [String; 0]);
+    assert_eq!(report.touched_files, [] as [PathBuf; 0]);
 }
 
 /// Scenario 18: settings files with unrelated top-level keys (env,

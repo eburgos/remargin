@@ -122,7 +122,10 @@ fn uninstall_is_noop_when_not_installed() {
     seed_vault(&fs, &vault);
 
     let status = uninstall(&fs, &vault, None).unwrap();
-    assert!(matches!(status, UninstallStatus::NotInstalled { .. }));
+    assert!(matches!(
+        status,
+        UninstallStatus::NotInstalled { plugin_dir: _ }
+    ));
 }
 
 #[test]
@@ -133,7 +136,7 @@ fn uninstall_removes_plugin_dir() {
 
     install_stub(&fs, &vault, None).unwrap();
     let status = uninstall(&fs, &vault, None).unwrap();
-    assert!(matches!(status, UninstallStatus::Removed { .. }));
+    assert!(matches!(status, UninstallStatus::Removed { plugin_dir: _ }));
     if let UninstallStatus::Removed { plugin_dir } = status {
         assert!(!fs.exists(&plugin_dir).unwrap());
     }

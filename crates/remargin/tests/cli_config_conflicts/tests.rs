@@ -144,12 +144,34 @@ fn identity_flattening_subcommands() -> HashSet<String> {
             }
         })
         .unwrap();
+    let struct_has_identity_args = |name: &syn::Ident| -> bool {
+        file.items.iter().any(|item| {
+            let syn::Item::Struct(st) = item else {
+                return false;
+            };
+            st.ident == *name
+                && matches!(&st.fields, syn::Fields::Named(named)
+                    if named.named.iter().any(|f| f.ident.as_ref().is_some_and(|i| i == "identity_args")))
+        })
+    };
     commands_enum
         .variants
         .iter()
-        .filter(|v| {
-            matches!(&v.fields, syn::Fields::Named(named)
-                if named.named.iter().any(|f| f.ident.as_ref().is_some_and(|i| i == "identity_args")))
+        .filter(|v| match &v.fields {
+            syn::Fields::Named(named) => named
+                .named
+                .iter()
+                .any(|f| f.ident.as_ref().is_some_and(|i| i == "identity_args")),
+            syn::Fields::Unnamed(unnamed) => unnamed.unnamed.iter().any(|f| {
+                let syn::Type::Path(p) = &f.ty else {
+                    return false;
+                };
+                p.path
+                    .segments
+                    .last()
+                    .is_some_and(|seg| struct_has_identity_args(&seg.ident))
+            }),
+            syn::Fields::Unit => false,
         })
         .map(|v| to_kebab_case(&v.ident.to_string()))
         .collect()

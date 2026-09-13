@@ -180,7 +180,7 @@ fn minimal_config_defaults() {
     assert_eq!(config.identity.as_deref(), Some("bob"));
     assert_eq!(config.mode, None);
     assert_eq!(config.assets_dir, "assets");
-    assert!(config.ignore.is_empty());
+    assert_eq!(config.ignore, [] as [String; 0]);
     assert!(config.key.is_none());
     assert!(config.author_type.is_none());
 }

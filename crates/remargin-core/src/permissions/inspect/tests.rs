@@ -4,6 +4,9 @@ use std::path::{Path, PathBuf};
 
 use os_shim::mock::MemorySystem;
 
+use crate::permissions::inspect::AllowDotFoldersView;
+use crate::permissions::inspect::DenyOpsView;
+use crate::permissions::inspect::TrustedRootView;
 use crate::permissions::inspect::{check, show};
 
 fn mock_with(files: &[(&str, &str)]) -> MemorySystem {
@@ -22,9 +25,9 @@ fn mock_with(files: &[(&str, &str)]) -> MemorySystem {
 fn show_empty_when_no_config() {
     let system = MemorySystem::new().with_dir(Path::new("/r")).unwrap();
     let out = show(&system, Path::new("/r")).unwrap();
-    assert!(out.allow_dot_folders.is_empty());
-    assert!(out.deny_ops.is_empty());
-    assert!(out.trusted_roots.is_empty());
+    assert_eq!(out.allow_dot_folders, [] as [AllowDotFoldersView; 0]);
+    assert_eq!(out.deny_ops, [] as [DenyOpsView; 0]);
+    assert_eq!(out.trusted_roots, [] as [TrustedRootView; 0]);
 }
 
 #[test]
@@ -51,7 +54,7 @@ permissions:
     assert_eq!(out.deny_ops.len(), 1);
     assert_eq!(out.deny_ops[0].ops.len(), 1);
     assert_eq!(out.deny_ops[0].ops[0].name, "purge");
-    assert!(out.deny_ops[0].ops[0].exceptions.is_empty());
+    assert_eq!(out.deny_ops[0].ops[0].exceptions, [] as [String; 0]);
 
     assert_eq!(out.allow_dot_folders.len(), 1);
     assert_eq!(

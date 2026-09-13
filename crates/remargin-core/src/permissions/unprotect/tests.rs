@@ -132,7 +132,7 @@ fn never_restricted_path_warns_and_no_ops() {
     )
     .unwrap();
     assert!(!outcome.yaml_entry_removed);
-    assert!(outcome.rules_removed.is_empty());
+    assert_eq!(outcome.rules_removed, [] as [String; 0]);
     assert!(
         outcome
             .warnings
@@ -165,7 +165,7 @@ fn yaml_present_sidecar_absent_removes_yaml_only() {
     )
     .unwrap();
     assert!(outcome.yaml_entry_removed);
-    assert!(outcome.rules_removed.is_empty());
+    assert_eq!(outcome.rules_removed, [] as [String; 0]);
     assert!(
         outcome
             .warnings
@@ -325,7 +325,7 @@ fn second_unprotect_is_noop() {
     )
     .unwrap();
     assert!(!second.yaml_entry_removed);
-    assert!(second.rules_removed.is_empty());
+    assert_eq!(second.rules_removed, [] as [String; 0]);
     assert!(
         second
             .warnings

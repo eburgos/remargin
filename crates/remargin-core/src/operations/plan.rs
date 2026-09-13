@@ -903,21 +903,56 @@ impl PlanRequest<'_> {
     #[must_use]
     pub const fn op_label(&self) -> &'static str {
         match self {
-            Self::Ack { .. } => "ack",
-            Self::Batch { .. } => "batch",
-            Self::Comment { .. } => "comment",
-            Self::Cp { .. } => "cp",
-            Self::Delete { .. } => "delete",
-            Self::Edit { .. } => "edit",
-            Self::Mv { .. } => "mv",
-            Self::Purge { .. } => "purge",
-            Self::React { .. } => "react",
-            Self::Restrict { .. } => "restrict",
-            Self::SandboxAdd { .. } => "sandbox-add",
-            Self::SandboxRemove { .. } => "sandbox-remove",
-            Self::Sign { .. } => "sign",
-            Self::Unprotect { .. } => "unprotect",
-            Self::Write { .. } => "write",
+            Self::Ack {
+                path: _,
+                ids: _,
+                remove: _,
+            } => "ack",
+            Self::Batch { path: _, ops: _ } => "batch",
+            Self::Comment { path: _, params: _ } => "comment",
+            Self::Cp {
+                src: _,
+                dst: _,
+                force: _,
+            } => "cp",
+            Self::Delete { path: _, ids: _ } => "delete",
+            Self::Edit {
+                path: _,
+                id: _,
+                content: _,
+            } => "edit",
+            Self::Mv {
+                src: _,
+                dst: _,
+                force: _,
+            } => "mv",
+            Self::Purge {
+                path: _,
+                recursive: _,
+            } => "purge",
+            Self::React {
+                path: _,
+                id: _,
+                emoji: _,
+                remove: _,
+            } => "react",
+            Self::Restrict {
+                cwd: _,
+                args: _,
+                settings_files: _,
+            } => "restrict",
+            Self::SandboxAdd { path: _ } => "sandbox-add",
+            Self::SandboxRemove { path: _ } => "sandbox-remove",
+            Self::Sign {
+                path: _,
+                selection: _,
+            } => "sign",
+            Self::Unprotect { cwd: _, args: _ } => "unprotect",
+            Self::Write {
+                path: _,
+                content: _,
+                opts: _,
+            } => "write",
         }
     }
 }

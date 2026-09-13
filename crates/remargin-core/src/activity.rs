@@ -115,16 +115,53 @@ pub enum Change {
 impl Change {
     fn id_for_sort(&self) -> &str {
         match self {
-            Self::Ack { comment_id, .. } | Self::Comment { comment_id, .. } => comment_id,
-            Self::Sandbox { author, .. } => author,
+            Self::Ack {
+                comment_id,
+                author: _,
+                author_type: _,
+                ts: _,
+            }
+            | Self::Comment {
+                comment_id,
+                author: _,
+                author_type: _,
+                line_end: _,
+                line_start: _,
+                reply_to: _,
+                to: _,
+                ts: _,
+            } => comment_id,
+            Self::Sandbox {
+                author,
+                author_type: _,
+                ts: _,
+            } => author,
         }
     }
 
     const fn kind_label(&self) -> &'static str {
         match self {
-            Self::Ack { .. } => "ack",
-            Self::Comment { .. } => "comment",
-            Self::Sandbox { .. } => "sandbox",
+            Self::Ack {
+                author: _,
+                author_type: _,
+                comment_id: _,
+                ts: _,
+            } => "ack",
+            Self::Comment {
+                author: _,
+                author_type: _,
+                comment_id: _,
+                line_end: _,
+                line_start: _,
+                reply_to: _,
+                to: _,
+                ts: _,
+            } => "comment",
+            Self::Sandbox {
+                author: _,
+                author_type: _,
+                ts: _,
+            } => "sandbox",
         }
     }
 
@@ -133,7 +170,27 @@ impl Change {
     #[must_use]
     pub const fn ts(&self) -> DateTime<FixedOffset> {
         match self {
-            Self::Ack { ts, .. } | Self::Comment { ts, .. } | Self::Sandbox { ts, .. } => *ts,
+            Self::Ack {
+                ts,
+                author: _,
+                author_type: _,
+                comment_id: _,
+            }
+            | Self::Comment {
+                ts,
+                author: _,
+                author_type: _,
+                comment_id: _,
+                line_end: _,
+                line_start: _,
+                reply_to: _,
+                to: _,
+            }
+            | Self::Sandbox {
+                ts,
+                author: _,
+                author_type: _,
+            } => *ts,
         }
     }
 }
@@ -206,7 +263,7 @@ pub fn to_compact_row(change: &Change) -> CompactChangeRow {
             author,
             author_type,
             comment_id,
-            ..
+            ts: _,
         } => (
             ts,
             kind,
@@ -226,7 +283,7 @@ pub fn to_compact_row(change: &Change) -> CompactChangeRow {
             line_start,
             reply_to,
             to,
-            ..
+            ts: _,
         } => (
             ts,
             kind,
@@ -241,7 +298,7 @@ pub fn to_compact_row(change: &Change) -> CompactChangeRow {
         Change::Sandbox {
             author,
             author_type,
-            ..
+            ts: _,
         } => (
             ts,
             kind,

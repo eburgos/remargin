@@ -153,7 +153,14 @@ fn collect_fn_line_counts(src: &str) -> Result<Vec<(String, usize)>, syn::Error>
 
     let mut out = Vec::new();
     for item in &file.items {
-        if let Item::Fn(ItemFn { sig, block, .. }) = item {
+        if let Item::Fn(ItemFn {
+            sig,
+            block,
+            attrs: _,
+            vis: _,
+            modifiers: _,
+        }) = item
+        {
             let name = sig.ident.to_string();
             if !ADAPTER_PREFIXES.iter().any(|p| name.starts_with(p)) {
                 continue;

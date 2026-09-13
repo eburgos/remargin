@@ -2025,7 +2025,10 @@ fn verify_path_folder_json_all_clean_has_empty_failures() {
     assert_eq!(json["ok"], serde_json::Value::Bool(true));
     assert_eq!(json["files_verified"], 2_u64);
     assert_eq!(json["files_passed"], 2_u64);
-    assert!(json["failures"].as_array().unwrap().is_empty());
+    assert_eq!(
+        json["failures"].as_array().unwrap().as_slice(),
+        [] as [serde_json::Value; 0]
+    );
 }
 
 #[test]

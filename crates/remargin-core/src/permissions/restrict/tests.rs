@@ -252,8 +252,8 @@ fn outcome_reports_no_settings_or_sidecar() {
     let outcome = restrict(&system, &anchor, &args("src/secret"), &files).unwrap();
     assert_eq!(outcome.anchor, anchor);
     assert!(outcome.absolute_path.ends_with("src/secret"));
-    assert!(outcome.claude_files_touched.is_empty());
-    assert!(outcome.rules_applied.is_empty());
+    assert_eq!(outcome.claude_files_touched, [] as [PathBuf; 0]);
+    assert_eq!(outcome.rules_applied, [] as [String; 0]);
 
     // No sidecar entry is written when nothing is projected.
     let sc = sidecar::load(&system, &anchor).unwrap();

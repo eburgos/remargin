@@ -146,7 +146,7 @@ fn clean_projection_after_restrict() {
             "expected non-empty rules_to_remove for {}",
             sf.path.display()
         );
-        assert!(sf.rules_already_absent.is_empty());
+        assert_eq!(sf.rules_already_absent, [] as [String; 0]);
     }
     assert!(
         diff.conflicts.is_empty(),
@@ -177,11 +177,11 @@ fn never_restricted_yields_both_missing_conflicts() {
     let saw_yaml_missing = diff
         .conflicts
         .iter()
-        .any(|c| matches!(c, UnprotectConflict::YamlEntryMissing { .. }));
+        .any(|c| matches!(c, UnprotectConflict::YamlEntryMissing { path: _ }));
     let saw_sidecar_missing = diff
         .conflicts
         .iter()
-        .any(|c| matches!(c, UnprotectConflict::SidecarEntryMissing { .. }));
+        .any(|c| matches!(c, UnprotectConflict::SidecarEntryMissing { path: _ }));
     assert!(saw_yaml_missing, "expected YamlEntryMissing conflict");
     assert!(saw_sidecar_missing, "expected SidecarEntryMissing conflict");
 }
@@ -217,7 +217,7 @@ fn yaml_present_sidecar_missing() {
     let saw_sidecar_missing = diff
         .conflicts
         .iter()
-        .any(|c| matches!(c, UnprotectConflict::SidecarEntryMissing { .. }));
+        .any(|c| matches!(c, UnprotectConflict::SidecarEntryMissing { path: _ }));
     assert!(saw_sidecar_missing);
 }
 
@@ -250,12 +250,12 @@ fn sidecar_present_yaml_missing() {
     ));
     assert!(!diff.settings_files.is_empty());
     for sf in &diff.settings_files {
-        assert!(!sf.rules_to_remove.is_empty());
+        assert_ne!(sf.rules_to_remove, [] as [String; 0]);
     }
     let saw_yaml_missing = diff
         .conflicts
         .iter()
-        .any(|c| matches!(c, UnprotectConflict::YamlEntryMissing { .. }));
+        .any(|c| matches!(c, UnprotectConflict::YamlEntryMissing { path: _ }));
     assert!(saw_yaml_missing);
 }
 

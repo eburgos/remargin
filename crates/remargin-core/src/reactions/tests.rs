@@ -200,5 +200,5 @@ fn format_reaction_entry_block_has_two_lines_and_trailing_newline() {
     assert_eq!(lines.len(), 3);
     assert_eq!(lines[0], "    - author: eduardo");
     assert_eq!(lines[1], "      ts: 2026-04-26T12:00:00-04:00");
-    assert!(lines[2].is_empty());
+    assert_eq!(lines[2], "");
 }

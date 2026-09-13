@@ -152,7 +152,10 @@ fn cli_verify_dir_json_is_failures_only_summary() {
             .all(|f| !f["path"].as_str().unwrap().ends_with("clean.md")),
         "passing file must be absent: {failures:?}"
     );
-    assert!(!damaged["bad"].as_array().unwrap().is_empty());
+    assert_ne!(
+        damaged["bad"].as_array().unwrap().as_slice(),
+        [] as [Value; 0]
+    );
 }
 
 #[test]

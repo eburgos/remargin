@@ -1,6 +1,6 @@
 //! Tests for the cross-document query engine.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use os_shim::mock::MemorySystem;
 
@@ -245,7 +245,7 @@ fn resolve_comment_id_finds_single_doc() {
 fn resolve_comment_id_not_found() {
     let system = setup_system();
     let matches = resolve_comment_id(&system, Path::new("/project"), "nonexistent").unwrap();
-    assert!(matches.is_empty());
+    assert_eq!(matches, [] as [PathBuf; 0]);
 }
 
 #[test]
@@ -582,7 +582,7 @@ fn query_expanded_comment_fields_complete() {
     assert!(cm.reply_to.is_none());
     assert!(cm.thread.is_none());
     assert!(cm.reactions.is_empty());
-    assert!(cm.attachments.is_empty());
+    assert_eq!(cm.attachments, [] as [String; 0]);
     assert_eq!(cm.checksum, "sha256:c3c3");
     assert!(cm.signature.is_none());
 }

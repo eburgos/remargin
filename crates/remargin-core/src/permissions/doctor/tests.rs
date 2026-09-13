@@ -162,7 +162,7 @@ fn hook_in_user_scope_is_clean() {
     .unwrap();
     assert!(report.hook_installed, "expected hook_installed=true");
     assert!(report.is_clean(), "expected no findings: {report:#?}");
-    assert!(report.findings.is_empty());
+    assert_eq!(report.findings, [] as [DoctorFinding; 0]);
 }
 
 /// Hook present in project-scope → clean report. Project scope is
@@ -400,7 +400,7 @@ fn hook_missing_is_first_finding() {
         Path::new("/home/u/.claude/settings.json"),
     )
     .unwrap();
-    assert!(!report.findings.is_empty());
+    assert_ne!(report.findings, [] as [DoctorFinding; 0]);
     assert_eq!(report.findings[0].kind, FindingKind::HookMissing);
 }
 

@@ -210,7 +210,10 @@ fn install_and_uninstall_touch_only_the_session_entry() {
         &["goose", "session-guard", "--json", "uninstall"],
     );
     assert_eq!(status_of(&removed), "uninstalled");
-    assert!(entries(home.path(), "SessionStart").is_empty());
+    assert_eq!(
+        entries(home.path(), "SessionStart"),
+        [] as [serde_json::Value; 0]
+    );
     assert_eq!(
         entries(home.path(), "PreToolUse").len(),
         1,

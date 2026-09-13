@@ -119,7 +119,10 @@ fn empty_result_when_no_changes() {
     );
     assert_status(&out, 0);
     let value: Value = serde_json::from_str(str::from_utf8(&out.stdout).unwrap()).unwrap();
-    assert!(value["files"].as_array().unwrap().is_empty());
+    assert_eq!(
+        value["files"].as_array().unwrap().as_slice(),
+        [] as [Value; 0]
+    );
     assert!(value["newest_ts_overall"].is_null());
 }
 

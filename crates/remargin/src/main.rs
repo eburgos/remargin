@@ -13,6 +13,15 @@ mod render;
 #[cfg(feature = "session")]
 pub(crate) use cli::SessionAction;
 pub(crate) use cli::{
+    AckArgs, ActivityArgs, BatchArgs, CommentArgs, CommentsArgs, CpArgs, DeleteArgs, DoctorArgs,
+    EditArgs, GetArgs, GetImageArgs, IdentityCmdArgs, KeygenArgs, LintArgs, LsArgs, McpArgs,
+    MetadataArgs, MvArgs, PlanAckArgs, PlanArgs, PlanBatchArgs, PlanCommentArgs, PlanCpArgs,
+    PlanDeleteArgs, PlanEditArgs, PlanMvArgs, PlanPurgeArgs, PlanReactArgs, PlanSandboxAddArgs,
+    PlanSandboxRemoveArgs, PlanSignArgs, PlanWriteArgs, PromptArgs, PurgeArgs, QueryArgs,
+    QueryPendingFlags, QueryRenderFlags, ReactArgs, RegistryArgs, ReplaceArgs, ResolveModeArgs,
+    RmArgs, SandboxArgs, SearchArgs, SignArgs, VerifyArgs, WriteArgs,
+};
+pub(crate) use cli::{
     AssetsArgs, ClaudeAction, Cli, Commands, GooseAction, GooseMcpAction, GoosePretoolAction,
     GooseSessionGuardAction, IdentityAction, IdentityArgs, McpAction, ObsidianAction, OutputArgs,
     PermissionsAction, PlanAction, PlanClaudeAction, PluginAction, PretoolAction, PromptAction,

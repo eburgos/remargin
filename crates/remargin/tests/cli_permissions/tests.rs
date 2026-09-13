@@ -113,12 +113,13 @@ fn show_json_lists_declared_entries() {
     let ops = deny_ops[0].get("ops").and_then(Value::as_array).unwrap();
     assert_eq!(ops.len(), 1);
     assert_eq!(ops[0].get("name").and_then(Value::as_str).unwrap(), "purge");
-    assert!(
+    assert_eq!(
         ops[0]
             .get("exceptions")
             .and_then(Value::as_array)
             .unwrap()
-            .is_empty(),
+            .as_slice(),
+        [] as [Value; 0]
     );
 }
 
@@ -147,17 +148,19 @@ fn show_json_empty_when_no_config() {
     let out = run_in(realm.path(), &["permissions", "show", "--json"]);
     assert_status(&out, 0);
     let body: Value = serde_json::from_str(stdout_of(&out)).unwrap();
-    assert!(
+    assert_eq!(
         body.get("trusted_roots")
             .and_then(Value::as_array)
             .unwrap()
-            .is_empty()
+            .as_slice(),
+        [] as [Value; 0]
     );
-    assert!(
+    assert_eq!(
         body.get("deny_ops")
             .and_then(Value::as_array)
             .unwrap()
-            .is_empty()
+            .as_slice(),
+        [] as [Value; 0]
     );
 }
 
@@ -365,14 +368,14 @@ fn permissions_show_json_shape_is_canonical() {
     assert_eq!(parsed.allow_dot_folders.len(), 1);
     let dot = &parsed.allow_dot_folders[0];
     assert_eq!(dot.names, vec![String::from(".obsidian")]);
-    assert!(!dot.source_file.is_empty());
+    assert_ne!(dot.source_file, "");
     assert_eq!(parsed.deny_ops.len(), 1);
     let deny = &parsed.deny_ops[0];
     assert_eq!(deny.ops.len(), 1);
     assert_eq!(deny.ops[0].name, "purge");
-    assert!(deny.ops[0].exceptions.is_empty());
-    assert!(!deny.path.is_empty());
-    assert!(!deny.source_file.is_empty());
+    assert_eq!(deny.ops[0].exceptions, [] as [String; 0]);
+    assert_ne!(deny.path, "");
+    assert_ne!(deny.source_file, "");
 
     assert_trusted_root_wildcard_invariant(&parsed.trusted_roots);
 
@@ -418,7 +421,7 @@ fn assert_trusted_root_wildcard_invariant(restrict: &[TrustedRootSchema]) {
     let mut saw_wildcard = false;
     let mut saw_absolute = false;
     for entry in restrict {
-        assert!(!entry.source_file.is_empty());
+        assert_ne!(entry.source_file, "");
         // `also_deny_bash` and `cli_allowed` must round-trip;
         // touching them keeps the strict-mirror types honest.
         let _: &Vec<String> = &entry.also_deny_bash;

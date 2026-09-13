@@ -353,7 +353,7 @@ fn herdr_tab_readiness_is_besteffort_trust_then_required_idle() {
     let tab_plan = &plan.tabs[0];
 
     // The sole identity reuses the workspace's default tab (no `tab create`).
-    assert!(tab_plan.tab_create.is_empty());
+    assert_eq!(tab_plan.tab_create, [] as [String; 0]);
 
     // The trust probe is best-effort (a short-timeout output match); its Enter
     // is only sent when the probe matches; the idle wait is the required gate.

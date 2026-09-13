@@ -735,7 +735,7 @@ fn sandbox_null_value_reads_as_empty() {
     let doc = make_doc(body, Vec::new());
 
     let entries = read_sandbox_entries(&doc).unwrap();
-    assert!(entries.is_empty());
+    assert_eq!(entries, [] as [parser::SandboxEntry; 0]);
 }
 
 #[test]
@@ -744,7 +744,7 @@ fn sandbox_missing_key_reads_as_empty() {
     let doc = make_doc(body, Vec::new());
 
     let entries = read_sandbox_entries(&doc).unwrap();
-    assert!(entries.is_empty());
+    assert_eq!(entries, [] as [parser::SandboxEntry; 0]);
 }
 
 #[test]

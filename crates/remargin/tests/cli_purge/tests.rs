@@ -52,8 +52,14 @@ fn recursive_purge_via_cli() {
     );
     let purged = value["purged"].as_array().unwrap();
     assert_eq!(purged.len(), 2);
-    assert!(value["failed"].as_array().unwrap().is_empty());
-    assert!(value["skipped"].as_array().unwrap().is_empty());
+    assert_eq!(
+        value["failed"].as_array().unwrap().as_slice(),
+        [] as [Value; 0]
+    );
+    assert_eq!(
+        value["skipped"].as_array().unwrap().as_slice(),
+        [] as [Value; 0]
+    );
 
     // Both files now comment-free on disk.
     for file in ["a.md", "notes/b.md"] {
@@ -151,5 +157,8 @@ fn empty_dir_recursive_purge_succeeds() {
 
     let value: Value = serde_json::from_str(str::from_utf8(&out.stdout).unwrap()).unwrap();
     assert_eq!(value["comments_removed"], 0_u64);
-    assert!(value["purged"].as_array().unwrap().is_empty());
+    assert_eq!(
+        value["purged"].as_array().unwrap().as_slice(),
+        [] as [Value; 0]
+    );
 }

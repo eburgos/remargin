@@ -118,7 +118,7 @@ fn empty_remargin_kind_round_trips_to_none() {
     let mut comment = sample_comment();
     comment.remargin_kind = None;
     let on_disk = OnDiskComment::from(&comment);
-    assert!(on_disk.remargin_kind.is_empty());
+    assert_eq!(on_disk.remargin_kind, [] as [String; 0]);
     let restored = comment_from_on_disk(on_disk, comment.content, 0).unwrap();
     assert!(restored.remargin_kind.is_none());
 }

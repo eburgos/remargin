@@ -775,7 +775,14 @@ fn print_path_spawns_no_child_process() {
 
     let mut scanned: Vec<String> = Vec::new();
     for item in &file.items {
-        if let Item::Fn(ItemFn { sig, block, .. }) = item {
+        if let Item::Fn(ItemFn {
+            sig,
+            block,
+            attrs: _,
+            vis: _,
+            modifiers: _,
+        }) = item
+        {
             let name = sig.ident.to_string();
             if !PRINT_PATH_FNS.contains(&name.as_str()) {
                 continue;

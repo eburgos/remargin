@@ -107,7 +107,7 @@ fn anchor_at_cwd_with_empty_state_projects_yaml_only() {
         !diff
             .conflicts
             .iter()
-            .any(|c| matches!(c, ConfigConflict::AnchorIsAncestor { .. }))
+            .any(|c| matches!(c, ConfigConflict::AnchorIsAncestor { anchor: _, cwd: _ }))
     );
     let _: io::Error = system
         .read_to_string(&realm.join(".remargin.yaml"))
@@ -129,7 +129,7 @@ fn anchor_is_ancestor_when_cwd_is_subdirectory() {
     assert!(
         diff.conflicts
             .iter()
-            .any(|c| matches!(c, ConfigConflict::AnchorIsAncestor { .. })),
+            .any(|c| matches!(c, ConfigConflict::AnchorIsAncestor { anchor: _, cwd: _ })),
         "expected AnchorIsAncestor in {:?}",
         diff.conflicts
     );
@@ -225,7 +225,7 @@ fn yaml_entry_change_surfaces_conflict_with_previous() {
     let saw_yaml = diff.conflicts.iter().any(|c| {
         matches!(
             c,
-            ConfigConflict::YamlEntryWouldChange { previous, .. } if !previous.cli_allowed
+            ConfigConflict::YamlEntryWouldChange { previous, path: _, projected: _ } if !previous.cli_allowed
         )
     });
     assert!(
@@ -258,10 +258,15 @@ fn overlapping_allow_surfaces_no_conflict_now_projection_retired() {
     let diff = diff_or_fail(projection);
 
     assert!(
-        !diff
-            .conflicts
-            .iter()
-            .any(|c| matches!(c, ConfigConflict::AllowDenyOverlap { .. })),
+        !diff.conflicts.iter().any(|c| matches!(
+            c,
+            ConfigConflict::AllowDenyOverlap {
+                allow_rule: _,
+                overlap_kind: _,
+                projected_deny_rule: _,
+                settings_file: _
+            }
+        )),
         "projection is empty, so no allow/deny overlap can surface: {:?}",
         diff.conflicts,
     );
@@ -294,7 +299,7 @@ fn allow_deny_overlap_cross_tool_does_not_fire() {
     let any_user_overlap = diff.conflicts.iter().any(|c| {
         matches!(
             c,
-            ConfigConflict::AllowDenyOverlap { settings_file, .. } if settings_file == &user
+            ConfigConflict::AllowDenyOverlap { settings_file, allow_rule: _, overlap_kind: _, projected_deny_rule: _ } if settings_file == &user
         )
     });
     assert!(
@@ -326,7 +331,7 @@ fn allow_deny_overlap_rejects_component_confusion() {
     let any_user_overlap = diff.conflicts.iter().any(|c| {
         matches!(
             c,
-            ConfigConflict::AllowDenyOverlap { settings_file, .. } if settings_file == &user
+            ConfigConflict::AllowDenyOverlap { settings_file, allow_rule: _, overlap_kind: _, projected_deny_rule: _ } if settings_file == &user
         )
     });
     assert!(

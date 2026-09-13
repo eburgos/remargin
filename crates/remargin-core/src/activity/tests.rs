@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use chrono::{DateTime, FixedOffset};
 use os_shim::mock::MemorySystem;
 
-use crate::activity::{Change, gather_activity};
+use crate::activity::{Change, FileChanges, gather_activity};
 
 const REALM_YAML: &str = "identity: alice\ntype: human\n";
 
@@ -68,7 +68,7 @@ fn empty_file_is_omitted() {
     let body = "---\ntitle: t\n---\n\n# Body.\n";
     let system = realm_with(&[("/r/note.md", body)]);
     let result = gather_activity(&system, Path::new("/r/note.md"), None, "alice").unwrap();
-    assert!(result.files.is_empty());
+    assert_eq!(result.files, [] as [FileChanges; 0]);
     assert!(result.newest_ts_overall.is_none());
 }
 
@@ -81,7 +81,19 @@ fn initial_touch_fallback_returns_everything() {
     let result = gather_activity(&system, Path::new("/r/note.md"), None, "alice").unwrap();
     assert_eq!(result.files.len(), 1);
     assert_eq!(result.files[0].changes.len(), 1);
-    assert!(matches!(result.files[0].changes[0], Change::Comment { .. }));
+    assert!(matches!(
+        result.files[0].changes[0],
+        Change::Comment {
+            author: _,
+            author_type: _,
+            comment_id: _,
+            line_end: _,
+            line_start: _,
+            reply_to: _,
+            to: _,
+            ts: _
+        }
+    ));
 }
 
 /// Scenario 3: an explicit `since` cutoff surfaces changes after
@@ -103,7 +115,7 @@ fn comment_before_since_is_dropped() {
     let system = realm_with(&[("/r/note.md", body.as_str())]);
     let cutoff = ts("2026-04-06T13:00:00-04:00");
     let result = gather_activity(&system, Path::new("/r/note.md"), Some(cutoff), "alice").unwrap();
-    assert!(result.files.is_empty());
+    assert_eq!(result.files, [] as [FileChanges; 0]);
 }
 
 /// Scenario 5: an edited comment surfaces with the carried ts =
@@ -122,11 +134,28 @@ fn edited_comment_surfaces_with_edited_ts() {
     let result = gather_activity(&system, Path::new("/r/note.md"), Some(cutoff), "alice").unwrap();
     assert_eq!(result.files.len(), 1);
     let change = &result.files[0].changes[0];
-    assert!(matches!(change, Change::Comment { .. }));
+    assert!(matches!(
+        change,
+        Change::Comment {
+            author: _,
+            author_type: _,
+            comment_id: _,
+            line_end: _,
+            line_start: _,
+            reply_to: _,
+            to: _,
+            ts: _
+        }
+    ));
     if let Change::Comment {
         ts: change_ts,
         comment_id,
-        ..
+        author: _,
+        author_type: _,
+        line_end: _,
+        line_start: _,
+        reply_to: _,
+        to: _,
     } = change
     {
         assert_eq!(comment_id, "c1");
@@ -147,7 +176,7 @@ fn edit_before_since_is_dropped() {
     let system = realm_with(&[("/r/note.md", body.as_str())]);
     let cutoff = ts("2026-04-06T14:00:00-04:00");
     let result = gather_activity(&system, Path::new("/r/note.md"), Some(cutoff), "alice").unwrap();
-    assert!(result.files.is_empty());
+    assert_eq!(result.files, [] as [FileChanges; 0]);
 }
 
 /// Scenario 7: an ack on a comment surfaces independently of the
@@ -167,7 +196,17 @@ fn ack_surfaces_after_cutoff() {
     let ack_count = result.files[0]
         .changes
         .iter()
-        .filter(|c| matches!(c, Change::Ack { .. }))
+        .filter(|c| {
+            matches!(
+                c,
+                Change::Ack {
+                    author: _,
+                    author_type: _,
+                    comment_id: _,
+                    ts: _
+                }
+            )
+        })
         .count();
     assert_eq!(ack_count, 1);
 }
@@ -192,7 +231,17 @@ fn multiple_acks_each_produce_a_change() {
     let ack_count = result.files[0]
         .changes
         .iter()
-        .filter(|c| matches!(c, Change::Ack { .. }))
+        .filter(|c| {
+            matches!(
+                c,
+                Change::Ack {
+                    author: _,
+                    author_type: _,
+                    comment_id: _,
+                    ts: _
+                }
+            )
+        })
         .count();
     assert_eq!(ack_count, 2);
 }
@@ -207,7 +256,16 @@ fn sandbox_entry_surfaces() {
     let sandbox_count = result.files[0]
         .changes
         .iter()
-        .filter(|c| matches!(c, Change::Sandbox { .. }))
+        .filter(|c| {
+            matches!(
+                c,
+                Change::Sandbox {
+                    author: _,
+                    author_type: _,
+                    ts: _
+                }
+            )
+        })
         .count();
     assert_eq!(sandbox_count, 1);
 }
@@ -229,8 +287,27 @@ fn caller_last_action_derives_cutoff() {
         .changes
         .iter()
         .filter_map(|c| match c {
-            Change::Comment { comment_id, .. } => Some(comment_id.as_str()),
-            Change::Ack { .. } | Change::Sandbox { .. } => None,
+            Change::Comment {
+                comment_id,
+                author: _,
+                author_type: _,
+                line_end: _,
+                line_start: _,
+                reply_to: _,
+                to: _,
+                ts: _,
+            } => Some(comment_id.as_str()),
+            Change::Ack {
+                author: _,
+                author_type: _,
+                comment_id: _,
+                ts: _,
+            }
+            | Change::Sandbox {
+                author: _,
+                author_type: _,
+                ts: _,
+            } => None,
         })
         .collect();
     assert_eq!(
@@ -286,8 +363,27 @@ fn tie_breaker_sorts_by_kind_then_id() {
         .changes
         .iter()
         .filter_map(|c| match c {
-            Change::Comment { comment_id, .. } => Some(comment_id.as_str()),
-            Change::Ack { .. } | Change::Sandbox { .. } => None,
+            Change::Comment {
+                comment_id,
+                author: _,
+                author_type: _,
+                line_end: _,
+                line_start: _,
+                reply_to: _,
+                to: _,
+                ts: _,
+            } => Some(comment_id.as_str()),
+            Change::Ack {
+                author: _,
+                author_type: _,
+                comment_id: _,
+                ts: _,
+            }
+            | Change::Sandbox {
+                author: _,
+                author_type: _,
+                ts: _,
+            } => None,
         })
         .collect();
     assert_eq!(ids, vec!["aaa", "zzz"]);
@@ -361,24 +457,46 @@ fn sandbox_and_ack_carry_author_type_when_registry_resolves() {
             Change::Sandbox {
                 author,
                 author_type,
-                ..
+                ts: _,
             } if author == "bob" => bob_sandbox = author_type.clone(),
             Change::Sandbox {
                 author,
                 author_type,
-                ..
+                ts: _,
             } if author == "dave" => dave_sandbox = Some(author_type.clone()),
             Change::Ack {
                 author,
                 author_type,
-                ..
+                comment_id: _,
+                ts: _,
             } if author == "carol" => carol_ack = author_type.clone(),
             Change::Ack {
                 author,
                 author_type,
-                ..
+                comment_id: _,
+                ts: _,
             } if author == "eve" => eve_ack = Some(author_type.clone()),
-            Change::Ack { .. } | Change::Comment { .. } | Change::Sandbox { .. } => {}
+            Change::Ack {
+                author: _,
+                author_type: _,
+                comment_id: _,
+                ts: _,
+            }
+            | Change::Comment {
+                author: _,
+                author_type: _,
+                comment_id: _,
+                line_end: _,
+                line_start: _,
+                reply_to: _,
+                to: _,
+                ts: _,
+            }
+            | Change::Sandbox {
+                author: _,
+                author_type: _,
+                ts: _,
+            } => {}
         }
     }
     assert_eq!(bob_sandbox.as_deref(), Some("human"));
@@ -418,8 +536,27 @@ fn cutoff_uses_edited_at_when_caller_last_action_was_an_edit() {
         .changes
         .iter()
         .filter_map(|c| match c {
-            Change::Comment { comment_id, .. } => Some(comment_id.as_str()),
-            Change::Ack { .. } | Change::Sandbox { .. } => None,
+            Change::Comment {
+                comment_id,
+                author: _,
+                author_type: _,
+                line_end: _,
+                line_start: _,
+                reply_to: _,
+                to: _,
+                ts: _,
+            } => Some(comment_id.as_str()),
+            Change::Ack {
+                author: _,
+                author_type: _,
+                comment_id: _,
+                ts: _,
+            }
+            | Change::Sandbox {
+                author: _,
+                author_type: _,
+                ts: _,
+            } => None,
         })
         .collect();
     assert_eq!(

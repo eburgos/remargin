@@ -160,7 +160,10 @@ fn since_cutoff_filters_comments() {
     );
     assert_status(&out, 0);
     let value: Value = serde_json::from_str(str::from_utf8(&out.stdout).unwrap()).unwrap();
-    assert!(value["files"].as_array().unwrap().is_empty());
+    assert_eq!(
+        value["files"].as_array().unwrap().as_slice(),
+        [] as [Value; 0]
+    );
 }
 
 /// `--since` with malformed input errors with a clear

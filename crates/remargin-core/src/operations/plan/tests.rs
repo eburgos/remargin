@@ -6,6 +6,7 @@ use super::{
     PlanIdentity, PlanRequest, diff_comment_sets, dispatch, project_doc_report, project_report,
     whole_file_checksum,
 };
+use crate::advice::OpAdvice;
 use crate::comment_style;
 use crate::config::{Mode, ResolvedConfig};
 use crate::operations::projections::{ProjectBatchOp, ProjectCommentParams};
@@ -72,7 +73,7 @@ fn noop_plan_reports_empty_line_ranges_and_matching_checksums() {
     let report = project_report("write", &before, &after, &open_config(), test_identity()).unwrap();
 
     assert!(report.noop, "identical inputs must be a noop: {report:?}");
-    assert!(report.changed_line_ranges.is_empty());
+    assert_eq!(report.changed_line_ranges, [] as [[usize; 2]; 0]);
     assert_eq!(report.checksum_before, report.checksum_after);
     assert_eq!(report.op, "write");
     assert!(report.would_commit);
@@ -373,5 +374,5 @@ fn plan_of_a_clean_body_reports_no_warnings() {
     )
     .unwrap();
 
-    assert!(report.warnings.is_empty());
+    assert_eq!(report.warnings, [] as [OpAdvice; 0]);
 }

@@ -28,7 +28,7 @@ fn realm_with(yaml: &str) -> MemorySystem {
 fn outside_allowed_match(err: &anyhow::Error, op_name: &str, source: &str) -> bool {
     matches!(
         err.downcast_ref::<OpGuardError>(),
-        Some(OpGuardError::OutsideAllowedRoots { op, source_file, .. })
+        Some(OpGuardError::OutsideAllowedRoots { op, source_file, target: _ })
             if op == op_name && source_file == &PathBuf::from(source)
     )
 }
@@ -36,7 +36,7 @@ fn outside_allowed_match(err: &anyhow::Error, op_name: &str, source: &str) -> bo
 fn denied_op_match(err: &anyhow::Error, op_name: &str, source: &str) -> bool {
     matches!(
         err.downcast_ref::<OpGuardError>(),
-        Some(OpGuardError::DeniedOp { op, source_file, .. })
+        Some(OpGuardError::DeniedOp { op, source_file, target: _ })
             if op == op_name && source_file == &PathBuf::from(source)
     )
 }
@@ -44,7 +44,7 @@ fn denied_op_match(err: &anyhow::Error, op_name: &str, source: &str) -> bool {
 fn dot_folder_match(err: &anyhow::Error, expected_folder: &str, source: &str) -> bool {
     matches!(
         err.downcast_ref::<OpGuardError>(),
-        Some(OpGuardError::DotFolderDenied { folder, source_file, .. })
+        Some(OpGuardError::DotFolderDenied { folder, source_file, op: _, target: _ })
             if folder == expected_folder && source_file == &PathBuf::from(source)
     )
 }
@@ -508,7 +508,11 @@ fn exceptions_bare_blanket_refuses() {
     .unwrap_err();
     assert!(matches!(
         err.downcast_ref::<OpGuardError>(),
-        Some(OpGuardError::DeniedOp { .. })
+        Some(OpGuardError::DeniedOp {
+            op: _,
+            source_file: _,
+            target: _
+        })
     ));
 }
 
@@ -581,7 +585,12 @@ fn exceptions_miss_refuses_caller() {
     .unwrap_err();
     assert!(matches!(
         err.downcast_ref::<OpGuardError>(),
-        Some(OpGuardError::DeniedOpNotExcepted { .. })
+        Some(OpGuardError::DeniedOpNotExcepted {
+            caller: _,
+            op: _,
+            source_file: _,
+            target: _
+        })
     ));
     let chain = format!("{err:#}");
     assert!(chain.contains("someone-else"));
@@ -662,7 +671,11 @@ fn exceptions_empty_list_acts_as_blanket() {
     .unwrap_err();
     assert!(matches!(
         err.downcast_ref::<OpGuardError>(),
-        Some(OpGuardError::DeniedOp { .. })
+        Some(OpGuardError::DeniedOp {
+            op: _,
+            source_file: _,
+            target: _
+        })
     ));
 }
 
@@ -695,7 +708,11 @@ fn exceptions_mixed_bare_and_full_list() {
     .unwrap_err();
     assert!(matches!(
         sign_err.downcast_ref::<OpGuardError>(),
-        Some(OpGuardError::DeniedOp { .. })
+        Some(OpGuardError::DeniedOp {
+            op: _,
+            source_file: _,
+            target: _
+        })
     ));
 
     check_against_resolved_for_caller(
@@ -717,7 +734,11 @@ fn exceptions_mixed_bare_and_full_list() {
     .unwrap_err();
     assert!(matches!(
         delete_err.downcast_ref::<OpGuardError>(),
-        Some(OpGuardError::DeniedOp { .. })
+        Some(OpGuardError::DeniedOp {
+            op: _,
+            source_file: _,
+            target: _
+        })
     ));
 }
 
@@ -753,7 +774,11 @@ fn exceptions_union_semantics_bare_wins_over_full() {
     .unwrap_err();
     assert!(matches!(
         err.downcast_ref::<OpGuardError>(),
-        Some(OpGuardError::DeniedOp { .. })
+        Some(OpGuardError::DeniedOp {
+            op: _,
+            source_file: _,
+            target: _
+        })
     ));
 }
 
@@ -1003,7 +1028,11 @@ fn rem_djfx_lock_does_not_drop_inherited_parent_roots() {
     let err = pre_mutate_check(&system, "write", Path::new("/r/sub/foo.md")).unwrap_err();
     assert!(matches!(
         err.downcast_ref::<OpGuardError>(),
-        Some(OpGuardError::OutsideAllowedRoots { .. })
+        Some(OpGuardError::OutsideAllowedRoots {
+            op: _,
+            source_file: _,
+            target: _
+        })
     ));
 }
 

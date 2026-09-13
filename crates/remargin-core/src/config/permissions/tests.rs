@@ -6,6 +6,10 @@ use os_shim::mock::MemorySystem;
 
 use crate::config::Config;
 use crate::config::permissions::op_name::OpName;
+use crate::config::permissions::resolve::PermissionsLintError;
+use crate::config::permissions::resolve::ResolvedAllowDotFolders;
+use crate::config::permissions::resolve::ResolvedDenyOps;
+use crate::config::permissions::resolve::ResolvedTrustedRoot;
 use crate::config::permissions::resolve::{
     TrustedRootPath, lint_permissions_in_parents, resolve_permissions,
     resolve_trusted_roots_for_cwd,
@@ -159,9 +163,12 @@ fn write_yaml(system: MemorySystem, path: &str, body: &str) -> MemorySystem {
 fn no_config_anywhere_returns_default() {
     let system = MemorySystem::new().with_dir(Path::new("/realm")).unwrap();
     let resolved = resolve_permissions(&system, Path::new("/realm")).unwrap();
-    assert!(resolved.allow_dot_folders.is_empty());
-    assert!(resolved.deny_ops.is_empty());
-    assert!(resolved.trusted_roots.is_empty());
+    assert_eq!(
+        resolved.allow_dot_folders,
+        [] as [ResolvedAllowDotFolders; 0]
+    );
+    assert_eq!(resolved.deny_ops, [] as [ResolvedDenyOps; 0]);
+    assert_eq!(resolved.trusted_roots, [] as [ResolvedTrustedRoot; 0]);
 }
 
 #[test]
@@ -172,9 +179,12 @@ fn config_without_permissions_block_resolves_empty() {
         "identity: alice\n",
     );
     let resolved = resolve_permissions(&system, Path::new("/realm")).unwrap();
-    assert!(resolved.trusted_roots.is_empty());
-    assert!(resolved.deny_ops.is_empty());
-    assert!(resolved.allow_dot_folders.is_empty());
+    assert_eq!(resolved.trusted_roots, [] as [ResolvedTrustedRoot; 0]);
+    assert_eq!(resolved.deny_ops, [] as [ResolvedDenyOps; 0]);
+    assert_eq!(
+        resolved.allow_dot_folders,
+        [] as [ResolvedAllowDotFolders; 0]
+    );
 }
 
 #[test]
@@ -216,7 +226,7 @@ permissions:
     );
     assert_eq!(resolved.deny_ops[0].ops.len(), 1);
     assert_eq!(resolved.deny_ops[0].ops[0].name, OpName::Purge);
-    assert!(resolved.deny_ops[0].ops[0].exceptions.is_empty());
+    assert_eq!(resolved.deny_ops[0].ops[0].exceptions, [] as [String; 0]);
     assert_eq!(resolved.deny_ops[0].source_file, source);
 
     assert_eq!(resolved.allow_dot_folders.len(), 1);
@@ -459,7 +469,7 @@ permissions:
     let entry = &cfg.permissions.deny_ops[0];
     assert_eq!(entry.ops.len(), 4);
     assert_eq!(entry.ops[0].name(), &OpName::Sign);
-    assert!(entry.ops[0].exceptions().is_empty());
+    assert_eq!(entry.ops[0].exceptions(), [] as [String; 0]);
     assert_eq!(entry.ops[1].name(), &OpName::Purge);
     assert_eq!(
         entry.ops[1].exceptions(),
@@ -489,7 +499,7 @@ fn lint_permissions_returns_empty_when_clean() {
         .with_file(Path::new("/realm/.remargin.yaml"), yaml.as_bytes())
         .unwrap();
     let findings = lint_permissions_in_parents(&system, Path::new("/realm")).unwrap();
-    assert!(findings.is_empty());
+    assert_eq!(findings, [] as [PermissionsLintError; 0]);
 }
 
 #[test]
@@ -651,7 +661,7 @@ fn permissions_block_with_empty_trusted_roots_list_parses_to_some_empty() {
     let yaml = "permissions:\n  trusted_roots: []\n";
     let cfg: Config = serde_yaml::from_str(yaml).unwrap();
     let roots = cfg.permissions.trusted_roots.as_ref().unwrap();
-    assert!(roots.is_empty());
+    assert_eq!(roots.as_slice(), []);
 }
 
 #[test]
@@ -667,7 +677,7 @@ fn resolver_records_lock_when_trusted_roots_explicitly_empty() {
         resolved.trusted_roots_lock,
         Some(PathBuf::from("/realm/.remargin.yaml"))
     );
-    assert!(resolved.trusted_roots.is_empty());
+    assert_eq!(resolved.trusted_roots, [] as [ResolvedTrustedRoot; 0]);
     assert!(!resolved.trusted_roots_unconstrained());
 }
 
@@ -714,7 +724,7 @@ fn resolve_trusted_roots_for_cwd_locked_returns_empty() {
         .with_file(Path::new("/realm/.remargin.yaml"), yaml.as_bytes())
         .unwrap();
     let resolved = resolve_trusted_roots_for_cwd(&system, Path::new("/realm")).unwrap();
-    assert!(resolved.is_empty());
+    assert_eq!(resolved, [] as [PathBuf; 0]);
 }
 
 // ---------------------------------------------------------------------

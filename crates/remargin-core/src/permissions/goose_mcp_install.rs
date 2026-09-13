@@ -424,7 +424,7 @@ fn entry_state(system: &dyn System, path: &Path) -> Result<EntryState> {
     let config = match load_config(system, path) {
         ConfigState::Absent => return Ok(EntryState::ConfigAbsent),
         ConfigState::Unusable(reason) => return Ok(EntryState::ConfigUnusable(reason)),
-        ConfigState::Usable { mapping, .. } => mapping,
+        ConfigState::Usable { mapping, body: _ } => mapping,
     };
     let Some(entry) = declared_entry(&config) else {
         return Ok(EntryState::Absent);

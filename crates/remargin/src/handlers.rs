@@ -35,9 +35,12 @@ use crate::params::{
 };
 use crate::render;
 use crate::{
-    Commands, DEFAULT_USER_SETTINGS, IdentityAction, IdentityArgs, McpAction,
-    PLUGIN_MARKETPLACE_NAME, PLUGIN_MARKETPLACE_SOURCE, PLUGIN_REF, PermissionsAction, PlanAction,
-    PlanClaudeAction, PluginAction, RegistryAction, SandboxAction,
+    Commands, DEFAULT_USER_SETTINGS, DoctorArgs, IdentityAction, IdentityArgs, McpAction,
+    PLUGIN_MARKETPLACE_NAME, PLUGIN_MARKETPLACE_SOURCE, PLUGIN_REF, PermissionsAction, PlanAckArgs,
+    PlanAction, PlanBatchArgs, PlanClaudeAction, PlanCommentArgs, PlanCpArgs, PlanDeleteArgs,
+    PlanEditArgs, PlanMvArgs, PlanPurgeArgs, PlanReactArgs, PlanSandboxAddArgs,
+    PlanSandboxRemoveArgs, PlanSignArgs, PlanWriteArgs, PluginAction, QueryArgs, QueryPendingFlags,
+    QueryRenderFlags, RegistryAction, SandboxAction,
 };
 use remargin_core::activity;
 use remargin_core::advice;
@@ -656,25 +659,31 @@ const fn scope_label(local: bool) -> &'static str {
 }
 
 pub fn build_query_params(command: &Commands) -> Result<QueryParams<'_>> {
-    let Commands::Query {
+    let Commands::Query(QueryArgs {
         path,
         author,
         comment_id,
         content_regex,
-        expanded,
         ignore_case,
         include_integrity,
-        pending,
-        pending_broadcast,
-        pending_for,
-        pending_for_me,
-        pretty,
+        pending_flags:
+            QueryPendingFlags {
+                pending,
+                pending_broadcast,
+                pending_for,
+                pending_for_me,
+            },
+        render_flags:
+            QueryRenderFlags {
+                expanded,
+                pretty,
+                summary,
+            },
         remargin_kind,
         since,
-        summary,
         output_args,
-        ..
-    } = command
+        identity_args: _,
+    }) = command
     else {
         bail!("internal: build_query_params called with wrong subcommand");
     };
@@ -1302,12 +1311,12 @@ pub fn cmd_doctor(
     cwd: &Path,
     command: &Commands,
 ) -> Result<()> {
-    let Commands::Doctor {
+    let Commands::Doctor(DoctorArgs {
         user_settings,
         check,
         prompt_mode,
         output_args,
-    } = command
+    }) = command
     else {
         bail!("internal: cmd_doctor called with wrong subcommand");
     };
@@ -1781,13 +1790,23 @@ pub fn cmd_plan(
     let mut position = InsertPosition::Append;
 
     let request = match action {
-        PlanAction::Ack { .. } => build_plan_ack(action, system, cwd)?,
-        PlanAction::Batch { .. } => build_plan_batch(action, system, cwd)?,
-        PlanAction::Claude { action: claude, .. } => match claude {
-            PlanClaudeAction::Restrict { .. } => build_plan_claude_restrict(claude, system, cwd)?,
-            PlanClaudeAction::Unrestrict { .. } => build_plan_claude_unrestrict(claude, cwd)?,
+        PlanAction::Ack(_) => build_plan_ack(action, system, cwd)?,
+        PlanAction::Batch(_) => build_plan_batch(action, system, cwd)?,
+        PlanAction::Claude { action: claude } => match claude {
+            PlanClaudeAction::Restrict {
+                path: _,
+                also_deny_bash: _,
+                cli_allowed: _,
+                user_settings: _,
+                output_args: _,
+            } => build_plan_claude_restrict(claude, system, cwd)?,
+            PlanClaudeAction::Unrestrict {
+                path: _,
+                user_settings: _,
+                output_args: _,
+            } => build_plan_claude_unrestrict(claude, cwd)?,
         },
-        PlanAction::Comment { .. } => build_plan_comment(
+        PlanAction::Comment(_) => build_plan_comment(
             action,
             system,
             cwd,
@@ -1795,16 +1814,16 @@ pub fn cmd_plan(
             &mut position,
             &mut attach_refs,
         )?,
-        PlanAction::Cp { .. } => build_plan_cp(action, system)?,
-        PlanAction::Delete { .. } => build_plan_delete(action, system, cwd)?,
-        PlanAction::Edit { .. } => build_plan_edit(action, system, cwd)?,
-        PlanAction::Mv { .. } => build_plan_mv(action, system)?,
-        PlanAction::Purge { .. } => build_plan_purge(action, system, cwd)?,
-        PlanAction::React { .. } => build_plan_react(action, system, cwd)?,
-        PlanAction::SandboxAdd { .. } => build_plan_sandbox_add(action, system, cwd)?,
-        PlanAction::SandboxRemove { .. } => build_plan_sandbox_remove(action, system, cwd)?,
-        PlanAction::Sign { .. } => build_plan_sign(action, system, cwd)?,
-        PlanAction::Write { .. } => build_plan_write(action, system, &mut write_body)?,
+        PlanAction::Cp(_) => build_plan_cp(action, system)?,
+        PlanAction::Delete(_) => build_plan_delete(action, system, cwd)?,
+        PlanAction::Edit(_) => build_plan_edit(action, system, cwd)?,
+        PlanAction::Mv(_) => build_plan_mv(action, system)?,
+        PlanAction::Purge(_) => build_plan_purge(action, system, cwd)?,
+        PlanAction::React(_) => build_plan_react(action, system, cwd)?,
+        PlanAction::SandboxAdd(_) => build_plan_sandbox_add(action, system, cwd)?,
+        PlanAction::SandboxRemove(_) => build_plan_sandbox_remove(action, system, cwd)?,
+        PlanAction::Sign(_) => build_plan_sign(action, system, cwd)?,
+        PlanAction::Write(_) => build_plan_write(action, system, &mut write_body)?,
     };
 
     let report = plan_ops::dispatch(system, cwd, config, &request)?;
@@ -1830,9 +1849,12 @@ fn build_plan_ack(
     system: &dyn System,
     cwd: &Path,
 ) -> Result<plan_ops::PlanRequest<'static>> {
-    let PlanAction::Ack {
-        path, ids, remove, ..
-    } = action
+    let PlanAction::Ack(PlanAckArgs {
+        path,
+        ids,
+        remove,
+        output_args: _,
+    }) = action
     else {
         bail!("internal: helper called with wrong PlanAction variant");
     };
@@ -1848,7 +1870,12 @@ fn build_plan_batch(
     system: &dyn System,
     cwd: &Path,
 ) -> Result<plan_ops::PlanRequest<'static>> {
-    let PlanAction::Batch { path, ops_file, .. } = action else {
+    let PlanAction::Batch(PlanBatchArgs {
+        path,
+        ops_file,
+        output_args: _,
+    }) = action
+    else {
         bail!("internal: helper called with wrong PlanAction variant");
     };
     Ok(plan_ops::PlanRequest::Batch {
@@ -1865,7 +1892,7 @@ fn build_plan_comment<'cmd>(
     position: &'cmd mut InsertPosition,
     attach_refs: &'cmd mut Vec<&'cmd str>,
 ) -> Result<plan_ops::PlanRequest<'cmd>> {
-    let PlanAction::Comment {
+    let PlanAction::Comment(PlanCommentArgs {
         path,
         content,
         after_comment,
@@ -1877,8 +1904,8 @@ fn build_plan_comment<'cmd>(
         reply_to,
         sandbox,
         to,
-        ..
-    } = action
+        output_args: _,
+    }) = action
     else {
         bail!("internal: helper called with wrong PlanAction variant");
     };
@@ -1911,7 +1938,12 @@ fn build_plan_delete(
     system: &dyn System,
     cwd: &Path,
 ) -> Result<plan_ops::PlanRequest<'static>> {
-    let PlanAction::Delete { path, ids, .. } = action else {
+    let PlanAction::Delete(PlanDeleteArgs {
+        path,
+        ids,
+        output_args: _,
+    }) = action
+    else {
         bail!("internal: helper called with wrong PlanAction variant");
     };
     Ok(plan_ops::PlanRequest::Delete {
@@ -1925,9 +1957,12 @@ fn build_plan_edit<'cmd>(
     system: &dyn System,
     cwd: &Path,
 ) -> Result<plan_ops::PlanRequest<'cmd>> {
-    let PlanAction::Edit {
-        path, id, content, ..
-    } = action
+    let PlanAction::Edit(PlanEditArgs {
+        path,
+        id,
+        content,
+        output_args: _,
+    }) = action
     else {
         bail!("internal: helper called with wrong PlanAction variant");
     };
@@ -1942,9 +1977,12 @@ fn build_plan_cp(
     action: &PlanAction,
     system: &dyn System,
 ) -> Result<plan_ops::PlanRequest<'static>> {
-    let PlanAction::Cp {
-        src, dst, force, ..
-    } = action
+    let PlanAction::Cp(PlanCpArgs {
+        src,
+        dst,
+        force,
+        output_args: _,
+    }) = action
     else {
         bail!("internal: helper called with wrong PlanAction variant");
     };
@@ -1959,9 +1997,12 @@ fn build_plan_mv(
     action: &PlanAction,
     system: &dyn System,
 ) -> Result<plan_ops::PlanRequest<'static>> {
-    let PlanAction::Mv {
-        src, dst, force, ..
-    } = action
+    let PlanAction::Mv(PlanMvArgs {
+        src,
+        dst,
+        force,
+        output_args: _,
+    }) = action
     else {
         bail!("internal: helper called with wrong PlanAction variant");
     };
@@ -1977,9 +2018,11 @@ fn build_plan_purge(
     system: &dyn System,
     cwd: &Path,
 ) -> Result<plan_ops::PlanRequest<'static>> {
-    let PlanAction::Purge {
-        path, recursive, ..
-    } = action
+    let PlanAction::Purge(PlanPurgeArgs {
+        path,
+        recursive,
+        output_args: _,
+    }) = action
     else {
         bail!("internal: helper called with wrong PlanAction variant");
     };
@@ -1994,13 +2037,13 @@ fn build_plan_react<'cmd>(
     system: &dyn System,
     cwd: &Path,
 ) -> Result<plan_ops::PlanRequest<'cmd>> {
-    let PlanAction::React {
+    let PlanAction::React(PlanReactArgs {
         path,
         id,
         emoji,
         remove,
-        ..
-    } = action
+        output_args: _,
+    }) = action
     else {
         bail!("internal: helper called with wrong PlanAction variant");
     };
@@ -2025,7 +2068,7 @@ fn build_plan_claude_restrict(
         also_deny_bash,
         cli_allowed,
         user_settings,
-        ..
+        output_args: _,
     } = action
     else {
         bail!("internal: helper called with wrong PlanClaudeAction variant");
@@ -2054,7 +2097,11 @@ fn build_plan_sandbox_add(
     system: &dyn System,
     cwd: &Path,
 ) -> Result<plan_ops::PlanRequest<'static>> {
-    let PlanAction::SandboxAdd { path, .. } = action else {
+    let PlanAction::SandboxAdd(PlanSandboxAddArgs {
+        path,
+        output_args: _,
+    }) = action
+    else {
         bail!("internal: helper called with wrong PlanAction variant");
     };
     Ok(plan_ops::PlanRequest::SandboxAdd {
@@ -2067,7 +2114,11 @@ fn build_plan_sandbox_remove(
     system: &dyn System,
     cwd: &Path,
 ) -> Result<plan_ops::PlanRequest<'static>> {
-    let PlanAction::SandboxRemove { path, .. } = action else {
+    let PlanAction::SandboxRemove(PlanSandboxRemoveArgs {
+        path,
+        output_args: _,
+    }) = action
+    else {
         bail!("internal: helper called with wrong PlanAction variant");
     };
     Ok(plan_ops::PlanRequest::SandboxRemove {
@@ -2080,12 +2131,12 @@ fn build_plan_sign(
     system: &dyn System,
     cwd: &Path,
 ) -> Result<plan_ops::PlanRequest<'static>> {
-    let PlanAction::Sign {
+    let PlanAction::Sign(PlanSignArgs {
         path,
         ids,
         all_mine,
-        ..
-    } = action
+        output_args: _,
+    }) = action
     else {
         bail!("internal: helper called with wrong PlanAction variant");
     };
@@ -2099,7 +2150,12 @@ fn build_plan_claude_unrestrict(
     action: &PlanClaudeAction,
     cwd: &Path,
 ) -> Result<plan_ops::PlanRequest<'static>> {
-    let PlanClaudeAction::Unrestrict { path, .. } = action else {
+    let PlanClaudeAction::Unrestrict {
+        path,
+        user_settings: _,
+        output_args: _,
+    } = action
+    else {
         bail!("internal: helper called with wrong PlanClaudeAction variant");
     };
     Ok(plan_ops::PlanRequest::Unprotect {
@@ -2113,15 +2169,15 @@ fn build_plan_write<'cmd>(
     system: &dyn System,
     write_body: &'cmd mut String,
 ) -> Result<plan_ops::PlanRequest<'cmd>> {
-    let PlanAction::Write {
+    let PlanAction::Write(PlanWriteArgs {
         path,
         content,
         binary,
         create,
         lines,
         raw,
-        ..
-    } = action
+        output_args: _,
+    }) = action
     else {
         bail!("internal: helper called with wrong PlanAction variant");
     };

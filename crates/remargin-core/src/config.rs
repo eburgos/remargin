@@ -428,7 +428,8 @@ impl ResolvedConfig {
     pub fn escalate_mode_for_doc(&self, system: &dyn System, doc_path: &Path) -> Result<Self> {
         let realm_anchor = doc_path.parent().unwrap_or(doc_path);
         let ResolvedMode {
-            mode: realm_mode, ..
+            mode: realm_mode,
+            source: _,
         } = resolve_mode(system, realm_anchor)?;
         let realm_registry = load_registry(system, realm_anchor)?;
 
@@ -494,7 +495,7 @@ impl ResolvedConfig {
         flags: &identity::IdentityFlags,
         assets_dir_flag: Option<&str>,
     ) -> Result<Self> {
-        let ResolvedMode { mode, .. } = resolve_mode(system, cwd)?;
+        let ResolvedMode { mode, source: _ } = resolve_mode(system, cwd)?;
 
         let registry_anchor = flags
             .config_path

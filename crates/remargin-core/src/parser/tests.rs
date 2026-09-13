@@ -80,11 +80,11 @@ fn test_required_fields_only() {
     let doc = minimal_block("xyz");
     let parsed = parse(&doc).unwrap();
     let c = parsed.comments()[0];
-    assert!(c.to.is_empty());
+    assert_eq!(c.to, [] as [String; 0]);
     assert!(c.reply_to.is_none());
     assert!(c.thread.is_none());
     assert!(c.signature.is_none());
-    assert!(c.attachments.is_empty());
+    assert_eq!(c.attachments, [] as [String; 0]);
     assert!(c.ack.is_empty());
     assert!(c.reactions.is_empty());
 }
@@ -144,7 +144,7 @@ fn test_empty_content() {
     let doc = minimal_block("empty");
     let parsed = parse(&doc).unwrap();
     let c = parsed.comments()[0];
-    assert!(c.content.is_empty());
+    assert_eq!(c.content, "");
 }
 
 #[test]

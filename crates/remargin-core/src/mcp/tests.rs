@@ -448,7 +448,7 @@ fn comment_creates_and_returns_id() {
 
     let result = extract_tool_text(&response);
     assert!(result["id"].is_string());
-    assert!(!result["id"].as_str().unwrap().is_empty());
+    assert_ne!(result["id"].as_str().unwrap(), "");
 }
 
 #[test]
@@ -1529,7 +1529,10 @@ fn lint_returns_ok_for_valid_document() {
 
     let result = extract_tool_text(&response);
     assert!(result["ok"].as_bool().unwrap());
-    assert!(result["errors"].as_array().unwrap().is_empty());
+    assert_eq!(
+        result["errors"].as_array().unwrap().as_slice(),
+        [] as [Value; 0]
+    );
 }
 
 #[test]
@@ -2494,7 +2497,7 @@ fn mcp_query_comment_id_not_found_returns_empty() {
 
     let result = extract_tool_text(&response);
     let results = result["results"].as_array().unwrap();
-    assert!(results.is_empty());
+    assert_eq!(results.as_slice(), [] as [Value; 0]);
 }
 
 fn query_base_path(system: &MemorySystem, base: &Path, path: &str) -> String {
@@ -2635,7 +2638,7 @@ fn mcp_query_expanded_returns_comments() {
     assert_eq!(row0[3].as_str().unwrap(), "human");
     assert_eq!(row0[13].as_str().unwrap(), "Pending comment from alice.");
     assert!(row0[7].as_array().unwrap().contains(&json!("bob")));
-    assert!(row0[8].as_array().unwrap().is_empty());
+    assert_eq!(row0[8].as_array().unwrap().as_slice(), [] as [Value; 0]);
     // Nullable columns serialize as null, not omitted.
     assert!(row0[5].is_null(), "reply_to null: {row0:?}");
     assert!(row0[10].is_null(), "remargin_kind null: {row0:?}");
@@ -6784,7 +6787,10 @@ fn reply_auto_ack_false_to_other_without_reason_is_rejected() {
     assert!(text.contains("ack_skip_reason"), "got: {text}");
     // Document was not mutated — only the original comment remains.
     let parent = fetch_comment(&system, base, &config, "aaa");
-    assert!(parent["ack"].as_array().unwrap().is_empty());
+    assert_eq!(
+        parent["ack"].as_array().unwrap().as_slice(),
+        [] as [Value; 0]
+    );
 }
 
 #[test]
@@ -6810,7 +6816,10 @@ fn reply_auto_ack_false_to_other_with_reason_succeeds_unacked() {
     assert!(!is_tool_error(&response));
     // auto_ack:false honored — parent stays unacked.
     let parent = fetch_comment(&system, base, &config, "aaa");
-    assert!(parent["ack"].as_array().unwrap().is_empty());
+    assert_eq!(
+        parent["ack"].as_array().unwrap().as_slice(),
+        [] as [Value; 0]
+    );
 }
 
 #[test]

@@ -166,7 +166,7 @@ fn add_to_new_file_adds_entry() {
     let result = add_to_files(&system, &files, "eduardo", &open_config()).unwrap();
 
     assert_eq!(result.changed.len(), 1);
-    assert!(result.skipped.is_empty());
+    assert_eq!(result.skipped, [] as [PathBuf; 0]);
     assert!(result.failed.is_empty());
 
     let content = read_file(&system, "/docs/a.md");
@@ -196,7 +196,7 @@ fn add_refreshes_timestamp_on_repeat() {
     thread::sleep(Duration::from_millis(2));
     let result = add_to_files(&system, &files, "eduardo", &open_config()).unwrap();
     assert_eq!(result.changed.len(), 1);
-    assert!(result.skipped.is_empty());
+    assert_eq!(result.skipped, [] as [PathBuf; 0]);
 
     let second = read_file(&system, "/docs/a.md");
     assert_ne!(
@@ -228,7 +228,7 @@ fn add_rejects_non_markdown_file() {
     let files = vec![PathBuf::from("/tmp/foo.txt")];
     let result = add_to_files(&system, &files, "eduardo", &open_config()).unwrap();
 
-    assert!(result.changed.is_empty());
+    assert_eq!(result.changed, [] as [PathBuf; 0]);
     assert_eq!(result.failed.len(), 1);
     assert!(result.failed[0].reason.contains("not a markdown file"));
 
@@ -304,7 +304,7 @@ fn remove_noop_when_no_entry() {
 
     // Eduardo removes even though only jorge is staged.
     let result = remove_from_files(&system, &files, "eduardo", &open_config()).unwrap();
-    assert!(result.changed.is_empty());
+    assert_eq!(result.changed, [] as [PathBuf; 0]);
     assert_eq!(result.skipped.len(), 1);
 
     let content = read_file(&system, "/docs/a.md");
@@ -324,7 +324,7 @@ fn remove_does_not_touch_other_identity_entries() {
         &open_config(),
     )
     .unwrap();
-    assert!(result.changed.is_empty());
+    assert_eq!(result.changed, [] as [PathBuf; 0]);
 
     let content = read_file(&system, "/docs/a.md");
     assert!(content.contains("jorge@"));

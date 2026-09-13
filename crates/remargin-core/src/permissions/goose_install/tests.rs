@@ -336,7 +336,7 @@ fn session_guard_uninstall_removes_only_its_own_entry() {
         UninstallOutcome::Uninstalled,
     );
     assert!(system.exists(&guard_dir()).unwrap(), "plugin must survive");
-    assert!(session_entries(&system).is_empty());
+    assert_eq!(session_entries(&system), [] as [serde_json::Value; 0]);
     assert_eq!(pretool_entries(&system).len(), 1);
     assert_eq!(test(&system, &guard_dir()).unwrap(), TestOutcome::Installed);
 }

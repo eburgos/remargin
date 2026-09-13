@@ -14,6 +14,8 @@ use serde_json::json;
 
 #[cfg(feature = "session")]
 use crate::SessionAction;
+#[cfg(feature = "obsidian")]
+use crate::cli::ObsidianArgs;
 use crate::handlers;
 use crate::io::{
     IoSinks, expand_cli_path, expand_cli_pathbuf, inject_elapsed_ms, parse_line_range,
@@ -25,10 +27,15 @@ use crate::params::{
     ReplaceParams, RestrictParams, SearchOutputMode, SearchParams, SignParams, WriteParams,
 };
 use crate::{
-    AssetsArgs, ClaudeAction, Cli, Commands, GooseAction, GooseMcpAction, GoosePretoolAction,
-    GooseSessionGuardAction, IdentityArgs, OutputArgs, PermissionsAction, PlanAction,
-    PlanClaudeAction, PluginAction, PretoolAction, PromptAction, SessionGuardAction,
-    UnrestrictedArgs,
+    AckArgs, ActivityArgs, AssetsArgs, BatchArgs, ClaudeAction, Cli, Commands, CommentArgs,
+    CommentsArgs, CpArgs, DeleteArgs, EditArgs, GetArgs, GetImageArgs, GooseAction, GooseMcpAction,
+    GoosePretoolAction, GooseSessionGuardAction, IdentityArgs, IdentityCmdArgs, KeygenArgs,
+    LintArgs, LsArgs, McpArgs, MetadataArgs, MvArgs, OutputArgs, PermissionsAction, PlanAckArgs,
+    PlanAction, PlanArgs, PlanBatchArgs, PlanClaudeAction, PlanCommentArgs, PlanCpArgs,
+    PlanDeleteArgs, PlanEditArgs, PlanMvArgs, PlanPurgeArgs, PlanReactArgs, PlanSandboxAddArgs,
+    PlanSandboxRemoveArgs, PlanSignArgs, PlanWriteArgs, PluginAction, PretoolAction, PromptAction,
+    PromptArgs, PurgeArgs, ReactArgs, RegistryArgs, ReplaceArgs, ResolveModeArgs, RmArgs,
+    SandboxArgs, SearchArgs, SessionGuardAction, SignArgs, UnrestrictedArgs, VerifyArgs, WriteArgs,
 };
 use remargin_core::config::identity::IdentityFlags;
 use remargin_core::config::{self, ResolvedConfig};
@@ -70,84 +77,238 @@ pub const EXIT_NOT_RESTRICTED: u8 = 1;
 /// stderr.
 pub const PERMISSIONS_NOT_RESTRICTED_MARKER: &str = "__remargin_permissions_check_not_restricted__";
 
-pub const fn subcommand_output(cmd: &Commands) -> Option<&OutputArgs> {
+/// The flattened arg groups a subcommand declares, extracted in a
+/// single pass so each `Commands` variant destructures its fields in
+/// exactly one place.
+struct SubcommandParts<'cmd> {
+    assets: Option<&'cmd AssetsArgs>,
+    config_free: bool,
+    identity: Option<&'cmd IdentityArgs>,
+    output: Option<&'cmd OutputArgs>,
+    unrestricted: Option<&'cmd UnrestrictedArgs>,
+}
+
+const fn subcommand_parts(cmd: &Commands) -> SubcommandParts<'_> {
     match cmd {
-        Commands::Ack { output_args, .. }
-        | Commands::Activity { output_args, .. }
-        | Commands::Batch { output_args, .. }
-        | Commands::Comment { output_args, .. }
-        | Commands::Comments { output_args, .. }
-        | Commands::Delete { output_args, .. }
-        | Commands::Doctor { output_args, .. }
-        | Commands::Edit { output_args, .. }
-        | Commands::Get { output_args, .. }
-        | Commands::Identity { output_args, .. }
-        | Commands::Keygen { output_args, .. }
-        | Commands::Lint { output_args, .. }
-        | Commands::Ls { output_args, .. }
-        | Commands::Cp { output_args, .. }
-        | Commands::Mcp { output_args, .. }
-        | Commands::Metadata { output_args, .. }
-        | Commands::Mv { output_args, .. }
-        | Commands::Prompt { output_args, .. }
-        | Commands::Purge { output_args, .. }
-        | Commands::Query { output_args, .. }
-        | Commands::React { output_args, .. }
-        | Commands::Replace { output_args, .. }
-        | Commands::Registry { output_args, .. }
-        | Commands::ResolveMode { output_args, .. }
-        | Commands::Rm { output_args, .. }
-        | Commands::GetImage { output_args, .. }
-        | Commands::Sandbox { output_args, .. }
-        | Commands::Search { output_args, .. }
-        | Commands::Sign { output_args, .. }
-        | Commands::Verify { output_args, .. }
-        | Commands::Write { output_args, .. } => Some(output_args),
-        #[cfg(feature = "obsidian")]
-        Commands::Obsidian { output_args, .. } => Some(output_args),
-        Commands::Claude { action } => Some(claude_action_output(action)),
-        Commands::Goose { action } => Some(goose_action_output(action)),
-        Commands::Permissions { action } => Some(permissions_action_output(action)),
-        Commands::Plan { action, .. } => Some(plan_action_output(action)),
+        Commands::Ack(a) => id_out(&a.identity_args, &a.output_args),
+        Commands::Comments(a) => id_out(&a.identity_args, &a.output_args),
+        Commands::Delete(a) => id_out(&a.identity_args, &a.output_args),
+        Commands::Mcp(a) => id_out(&a.identity_args, &a.output_args),
+        Commands::Mv(a) => id_out(&a.identity_args, &a.output_args),
+        Commands::Prompt(a) => id_out(&a.identity_args, &a.output_args),
+        Commands::Purge(a) => id_out(&a.identity_args, &a.output_args),
+        Commands::Query(a) => id_out(&a.identity_args, &a.output_args),
+        Commands::React(a) => id_out(&a.identity_args, &a.output_args),
+        Commands::Sandbox(a) => id_out(&a.identity_args, &a.output_args),
+        Commands::Search(a) => id_out(&a.identity_args, &a.output_args),
+        Commands::Sign(a) => id_out(&a.identity_args, &a.output_args),
+        Commands::Verify(a) => id_out(&a.identity_args, &a.output_args),
+        Commands::Activity(a) => config_free(id_out(&a.identity_args, &a.output_args)),
+        Commands::Identity(a) => config_free(id_out(&a.identity_args, &a.output_args)),
+        Commands::Batch(a) => with_assets(&a.assets_args, &a.identity_args, &a.output_args),
+        Commands::Comment(a) => with_assets(&a.assets_args, &a.identity_args, &a.output_args),
+        Commands::Edit(a) => with_assets(&a.assets_args, &a.identity_args, &a.output_args),
+        Commands::Cp(a) => {
+            with_unrestricted(&a.identity_args, &a.output_args, &a.unrestricted_args)
+        }
+        Commands::Get(a) => {
+            with_unrestricted(&a.identity_args, &a.output_args, &a.unrestricted_args)
+        }
+        Commands::Ls(a) => {
+            with_unrestricted(&a.identity_args, &a.output_args, &a.unrestricted_args)
+        }
+        Commands::Replace(a) => {
+            with_unrestricted(&a.identity_args, &a.output_args, &a.unrestricted_args)
+        }
+        Commands::Rm(a) => {
+            with_unrestricted(&a.identity_args, &a.output_args, &a.unrestricted_args)
+        }
+        Commands::Write(a) => {
+            with_unrestricted(&a.identity_args, &a.output_args, &a.unrestricted_args)
+        }
+        Commands::GetImage(a) => out_unrestricted(&a.output_args, &a.unrestricted_args),
+        Commands::Metadata(a) => out_unrestricted(&a.output_args, &a.unrestricted_args),
+        Commands::Lint(a) => out_only(&a.output_args),
+        Commands::Registry(a) => out_only(&a.output_args),
+        Commands::Doctor(a) => config_free(out_only(&a.output_args)),
+        Commands::Keygen(a) => config_free(out_only(&a.output_args)),
+        Commands::ResolveMode(a) => config_free(out_only(&a.output_args)),
+        Commands::Claude { action } => config_free(out_only(claude_action_output(action))),
+        Commands::Goose { action } => config_free(out_only(goose_action_output(action))),
+        Commands::Permissions { action } => {
+            config_free(out_only(permissions_action_output(action)))
+        }
+        Commands::Plan(a) => {
+            let mut parts = out_only(plan_action_output(&a.action));
+            parts.identity = Some(&a.identity_args);
+            parts
+        }
         #[cfg(feature = "session")]
-        Commands::Session { action } => Some(session_action_output(action)),
-        Commands::Version => None,
+        Commands::Session { action } => config_free(out_only(session_action_output(action))),
+        #[cfg(feature = "obsidian")]
+        Commands::Obsidian(a) => config_free(out_only(&a.output_args)),
+        Commands::Version => SubcommandParts {
+            assets: None,
+            config_free: true,
+            identity: None,
+            output: None,
+            unrestricted: None,
+        },
     }
+}
+
+const fn out_only(output: &OutputArgs) -> SubcommandParts<'_> {
+    SubcommandParts {
+        assets: None,
+        config_free: false,
+        identity: None,
+        output: Some(output),
+        unrestricted: None,
+    }
+}
+
+const fn id_out<'cmd>(
+    identity: &'cmd IdentityArgs,
+    output: &'cmd OutputArgs,
+) -> SubcommandParts<'cmd> {
+    SubcommandParts {
+        assets: None,
+        config_free: false,
+        identity: Some(identity),
+        output: Some(output),
+        unrestricted: None,
+    }
+}
+
+const fn with_assets<'cmd>(
+    assets: &'cmd AssetsArgs,
+    identity: &'cmd IdentityArgs,
+    output: &'cmd OutputArgs,
+) -> SubcommandParts<'cmd> {
+    SubcommandParts {
+        assets: Some(assets),
+        config_free: false,
+        identity: Some(identity),
+        output: Some(output),
+        unrestricted: None,
+    }
+}
+
+const fn with_unrestricted<'cmd>(
+    identity: &'cmd IdentityArgs,
+    output: &'cmd OutputArgs,
+    unrestricted: &'cmd UnrestrictedArgs,
+) -> SubcommandParts<'cmd> {
+    SubcommandParts {
+        assets: None,
+        config_free: false,
+        identity: Some(identity),
+        output: Some(output),
+        unrestricted: Some(unrestricted),
+    }
+}
+
+const fn out_unrestricted<'cmd>(
+    output: &'cmd OutputArgs,
+    unrestricted: &'cmd UnrestrictedArgs,
+) -> SubcommandParts<'cmd> {
+    SubcommandParts {
+        assets: None,
+        config_free: false,
+        identity: None,
+        output: Some(output),
+        unrestricted: Some(unrestricted),
+    }
+}
+
+const fn config_free(mut parts: SubcommandParts<'_>) -> SubcommandParts<'_> {
+    parts.config_free = true;
+    parts
+}
+
+pub const fn subcommand_output(cmd: &Commands) -> Option<&OutputArgs> {
+    subcommand_parts(cmd).output
 }
 
 /// Pull the per-action [`OutputArgs`] from a [`SessionAction`] variant.
 #[cfg(feature = "session")]
 const fn session_action_output(action: &SessionAction) -> &OutputArgs {
     match action {
-        SessionAction::Launch { output_args, .. } => output_args,
+        SessionAction::Launch {
+            output_args,
+            dry_run: _,
+            identity: _,
+            multiplexer: _,
+            name: _,
+            print: _,
+        } => output_args,
     }
 }
 
 /// Pull the per-action [`OutputArgs`] from a [`ClaudeAction`] variant.
 const fn claude_action_output(action: &ClaudeAction) -> &OutputArgs {
     match action {
-        ClaudeAction::Plugin { output_args, .. }
-        | ClaudeAction::Pretool { output_args, .. }
-        | ClaudeAction::SessionGuard { output_args, .. }
-        | ClaudeAction::Restrict { output_args, .. }
-        | ClaudeAction::Unrestrict { output_args, .. } => output_args,
+        ClaudeAction::Plugin {
+            output_args,
+            action: _,
+        }
+        | ClaudeAction::Pretool {
+            output_args,
+            action: _,
+        }
+        | ClaudeAction::SessionGuard {
+            output_args,
+            action: _,
+        }
+        | ClaudeAction::Restrict {
+            output_args,
+            path: _,
+            also_deny_bash: _,
+            cli_allowed: _,
+            user_settings: _,
+        }
+        | ClaudeAction::Unrestrict {
+            output_args,
+            path: _,
+            strict: _,
+            user_settings: _,
+        } => output_args,
     }
 }
 
 /// Pull the per-action [`OutputArgs`] from a [`GooseAction`] variant.
 const fn goose_action_output(action: &GooseAction) -> &OutputArgs {
     match action {
-        GooseAction::Mcp { output_args, .. }
-        | GooseAction::Pretool { output_args, .. }
-        | GooseAction::SessionGuard { output_args, .. } => output_args,
+        GooseAction::Mcp {
+            output_args,
+            action: _,
+        }
+        | GooseAction::Pretool {
+            output_args,
+            action: _,
+        }
+        | GooseAction::SessionGuard {
+            output_args,
+            action: _,
+        } => output_args,
     }
 }
 
 /// Pull the per-action [`OutputArgs`] from a [`PlanClaudeAction`] variant.
 const fn plan_claude_action_output(action: &PlanClaudeAction) -> &OutputArgs {
     match action {
-        PlanClaudeAction::Restrict { output_args, .. }
-        | PlanClaudeAction::Unrestrict { output_args, .. } => output_args,
+        PlanClaudeAction::Restrict {
+            output_args,
+            path: _,
+            also_deny_bash: _,
+            cli_allowed: _,
+            user_settings: _,
+        }
+        | PlanClaudeAction::Unrestrict {
+            output_args,
+            path: _,
+            user_settings: _,
+        } => output_args,
     }
 }
 
@@ -155,9 +316,12 @@ const fn plan_claude_action_output(action: &PlanClaudeAction) -> &OutputArgs {
 /// variant. Both `show` and `check` flatten an `OutputArgs`.
 const fn permissions_action_output(action: &PermissionsAction) -> &OutputArgs {
     match action {
-        PermissionsAction::Show { output_args } | PermissionsAction::Check { output_args, .. } => {
-            output_args
-        }
+        PermissionsAction::Show { output_args }
+        | PermissionsAction::Check {
+            output_args,
+            path: _,
+            why: _,
+        } => output_args,
     }
 }
 
@@ -165,19 +329,89 @@ const fn permissions_action_output(action: &PermissionsAction) -> &OutputArgs {
 /// Every plan sub-action flattens an `OutputArgs`.
 const fn plan_action_output(action: &PlanAction) -> &OutputArgs {
     match action {
-        PlanAction::Ack { output_args, .. }
-        | PlanAction::Batch { output_args, .. }
-        | PlanAction::Comment { output_args, .. }
-        | PlanAction::Cp { output_args, .. }
-        | PlanAction::Delete { output_args, .. }
-        | PlanAction::Edit { output_args, .. }
-        | PlanAction::Mv { output_args, .. }
-        | PlanAction::Purge { output_args, .. }
-        | PlanAction::React { output_args, .. }
-        | PlanAction::SandboxAdd { output_args, .. }
-        | PlanAction::SandboxRemove { output_args, .. }
-        | PlanAction::Sign { output_args, .. }
-        | PlanAction::Write { output_args, .. } => output_args,
+        PlanAction::Ack(PlanAckArgs {
+            output_args,
+            path: _,
+            ids: _,
+            remove: _,
+        })
+        | PlanAction::Batch(PlanBatchArgs {
+            output_args,
+            path: _,
+            ops_file: _,
+        })
+        | PlanAction::Comment(PlanCommentArgs {
+            output_args,
+            path: _,
+            content: _,
+            after_comment: _,
+            after_heading: _,
+            after_line: _,
+            attach_names: _,
+            auto_ack: _,
+            no_auto_ack: _,
+            reply_to: _,
+            sandbox: _,
+            to: _,
+        })
+        | PlanAction::Cp(PlanCpArgs {
+            output_args,
+            src: _,
+            dst: _,
+            force: _,
+        })
+        | PlanAction::Delete(PlanDeleteArgs {
+            output_args,
+            path: _,
+            ids: _,
+        })
+        | PlanAction::Edit(PlanEditArgs {
+            output_args,
+            path: _,
+            id: _,
+            content: _,
+        })
+        | PlanAction::Mv(PlanMvArgs {
+            output_args,
+            src: _,
+            dst: _,
+            force: _,
+        })
+        | PlanAction::Purge(PlanPurgeArgs {
+            output_args,
+            path: _,
+            recursive: _,
+        })
+        | PlanAction::React(PlanReactArgs {
+            output_args,
+            path: _,
+            id: _,
+            emoji: _,
+            remove: _,
+        })
+        | PlanAction::SandboxAdd(PlanSandboxAddArgs {
+            output_args,
+            path: _,
+        })
+        | PlanAction::SandboxRemove(PlanSandboxRemoveArgs {
+            output_args,
+            path: _,
+        })
+        | PlanAction::Sign(PlanSignArgs {
+            output_args,
+            path: _,
+            ids: _,
+            all_mine: _,
+        })
+        | PlanAction::Write(PlanWriteArgs {
+            output_args,
+            path: _,
+            content: _,
+            binary: _,
+            create: _,
+            lines: _,
+            raw: _,
+        }) => output_args,
         PlanAction::Claude { action: claude } => plan_claude_action_output(claude),
     }
 }
@@ -191,10 +425,7 @@ fn reject_unsupported_compact(cmd: &Commands) -> Result<()> {
     if compact
         && !matches!(
             cmd,
-            Commands::Activity { .. }
-                | Commands::Get { .. }
-                | Commands::Query { .. }
-                | Commands::Search { .. }
+            Commands::Activity(_) | Commands::Get(_) | Commands::Query(_) | Commands::Search(_)
         )
     {
         bail!("--compact is not supported for this subcommand");
@@ -287,48 +518,7 @@ pub fn build_identity_flags(
 /// bailing the whole process. Returning `true` here
 /// short-circuits the config load in [`run`].
 const fn subcommand_is_config_free(cmd: &Commands) -> bool {
-    match cmd {
-        Commands::Version
-        | Commands::Activity { .. }
-        | Commands::Claude { .. }
-        | Commands::Doctor { .. }
-        | Commands::Goose { .. }
-        | Commands::Identity { .. }
-        | Commands::Permissions { .. }
-        | Commands::ResolveMode { .. }
-        | Commands::Keygen { .. } => true,
-        #[cfg(feature = "obsidian")]
-        Commands::Obsidian { .. } => true,
-        #[cfg(feature = "session")]
-        Commands::Session { .. } => true,
-        Commands::Ack { .. }
-        | Commands::Batch { .. }
-        | Commands::Comment { .. }
-        | Commands::Comments { .. }
-        | Commands::Cp { .. }
-        | Commands::Delete { .. }
-        | Commands::Edit { .. }
-        | Commands::Get { .. }
-        | Commands::Lint { .. }
-        | Commands::Ls { .. }
-        | Commands::Mcp { .. }
-        | Commands::Metadata { .. }
-        | Commands::Mv { .. }
-        | Commands::Plan { .. }
-        | Commands::Prompt { .. }
-        | Commands::Purge { .. }
-        | Commands::Query { .. }
-        | Commands::React { .. }
-        | Commands::Replace { .. }
-        | Commands::Registry { .. }
-        | Commands::Rm { .. }
-        | Commands::GetImage { .. }
-        | Commands::Sandbox { .. }
-        | Commands::Search { .. }
-        | Commands::Sign { .. }
-        | Commands::Verify { .. }
-        | Commands::Write { .. } => false,
-    }
+    subcommand_parts(cmd).config_free
 }
 
 /// Fetch the [`IdentityArgs`] flatten for subcommands that declare one.
@@ -338,158 +528,19 @@ const fn subcommand_is_config_free(cmd: &Commands) -> bool {
 /// claude, goose, obsidian, session) return `None`; callers use the
 /// [`IdentityArgs::default`] to build an empty [`IdentityFlags`].
 const fn subcommand_identity(cmd: &Commands) -> Option<&IdentityArgs> {
-    match cmd {
-        Commands::Ack { identity_args, .. }
-        | Commands::Activity { identity_args, .. }
-        | Commands::Batch { identity_args, .. }
-        | Commands::Comment { identity_args, .. }
-        | Commands::Comments { identity_args, .. }
-        | Commands::Cp { identity_args, .. }
-        | Commands::Delete { identity_args, .. }
-        | Commands::Edit { identity_args, .. }
-        | Commands::Get { identity_args, .. }
-        | Commands::Identity { identity_args, .. }
-        | Commands::Ls { identity_args, .. }
-        | Commands::Mcp { identity_args, .. }
-        | Commands::Mv { identity_args, .. }
-        | Commands::Plan { identity_args, .. }
-        | Commands::Prompt { identity_args, .. }
-        | Commands::Purge { identity_args, .. }
-        | Commands::Query { identity_args, .. }
-        | Commands::React { identity_args, .. }
-        | Commands::Replace { identity_args, .. }
-        | Commands::Rm { identity_args, .. }
-        | Commands::Sandbox { identity_args, .. }
-        | Commands::Search { identity_args, .. }
-        | Commands::Sign { identity_args, .. }
-        | Commands::Verify { identity_args, .. }
-        | Commands::Write { identity_args, .. } => Some(identity_args),
-        Commands::Claude { .. }
-        | Commands::Doctor { .. }
-        | Commands::Goose { .. }
-        | Commands::Keygen { .. }
-        | Commands::Lint { .. }
-        | Commands::Metadata { .. }
-        | Commands::Permissions { .. }
-        | Commands::Registry { .. }
-        | Commands::ResolveMode { .. }
-        | Commands::GetImage { .. }
-        | Commands::Version => None,
-        #[cfg(feature = "obsidian")]
-        Commands::Obsidian { .. } => None,
-        #[cfg(feature = "session")]
-        Commands::Session { .. } => None,
-    }
+    subcommand_parts(cmd).identity
 }
 
 /// Fetch the [`AssetsArgs`] flatten for subcommands that write
 /// attachments.
 const fn subcommand_assets(cmd: &Commands) -> Option<&AssetsArgs> {
-    match cmd {
-        Commands::Batch { assets_args, .. }
-        | Commands::Comment { assets_args, .. }
-        | Commands::Edit { assets_args, .. } => Some(assets_args),
-        Commands::Ack { .. }
-        | Commands::Activity { .. }
-        | Commands::Claude { .. }
-        | Commands::Comments { .. }
-        | Commands::Cp { .. }
-        | Commands::Delete { .. }
-        | Commands::Doctor { .. }
-        | Commands::Get { .. }
-        | Commands::Goose { .. }
-        | Commands::Identity { .. }
-        | Commands::Keygen { .. }
-        | Commands::Lint { .. }
-        | Commands::Ls { .. }
-        | Commands::Mcp { .. }
-        | Commands::Metadata { .. }
-        | Commands::Mv { .. }
-        | Commands::Permissions { .. }
-        | Commands::Plan { .. }
-        | Commands::Prompt { .. }
-        | Commands::Purge { .. }
-        | Commands::Query { .. }
-        | Commands::React { .. }
-        | Commands::Replace { .. }
-        | Commands::Registry { .. }
-        | Commands::ResolveMode { .. }
-        | Commands::Rm { .. }
-        | Commands::GetImage { .. }
-        | Commands::Sandbox { .. }
-        | Commands::Search { .. }
-        | Commands::Sign { .. }
-        | Commands::Verify { .. }
-        | Commands::Version
-        | Commands::Write { .. } => None,
-        #[cfg(feature = "obsidian")]
-        Commands::Obsidian { .. } => None,
-        #[cfg(feature = "session")]
-        Commands::Session { .. } => None,
-    }
+    subcommand_parts(cmd).assets
 }
 
 /// Fetch the [`UnrestrictedArgs`] flatten for subcommands that touch
 /// arbitrary filesystem paths.
 const fn subcommand_unrestricted(cmd: &Commands) -> Option<&UnrestrictedArgs> {
-    match cmd {
-        Commands::Cp {
-            unrestricted_args, ..
-        }
-        | Commands::Get {
-            unrestricted_args, ..
-        }
-        | Commands::Ls {
-            unrestricted_args, ..
-        }
-        | Commands::Metadata {
-            unrestricted_args, ..
-        }
-        | Commands::Rm {
-            unrestricted_args, ..
-        }
-        | Commands::GetImage {
-            unrestricted_args, ..
-        }
-        | Commands::Replace {
-            unrestricted_args, ..
-        }
-        | Commands::Write {
-            unrestricted_args, ..
-        } => Some(unrestricted_args),
-        Commands::Ack { .. }
-        | Commands::Activity { .. }
-        | Commands::Batch { .. }
-        | Commands::Claude { .. }
-        | Commands::Comment { .. }
-        | Commands::Comments { .. }
-        | Commands::Delete { .. }
-        | Commands::Doctor { .. }
-        | Commands::Edit { .. }
-        | Commands::Goose { .. }
-        | Commands::Identity { .. }
-        | Commands::Keygen { .. }
-        | Commands::Lint { .. }
-        | Commands::Mcp { .. }
-        | Commands::Mv { .. }
-        | Commands::Permissions { .. }
-        | Commands::Plan { .. }
-        | Commands::Prompt { .. }
-        | Commands::Purge { .. }
-        | Commands::Query { .. }
-        | Commands::React { .. }
-        | Commands::Registry { .. }
-        | Commands::ResolveMode { .. }
-        | Commands::Sandbox { .. }
-        | Commands::Search { .. }
-        | Commands::Sign { .. }
-        | Commands::Verify { .. }
-        | Commands::Version => None,
-        #[cfg(feature = "obsidian")]
-        Commands::Obsidian { .. } => None,
-        #[cfg(feature = "session")]
-        Commands::Session { .. } => None,
-    }
+    subcommand_parts(cmd).unrestricted
 }
 
 pub fn run(cli: &Cli, system: &dyn System, cwd: &Path, sinks: &mut IoSinks<'_>) -> ExitCode {
@@ -563,7 +614,12 @@ fn dispatch(cli: &Cli, system: &dyn System, cwd: &Path, sinks: &mut IoSinks<'_>)
     // The Mcp subcommand forwards its flags directly to `mcp::run` so
     // per-tool identity fields can still be declared on each request.
     // Branch out early.
-    if let Commands::Mcp { action, .. } = cli.cmd() {
+    if let Commands::Mcp(McpArgs {
+        action,
+        identity_args: _,
+        output_args: _,
+    }) = cli.cmd()
+    {
         return handlers::cmd_mcp(
             sinks,
             system,
@@ -592,15 +648,13 @@ fn try_dispatch_config_free(
 ) -> Result<Option<()>> {
     match cli.cmd() {
         Commands::Version => handle_version(sinks).map(Some),
-        Commands::Identity { .. } => handle_identity(cli.cmd(), sinks, system, cwd).map(Some),
-        Commands::ResolveMode { .. } => {
-            handle_resolve_mode(cli.cmd(), sinks, system, cwd).map(Some)
-        }
-        Commands::Keygen { .. } => handle_keygen(cli.cmd(), sinks, system).map(Some),
+        Commands::Identity(_) => handle_identity(cli.cmd(), sinks, system, cwd).map(Some),
+        Commands::ResolveMode(_) => handle_resolve_mode(cli.cmd(), sinks, system, cwd).map(Some),
+        Commands::Keygen(_) => handle_keygen(cli.cmd(), sinks, system).map(Some),
         #[cfg(feature = "obsidian")]
-        Commands::Obsidian { .. } => handle_obsidian(cli.cmd(), sinks, system, cwd).map(Some),
-        Commands::Activity { .. } => handle_activity(cli.cmd(), sinks, system, cwd).map(Some),
-        Commands::Doctor { .. } => handlers::cmd_doctor(sinks, system, cwd, cli.cmd()).map(Some),
+        Commands::Obsidian(_) => handle_obsidian(cli.cmd(), sinks, system, cwd).map(Some),
+        Commands::Activity(_) => handle_activity(cli.cmd(), sinks, system, cwd).map(Some),
+        Commands::Doctor(_) => handlers::cmd_doctor(sinks, system, cwd, cli.cmd()).map(Some),
         Commands::Permissions { action } => {
             handlers::cmd_permissions(sinks, system, cwd, action).map(Some)
         }
@@ -628,11 +682,11 @@ fn handle_identity(
     system: &dyn System,
     cwd: &Path,
 ) -> Result<()> {
-    let Commands::Identity {
+    let Commands::Identity(IdentityCmdArgs {
         action,
         identity_args,
         output_args,
-    } = command
+    }) = command
     else {
         bail!("internal: handle_identity called with wrong subcommand");
     };
@@ -653,11 +707,11 @@ fn handle_prompt(
     cwd: &Path,
     config: &ResolvedConfig,
 ) -> Result<()> {
-    let Commands::Prompt {
+    let Commands::Prompt(PromptArgs {
         action,
         output_args,
-        ..
-    } = command
+        identity_args: _,
+    }) = command
     else {
         bail!("internal: handle_prompt called with wrong subcommand");
     };
@@ -703,10 +757,10 @@ fn handle_resolve_mode(
     system: &dyn System,
     cwd: &Path,
 ) -> Result<()> {
-    let Commands::ResolveMode {
+    let Commands::ResolveMode(ResolveModeArgs {
         cwd: cwd_arg,
         output_args,
-    } = command
+    }) = command
     else {
         bail!("internal: handle_resolve_mode called with wrong subcommand");
     };
@@ -719,10 +773,10 @@ fn handle_resolve_mode(
 }
 
 fn handle_keygen(command: &Commands, sinks: &mut IoSinks<'_>, system: &dyn System) -> Result<()> {
-    let Commands::Keygen {
+    let Commands::Keygen(KeygenArgs {
         output: keygen_output,
-        ..
-    } = command
+        output_args: _,
+    }) = command
     else {
         bail!("internal: handle_keygen called with wrong subcommand");
     };
@@ -737,10 +791,10 @@ fn handle_obsidian(
     system: &dyn System,
     cwd: &Path,
 ) -> Result<()> {
-    let Commands::Obsidian {
+    let Commands::Obsidian(ObsidianArgs {
         action,
         output_args,
-    } = command
+    }) = command
     else {
         bail!("internal: handle_obsidian called with wrong subcommand");
     };
@@ -761,13 +815,13 @@ fn handle_activity(
     system: &dyn System,
     cwd: &Path,
 ) -> Result<()> {
-    let Commands::Activity {
+    let Commands::Activity(ActivityArgs {
         path,
         since,
         pretty,
         identity_args,
         output_args,
-    } = command
+    }) = command
     else {
         bail!("internal: handle_activity called with wrong subcommand");
     };
@@ -1102,46 +1156,46 @@ fn dispatch_with_config(
     config: &ResolvedConfig,
 ) -> Result<()> {
     match cli.cmd() {
-        Commands::Ack { .. } => handle_ack(cli.cmd(), sinks, system, cwd, config),
-        Commands::Batch { .. } => handle_batch(cli.cmd(), sinks, system, cwd, config),
-        Commands::Comment { .. } => handle_comment(cli.cmd(), sinks, system, cwd, config),
-        Commands::Comments { .. } => handle_comments(cli.cmd(), sinks, system, cwd),
-        Commands::Cp { .. } => handle_cp(cli.cmd(), sinks, system, cwd, config),
-        Commands::Delete { .. } => handle_delete(cli.cmd(), sinks, system, cwd, config),
-        Commands::Edit { .. } => handle_edit(cli.cmd(), sinks, system, cwd, config),
-        Commands::Get { .. } => handle_get(cli.cmd(), sinks, system, cwd, config),
-        Commands::Lint { .. } => handle_lint(cli.cmd(), sinks, system, cwd),
-        Commands::Ls { .. } => handle_ls(cli.cmd(), sinks, system, cwd, config),
-        Commands::Metadata { .. } => handle_metadata(cli.cmd(), sinks, system, cwd, config),
-        Commands::Mv { .. } => handle_mv(cli.cmd(), sinks, system, cwd, config),
-        Commands::Plan { .. } => handle_plan(cli.cmd(), sinks, system, cwd, config),
-        Commands::Prompt { .. } => handle_prompt(cli.cmd(), sinks, system, cwd, config),
-        Commands::Purge { .. } => handle_purge(cli.cmd(), sinks, system, cwd, config),
-        Commands::Query { .. } => handle_query(cli.cmd(), sinks, system, cwd, config),
-        Commands::React { .. } => handle_react(cli.cmd(), sinks, system, cwd, config),
-        Commands::Replace { .. } => handle_replace(cli.cmd(), sinks, system, cwd, config),
-        Commands::Registry { .. } => handle_registry(cli.cmd(), sinks, system, cwd),
-        Commands::Rm { .. } => handle_rm(cli.cmd(), sinks, system, cwd, config),
-        Commands::GetImage { .. } => handle_get_image(cli.cmd(), sinks, system, cwd, config),
-        Commands::Sandbox { .. } => handle_sandbox(cli.cmd(), sinks, system, cwd, config),
-        Commands::Search { .. } => handle_search(cli.cmd(), sinks, system, cwd),
-        Commands::Sign { .. } => handle_sign(cli.cmd(), sinks, system, cwd, config),
-        Commands::Verify { .. } => handle_verify(cli.cmd(), sinks, system, cwd, config),
-        Commands::Write { .. } => handle_write(cli.cmd(), sinks, system, cwd, config),
+        Commands::Ack(_) => handle_ack(cli.cmd(), sinks, system, cwd, config),
+        Commands::Batch(_) => handle_batch(cli.cmd(), sinks, system, cwd, config),
+        Commands::Comment(_) => handle_comment(cli.cmd(), sinks, system, cwd, config),
+        Commands::Comments(_) => handle_comments(cli.cmd(), sinks, system, cwd),
+        Commands::Cp(_) => handle_cp(cli.cmd(), sinks, system, cwd, config),
+        Commands::Delete(_) => handle_delete(cli.cmd(), sinks, system, cwd, config),
+        Commands::Edit(_) => handle_edit(cli.cmd(), sinks, system, cwd, config),
+        Commands::Get(_) => handle_get(cli.cmd(), sinks, system, cwd, config),
+        Commands::Lint(_) => handle_lint(cli.cmd(), sinks, system, cwd),
+        Commands::Ls(_) => handle_ls(cli.cmd(), sinks, system, cwd, config),
+        Commands::Metadata(_) => handle_metadata(cli.cmd(), sinks, system, cwd, config),
+        Commands::Mv(_) => handle_mv(cli.cmd(), sinks, system, cwd, config),
+        Commands::Plan(_) => handle_plan(cli.cmd(), sinks, system, cwd, config),
+        Commands::Prompt(_) => handle_prompt(cli.cmd(), sinks, system, cwd, config),
+        Commands::Purge(_) => handle_purge(cli.cmd(), sinks, system, cwd, config),
+        Commands::Query(_) => handle_query(cli.cmd(), sinks, system, cwd, config),
+        Commands::React(_) => handle_react(cli.cmd(), sinks, system, cwd, config),
+        Commands::Replace(_) => handle_replace(cli.cmd(), sinks, system, cwd, config),
+        Commands::Registry(_) => handle_registry(cli.cmd(), sinks, system, cwd),
+        Commands::Rm(_) => handle_rm(cli.cmd(), sinks, system, cwd, config),
+        Commands::GetImage(_) => handle_get_image(cli.cmd(), sinks, system, cwd, config),
+        Commands::Sandbox(_) => handle_sandbox(cli.cmd(), sinks, system, cwd, config),
+        Commands::Search(_) => handle_search(cli.cmd(), sinks, system, cwd),
+        Commands::Sign(_) => handle_sign(cli.cmd(), sinks, system, cwd, config),
+        Commands::Verify(_) => handle_verify(cli.cmd(), sinks, system, cwd, config),
+        Commands::Write(_) => handle_write(cli.cmd(), sinks, system, cwd, config),
         Commands::Version
-        | Commands::Activity { .. }
-        | Commands::Claude { .. }
-        | Commands::Doctor { .. }
-        | Commands::Goose { .. }
-        | Commands::Identity { .. }
-        | Commands::Mcp { .. }
-        | Commands::Keygen { .. }
-        | Commands::Permissions { .. }
-        | Commands::ResolveMode { .. } => Ok(()),
+        | Commands::Activity(_)
+        | Commands::Claude { action: _ }
+        | Commands::Doctor(_)
+        | Commands::Goose { action: _ }
+        | Commands::Identity(_)
+        | Commands::Mcp(_)
+        | Commands::Keygen(_)
+        | Commands::Permissions { action: _ }
+        | Commands::ResolveMode(_) => Ok(()),
         #[cfg(feature = "obsidian")]
-        Commands::Obsidian { .. } => Ok(()),
+        Commands::Obsidian(_) => Ok(()),
         #[cfg(feature = "session")]
-        Commands::Session { .. } => Ok(()),
+        Commands::Session { action: _ } => Ok(()),
     }
 }
 
@@ -1152,14 +1206,14 @@ fn handle_ack(
     cwd: &Path,
     config: &ResolvedConfig,
 ) -> Result<()> {
-    let Commands::Ack {
+    let Commands::Ack(AckArgs {
         file,
         ids,
         path,
         remove,
         output_args,
-        ..
-    } = command
+        identity_args: _,
+    }) = command
     else {
         bail!("internal: handle_ack called with wrong subcommand");
     };
@@ -1180,12 +1234,13 @@ fn handle_batch(
     cwd: &Path,
     config: &ResolvedConfig,
 ) -> Result<()> {
-    let Commands::Batch {
+    let Commands::Batch(BatchArgs {
         file,
         ops,
         output_args,
-        ..
-    } = command
+        identity_args: _,
+        assets_args: _,
+    }) = command
     else {
         bail!("internal: handle_batch called with wrong subcommand");
     };
@@ -1199,7 +1254,7 @@ fn handle_comment(
     cwd: &Path,
     config: &ResolvedConfig,
 ) -> Result<()> {
-    let Commands::Comment {
+    let Commands::Comment(CommentArgs {
         file,
         content,
         after_comment,
@@ -1214,8 +1269,9 @@ fn handle_comment(
         sandbox,
         to,
         output_args,
-        ..
-    } = command
+        identity_args: _,
+        assets_args: _,
+    }) = command
     else {
         bail!("internal: handle_comment called with wrong subcommand");
     };
@@ -1257,13 +1313,13 @@ fn handle_comments(
     system: &dyn System,
     cwd: &Path,
 ) -> Result<()> {
-    let Commands::Comments {
+    let Commands::Comments(CommentsArgs {
         file,
         pretty,
         remargin_kind,
         output_args,
-        ..
-    } = command
+        identity_args: _,
+    }) = command
     else {
         bail!("internal: handle_comments called with wrong subcommand");
     };
@@ -1285,12 +1341,12 @@ fn handle_delete(
     cwd: &Path,
     config: &ResolvedConfig,
 ) -> Result<()> {
-    let Commands::Delete {
+    let Commands::Delete(DeleteArgs {
         file,
         ids,
         output_args,
-        ..
-    } = command
+        identity_args: _,
+    }) = command
     else {
         bail!("internal: handle_delete called with wrong subcommand");
     };
@@ -1304,14 +1360,15 @@ fn handle_edit(
     cwd: &Path,
     config: &ResolvedConfig,
 ) -> Result<()> {
-    let Commands::Edit {
+    let Commands::Edit(EditArgs {
         file,
         id,
         content,
         remargin_kind,
         output_args,
-        ..
-    } = command
+        identity_args: _,
+        assets_args: _,
+    }) = command
     else {
         bail!("internal: handle_edit called with wrong subcommand");
     };
@@ -1336,7 +1393,7 @@ fn handle_get(
     cwd: &Path,
     config: &ResolvedConfig,
 ) -> Result<()> {
-    let Commands::Get {
+    let Commands::Get(GetArgs {
         path,
         binary,
         start,
@@ -1344,8 +1401,9 @@ fn handle_get(
         line_numbers,
         out,
         output_args,
-        ..
-    } = command
+        identity_args: _,
+        unrestricted_args: _,
+    }) = command
     else {
         bail!("internal: handle_get called with wrong subcommand");
     };
@@ -1375,7 +1433,7 @@ fn handle_lint(
     system: &dyn System,
     cwd: &Path,
 ) -> Result<()> {
-    let Commands::Lint { file, output_args } = command else {
+    let Commands::Lint(LintArgs { file, output_args }) = command else {
         bail!("internal: handle_lint called with wrong subcommand");
     };
     handlers::cmd_lint(sinks, system, cwd, file, output_args.json)
@@ -1388,9 +1446,12 @@ fn handle_ls(
     cwd: &Path,
     config: &ResolvedConfig,
 ) -> Result<()> {
-    let Commands::Ls {
-        path, output_args, ..
-    } = command
+    let Commands::Ls(LsArgs {
+        path,
+        output_args,
+        identity_args: _,
+        unrestricted_args: _,
+    }) = command
     else {
         bail!("internal: handle_ls called with wrong subcommand");
     };
@@ -1404,9 +1465,11 @@ fn handle_metadata(
     cwd: &Path,
     config: &ResolvedConfig,
 ) -> Result<()> {
-    let Commands::Metadata {
-        path, output_args, ..
-    } = command
+    let Commands::Metadata(MetadataArgs {
+        path,
+        output_args,
+        unrestricted_args: _,
+    }) = command
     else {
         bail!("internal: handle_metadata called with wrong subcommand");
     };
@@ -1420,13 +1483,14 @@ fn handle_cp(
     cwd: &Path,
     config: &ResolvedConfig,
 ) -> Result<()> {
-    let Commands::Cp {
+    let Commands::Cp(CpArgs {
         src,
         dst,
         force,
         output_args,
-        ..
-    } = command
+        identity_args: _,
+        unrestricted_args: _,
+    }) = command
     else {
         bail!("internal: handle_cp called with wrong subcommand");
     };
@@ -1446,13 +1510,14 @@ fn handle_mv(
     cwd: &Path,
     config: &ResolvedConfig,
 ) -> Result<()> {
-    let Commands::Mv {
+    let Commands::Mv(MvArgs {
         src,
         dst,
         force,
         output_args,
-        ..
-    } = command
+        identity_args: _,
+        unrestricted_args: _,
+    }) = command
     else {
         bail!("internal: handle_mv called with wrong subcommand");
     };
@@ -1472,7 +1537,11 @@ fn handle_plan(
     cwd: &Path,
     config: &ResolvedConfig,
 ) -> Result<()> {
-    let Commands::Plan { action, .. } = command else {
+    let Commands::Plan(PlanArgs {
+        action,
+        identity_args: _,
+    }) = command
+    else {
         bail!("internal: handle_plan called with wrong subcommand");
     };
     handlers::cmd_plan(
@@ -1492,12 +1561,12 @@ fn handle_purge(
     cwd: &Path,
     config: &ResolvedConfig,
 ) -> Result<()> {
-    let Commands::Purge {
+    let Commands::Purge(PurgeArgs {
         file,
         output_args,
         recursive,
-        ..
-    } = command
+        identity_args: _,
+    }) = command
     else {
         bail!("internal: handle_purge called with wrong subcommand");
     };
@@ -1530,14 +1599,14 @@ fn handle_react(
     cwd: &Path,
     config: &ResolvedConfig,
 ) -> Result<()> {
-    let Commands::React {
+    let Commands::React(ReactArgs {
         file,
         id,
         emoji,
         remove,
         output_args,
-        ..
-    } = command
+        identity_args: _,
+    }) = command
     else {
         bail!("internal: handle_react called with wrong subcommand");
     };
@@ -1558,7 +1627,7 @@ fn handle_replace(
     cwd: &Path,
     config: &ResolvedConfig,
 ) -> Result<()> {
-    let Commands::Replace {
+    let Commands::Replace(ReplaceArgs {
         pattern,
         replacement,
         path,
@@ -1566,8 +1635,9 @@ fn handle_replace(
         ignore_case,
         dry_run,
         output_args,
-        ..
-    } = command
+        identity_args: _,
+        unrestricted_args: _,
+    }) = command
     else {
         bail!("internal: handle_replace called with wrong subcommand");
     };
@@ -1592,10 +1662,10 @@ fn handle_registry(
     system: &dyn System,
     cwd: &Path,
 ) -> Result<()> {
-    let Commands::Registry {
+    let Commands::Registry(RegistryArgs {
         action,
         output_args,
-    } = command
+    }) = command
     else {
         bail!("internal: handle_registry called with wrong subcommand");
     };
@@ -1609,9 +1679,12 @@ fn handle_rm(
     cwd: &Path,
     config: &ResolvedConfig,
 ) -> Result<()> {
-    let Commands::Rm {
-        file, output_args, ..
-    } = command
+    let Commands::Rm(RmArgs {
+        file,
+        output_args,
+        identity_args: _,
+        unrestricted_args: _,
+    }) = command
     else {
         bail!("internal: handle_rm called with wrong subcommand");
     };
@@ -1625,11 +1698,11 @@ fn handle_sandbox(
     cwd: &Path,
     config: &ResolvedConfig,
 ) -> Result<()> {
-    let Commands::Sandbox {
+    let Commands::Sandbox(SandboxArgs {
         action,
         output_args,
-        ..
-    } = command
+        identity_args: _,
+    }) = command
     else {
         bail!("internal: handle_sandbox called with wrong subcommand");
     };
@@ -1643,7 +1716,7 @@ fn handle_get_image(
     cwd: &Path,
     config: &ResolvedConfig,
 ) -> Result<()> {
-    let Commands::GetImage {
+    let Commands::GetImage(GetImageArgs {
         path,
         crop,
         format,
@@ -1651,8 +1724,8 @@ fn handle_get_image(
         max_dimension,
         out,
         output_args,
-        ..
-    } = command
+        unrestricted_args: _,
+    }) = command
     else {
         bail!("internal: handle_get_image called with wrong subcommand");
     };
@@ -1674,7 +1747,7 @@ fn handle_search(
     system: &dyn System,
     cwd: &Path,
 ) -> Result<()> {
-    let Commands::Search {
+    let Commands::Search(SearchArgs {
         pattern,
         path,
         regex,
@@ -1684,8 +1757,8 @@ fn handle_search(
         limit,
         offset,
         output_args,
-        ..
-    } = command
+        identity_args: _,
+    }) = command
     else {
         bail!("internal: handle_search called with wrong subcommand");
     };
@@ -1718,14 +1791,14 @@ fn handle_sign(
     cwd: &Path,
     config: &ResolvedConfig,
 ) -> Result<()> {
-    let Commands::Sign {
+    let Commands::Sign(SignArgs {
         file,
         ids,
         all_mine,
         repair_checksum,
         output_args,
-        ..
-    } = command
+        identity_args: _,
+    }) = command
     else {
         bail!("internal: handle_sign called with wrong subcommand");
     };
@@ -1746,9 +1819,11 @@ fn handle_verify(
     cwd: &Path,
     config: &ResolvedConfig,
 ) -> Result<()> {
-    let Commands::Verify {
-        file, output_args, ..
-    } = command
+    let Commands::Verify(VerifyArgs {
+        file,
+        output_args,
+        identity_args: _,
+    }) = command
     else {
         bail!("internal: handle_verify called with wrong subcommand");
     };
@@ -1762,7 +1837,7 @@ fn handle_write(
     cwd: &Path,
     config: &ResolvedConfig,
 ) -> Result<()> {
-    let Commands::Write {
+    let Commands::Write(WriteArgs {
         path,
         content,
         binary,
@@ -1770,8 +1845,9 @@ fn handle_write(
         lines,
         raw,
         output_args,
-        ..
-    } = command
+        identity_args: _,
+        unrestricted_args: _,
+    }) = command
     else {
         bail!("internal: handle_write called with wrong subcommand");
     };

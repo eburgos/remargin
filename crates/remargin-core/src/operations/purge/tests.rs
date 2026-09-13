@@ -1,6 +1,6 @@
 //! Tests for the purge operation.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use os_shim::System as _;
 use os_shim::mock::MemorySystem;
@@ -224,7 +224,7 @@ fn purge_dir_purges_every_md_file() {
 
     assert_eq!(result.purged.len(), 3);
     assert!(result.failed.is_empty());
-    assert!(result.skipped.is_empty());
+    assert_eq!(result.skipped, [] as [PathBuf; 0]);
     assert_eq!(result.comments_removed_total(), 6);
 
     for name in ["a.md", "b.md", "c.md"] {
@@ -265,7 +265,7 @@ fn purge_dir_empty_dir_is_noop() {
 
     assert!(result.purged.is_empty());
     assert!(result.failed.is_empty());
-    assert!(result.skipped.is_empty());
+    assert_eq!(result.skipped, [] as [PathBuf; 0]);
 }
 
 #[test]
@@ -282,7 +282,7 @@ fn purge_dir_zero_md_files_is_noop() {
 
     assert!(result.purged.is_empty());
     assert!(result.failed.is_empty());
-    assert!(result.skipped.is_empty());
+    assert_eq!(result.skipped, [] as [PathBuf; 0]);
 }
 
 #[test]

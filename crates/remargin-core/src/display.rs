@@ -357,7 +357,8 @@ pub fn render_activity_pretty(result: &ActivityResult) -> String {
                     line_start,
                     line_end,
                     reply_to,
-                    ..
+                    author_type: _,
+                    to: _,
                 } => {
                     let arrow = reply_to
                         .as_deref()
@@ -372,7 +373,7 @@ pub fn render_activity_pretty(result: &ActivityResult) -> String {
                     ts,
                     comment_id,
                     author,
-                    ..
+                    author_type: _,
                 } => {
                     let _ = writeln!(
                         out,
@@ -380,7 +381,11 @@ pub fn render_activity_pretty(result: &ActivityResult) -> String {
                         ts.format("%Y-%m-%d %H:%M"),
                     );
                 }
-                Change::Sandbox { ts, author, .. } => {
+                Change::Sandbox {
+                    ts,
+                    author,
+                    author_type: _,
+                } => {
                     let _ = writeln!(
                         out,
                         "  {} \u{00b7} sandbox \u{00b7} {author}",

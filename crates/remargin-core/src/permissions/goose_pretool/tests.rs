@@ -45,7 +45,7 @@ fn event_json(tool_name: &str, working_dir: &str, tool_input: &Value) -> Vec<u8>
 
 fn expect_block(verdict: GooseVerdict) -> String {
     assert!(
-        matches!(verdict, GooseVerdict::Block { .. }),
+        matches!(verdict, GooseVerdict::Block { reason: _ }),
         "expected Block, got {verdict:?}",
     );
     let GooseVerdict::Block { reason } = verdict else {

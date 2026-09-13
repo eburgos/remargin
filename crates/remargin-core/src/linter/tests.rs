@@ -4,6 +4,7 @@ use std::path::Path;
 
 use os_shim::mock::MemorySystem;
 
+use crate::linter::LintErrorView;
 use crate::linter::{lint, lint_doc, lint_or_fail};
 
 const DOC_WITH_UNKNOWN_RECIPIENT: &str = "\
@@ -469,7 +470,7 @@ fn lint_doc_missing_registry_skipped() {
         "missing registry should produce no recipient findings"
     );
     // Structural lint is unaffected.
-    assert!(report.errors.is_empty());
+    assert_eq!(report.errors, [] as [LintErrorView; 0]);
 }
 
 /// Scenario 17: `lint(content)` is unaffected — pure structural check only.

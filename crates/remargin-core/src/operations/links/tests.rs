@@ -212,7 +212,7 @@ fn self_anchor_not_a_link() {
     let sys = vault(&[("Alpha.md", "# Alpha")]);
     let body = "[jump](#section) and [[#heading]] are local";
     let links = run(body, &sys);
-    assert!(links.is_empty());
+    assert_eq!(links, [] as [Link; 0]);
 }
 
 // Autolinks and bare URLs are external → dropped.
@@ -245,7 +245,7 @@ fn reference_link_without_definition_dropped() {
     let sys = vault(&[]);
     let body = "See [the docs][missing].";
     let links = run(body, &sys);
-    assert!(links.is_empty());
+    assert_eq!(links, [] as [Link; 0]);
 }
 
 // Markdown image with resolvable internal source → path set.
