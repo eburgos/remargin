@@ -4,10 +4,26 @@ use std::path::{Path, PathBuf};
 
 use os_shim::mock::MemorySystem;
 
+use crate::config::{Mode, ResolvedConfig};
 use crate::operations::query::{
     QueryFilter, query, render_query_plain, resolve_comment_id, to_compact_row,
 };
 use crate::parser::AuthorType;
+
+fn open_config() -> ResolvedConfig {
+    ResolvedConfig {
+        assets_dir: String::from("assets"),
+        author_type: Some(AuthorType::Human),
+        identity: Some(String::from("eduardo")),
+        ignore: Vec::new(),
+        key_path: None,
+        mode: Mode::Open,
+        registry: None,
+        source_path: None,
+        trusted_roots: Vec::new(),
+        unrestricted: false,
+    }
+}
 
 fn doc_with_pending() -> &'static str {
     "\
@@ -75,7 +91,7 @@ fn query_all_with_comments() {
     let system = setup_system();
     let filter = QueryFilter::default();
 
-    let results = query(&system, Path::new("/project"), &filter).unwrap();
+    let results = query(&system, Path::new("/project"), &filter, &open_config()).unwrap();
     // Should find 2 files (pending.md and done.md), not plain.md
     assert_eq!(results.len(), 2);
 }
@@ -88,7 +104,7 @@ fn query_pending_only() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/project"), &filter).unwrap();
+    let results = query(&system, Path::new("/project"), &filter, &open_config()).unwrap();
     assert_eq!(results.len(), 1);
     assert!(results[0].path.to_str().unwrap().contains("pending.md"));
     assert_eq!(results[0].pending_count, 1);
@@ -102,7 +118,7 @@ fn query_pending_for_alice() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/project"), &filter).unwrap();
+    let results = query(&system, Path::new("/project"), &filter, &open_config()).unwrap();
     assert_eq!(results.len(), 1);
     assert!(
         results[0]
@@ -120,7 +136,7 @@ fn query_by_author() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/project"), &filter).unwrap();
+    let results = query(&system, Path::new("/project"), &filter, &open_config()).unwrap();
     assert_eq!(results.len(), 1);
     assert!(results[0].path.to_str().unwrap().contains("done.md"));
 }
@@ -130,7 +146,7 @@ fn query_empty_dir() {
     let system = MemorySystem::new().with_dir(Path::new("/empty")).unwrap();
 
     let filter = QueryFilter::default();
-    let results = query(&system, Path::new("/empty"), &filter).unwrap();
+    let results = query(&system, Path::new("/empty"), &filter, &open_config()).unwrap();
     assert!(results.is_empty());
 }
 
@@ -142,7 +158,7 @@ fn query_by_comment_id_finds_matching_doc() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/project"), &filter).unwrap();
+    let results = query(&system, Path::new("/project"), &filter, &open_config()).unwrap();
     assert_eq!(results.len(), 1);
     assert!(results[0].path.to_str().unwrap().contains("pending.md"));
 }
@@ -156,7 +172,7 @@ fn query_by_comment_id_returns_only_matching_doc() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/project"), &filter).unwrap();
+    let results = query(&system, Path::new("/project"), &filter, &open_config()).unwrap();
     assert_eq!(results.len(), 1);
     assert!(results[0].path.to_str().unwrap().contains("done.md"));
 }
@@ -171,7 +187,7 @@ fn query_by_comment_id_combined_with_author() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/project"), &filter).unwrap();
+    let results = query(&system, Path::new("/project"), &filter, &open_config()).unwrap();
     assert_eq!(results.len(), 1);
 
     // Same comment but author=alice should not match (abc is by eduardo).
@@ -181,7 +197,13 @@ fn query_by_comment_id_combined_with_author() {
         ..QueryFilter::default()
     };
 
-    let results_mismatch = query(&system, Path::new("/project"), &filter_mismatch).unwrap();
+    let results_mismatch = query(
+        &system,
+        Path::new("/project"),
+        &filter_mismatch,
+        &open_config(),
+    )
+    .unwrap();
     assert!(results_mismatch.is_empty());
 }
 
@@ -195,7 +217,7 @@ fn query_by_comment_id_combined_with_pending() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/project"), &filter).unwrap();
+    let results = query(&system, Path::new("/project"), &filter, &open_config()).unwrap();
     assert_eq!(results.len(), 1);
 
     // Comment "def" is acked, so pending=true should not match.
@@ -205,7 +227,13 @@ fn query_by_comment_id_combined_with_pending() {
         ..QueryFilter::default()
     };
 
-    let results_acked = query(&system, Path::new("/project"), &filter_acked).unwrap();
+    let results_acked = query(
+        &system,
+        Path::new("/project"),
+        &filter_acked,
+        &open_config(),
+    )
+    .unwrap();
     assert!(results_acked.is_empty());
 }
 
@@ -217,7 +245,7 @@ fn query_by_comment_id_not_found_returns_empty() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/project"), &filter).unwrap();
+    let results = query(&system, Path::new("/project"), &filter, &open_config()).unwrap();
     assert!(results.is_empty());
 }
 
@@ -229,7 +257,7 @@ fn query_by_comment_id_empty_folder_returns_empty() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/empty"), &filter).unwrap();
+    let results = query(&system, Path::new("/empty"), &filter, &open_config()).unwrap();
     assert!(results.is_empty());
 }
 
@@ -367,7 +395,7 @@ fn query_expanded_returns_comments() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/exp"), &filter).unwrap();
+    let results = query(&system, Path::new("/exp"), &filter, &open_config()).unwrap();
     // review.md has 3 comments, other.md has 1 comment.
     let review = results
         .iter()
@@ -393,7 +421,7 @@ fn query_expanded_pending_filters_comments() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/exp"), &filter).unwrap();
+    let results = query(&system, Path::new("/exp"), &filter, &open_config()).unwrap();
     let review = results
         .iter()
         .find(|r| r.path.to_str().unwrap().contains("review.md"))
@@ -428,7 +456,7 @@ fn query_expanded_pending_for_filters_comments() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/exp"), &filter).unwrap();
+    let results = query(&system, Path::new("/exp"), &filter, &open_config()).unwrap();
     let review = results
         .iter()
         .find(|r| r.path.to_str().unwrap().contains("review.md"))
@@ -452,7 +480,7 @@ fn query_expanded_author_filters_comments() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/exp"), &filter).unwrap();
+    let results = query(&system, Path::new("/exp"), &filter, &open_config()).unwrap();
     assert_eq!(results.len(), 1);
     let review = &results[0];
     // Only c2 is by bob.
@@ -471,7 +499,7 @@ fn query_expanded_since_filters_comments() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/exp"), &filter).unwrap();
+    let results = query(&system, Path::new("/exp"), &filter, &open_config()).unwrap();
     let review = results
         .iter()
         .find(|r| r.path.to_str().unwrap().contains("review.md"))
@@ -491,7 +519,7 @@ fn query_expanded_combined_filters() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/exp"), &filter).unwrap();
+    let results = query(&system, Path::new("/exp"), &filter, &open_config()).unwrap();
     let review = results
         .iter()
         .find(|r| r.path.to_str().unwrap().contains("review.md"))
@@ -510,7 +538,7 @@ fn query_expanded_multiple_files() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/exp"), &filter).unwrap();
+    let results = query(&system, Path::new("/exp"), &filter, &open_config()).unwrap();
     // Both files have pending comments.
     assert_eq!(results.len(), 2);
     for r in &results {
@@ -533,7 +561,7 @@ fn query_summary_has_empty_comments() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/exp"), &filter).unwrap();
+    let results = query(&system, Path::new("/exp"), &filter, &open_config()).unwrap();
     // summary=true suppresses comment data.
     for r in &results {
         assert!(r.comments.as_ref().is_none_or(Vec::is_empty));
@@ -550,7 +578,7 @@ fn query_expanded_no_matching_comments() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/exp"), &filter).unwrap();
+    let results = query(&system, Path::new("/exp"), &filter, &open_config()).unwrap();
     // File-level filter already excludes the file, and with expanded the
     // per-comment filter also finds nothing, so result is empty.
     assert!(results.is_empty());
@@ -565,7 +593,7 @@ fn query_expanded_comment_fields_complete() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/exp"), &filter).unwrap();
+    let results = query(&system, Path::new("/exp"), &filter, &open_config()).unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].comments.as_ref().unwrap().len(), 1);
 
@@ -621,7 +649,7 @@ Please review.
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/z"), &filter).unwrap();
+    let results = query(&system, Path::new("/z"), &filter, &open_config()).unwrap();
     let comments = results[0].comments.as_ref().unwrap();
     let row = to_compact_row(&comments[0], false);
 
@@ -746,7 +774,7 @@ fn broadcast_counts_as_pending_after_rem_4j91() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/pend"), &filter).unwrap();
+    let results = query(&system, Path::new("/pend"), &filter, &open_config()).unwrap();
     let mixed_result = results
         .iter()
         .find(|r| r.path.to_str().unwrap().contains("mixed.md"))
@@ -760,7 +788,7 @@ fn to_with_no_ack_is_pending() {
     let system = setup_pending_system();
     let filter = QueryFilter::default();
 
-    let results = query(&system, Path::new("/pend"), &filter).unwrap();
+    let results = query(&system, Path::new("/pend"), &filter, &open_config()).unwrap();
     let mixed = results
         .iter()
         .find(|r| r.path.to_str().unwrap().contains("mixed.md"))
@@ -786,7 +814,7 @@ fn to_fully_acked_not_pending() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/pend"), &filter).unwrap();
+    let results = query(&system, Path::new("/pend"), &filter, &open_config()).unwrap();
     // full.md has a fully-acked comment so it should NOT appear.
     assert!(
         !results
@@ -804,7 +832,7 @@ fn to_partially_acked_still_pending() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/pend"), &filter).unwrap();
+    let results = query(&system, Path::new("/pend"), &filter, &open_config()).unwrap();
     let partial = results
         .iter()
         .find(|r| r.path.to_str().unwrap().contains("partial.md"))
@@ -822,7 +850,7 @@ fn pending_count_matches_expanded() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/pend"), &filter).unwrap();
+    let results = query(&system, Path::new("/pend"), &filter, &open_config()).unwrap();
     for r in &results {
         assert_eq!(
             r.pending_count,
@@ -838,7 +866,7 @@ fn pending_for_excludes_fully_acked() {
     let system = setup_pending_system();
     let filter = QueryFilter::default();
 
-    let results = query(&system, Path::new("/pend"), &filter).unwrap();
+    let results = query(&system, Path::new("/pend"), &filter, &open_config()).unwrap();
     let partial = results
         .iter()
         .find(|r| r.path.to_str().unwrap().contains("partial.md"))
@@ -889,7 +917,7 @@ No to field at all.
         .unwrap();
 
     let filter = QueryFilter::default();
-    let results = query(&system, Path::new("/bonly"), &filter).unwrap();
+    let results = query(&system, Path::new("/bonly"), &filter, &open_config()).unwrap();
     assert_eq!(results.len(), 1);
     // pending_count reflects broadcast-is-pending semantics; pending_for
     // is still empty because broadcasts have no named recipients.
@@ -901,7 +929,13 @@ No to field at all.
         pending: true,
         ..QueryFilter::default()
     };
-    let pending_results = query(&system, Path::new("/bonly"), &pending_filter).unwrap();
+    let pending_results = query(
+        &system,
+        Path::new("/bonly"),
+        &pending_filter,
+        &open_config(),
+    )
+    .unwrap();
     assert_eq!(
         pending_results.len(),
         1,
@@ -941,7 +975,13 @@ Broadcast, already closed by an ack.
         pending: true,
         ..QueryFilter::default()
     };
-    let results = query(&system, Path::new("/bclosed"), &pending_filter).unwrap();
+    let results = query(
+        &system,
+        Path::new("/bclosed"),
+        &pending_filter,
+        &open_config(),
+    )
+    .unwrap();
     assert!(
         results.is_empty(),
         "acked broadcast should not surface under --pending"
@@ -957,7 +997,7 @@ fn pending_for_partially_acked() {
         pending_for: Some(String::from("carol")),
         ..QueryFilter::default()
     };
-    let results = query(&system, Path::new("/pend"), &filter_carol).unwrap();
+    let results = query(&system, Path::new("/pend"), &filter_carol, &open_config()).unwrap();
     assert!(
         results
             .iter()
@@ -970,7 +1010,7 @@ fn pending_for_partially_acked() {
         pending_for: Some(String::from("bob")),
         ..QueryFilter::default()
     };
-    let results_bob = query(&system, Path::new("/pend"), &filter_bob).unwrap();
+    let results_bob = query(&system, Path::new("/pend"), &filter_bob, &open_config()).unwrap();
     assert!(
         !results_bob
             .iter()
@@ -988,7 +1028,7 @@ fn expanded_pending_for_partial_ack() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/pend"), &filter).unwrap();
+    let results = query(&system, Path::new("/pend"), &filter, &open_config()).unwrap();
     let partial = results
         .iter()
         .find(|r| r.path.to_str().unwrap().contains("partial.md"))
@@ -1008,7 +1048,7 @@ fn query_default_includes_comments() {
     // Default filter: no explicit expanded=true, no summary.
     let filter = QueryFilter::default();
 
-    let results = query(&system, Path::new("/exp"), &filter).unwrap();
+    let results = query(&system, Path::new("/exp"), &filter, &open_config()).unwrap();
     // Comments should be included by default (not empty).
     for r in &results {
         assert!(
@@ -1027,7 +1067,7 @@ fn expanded_comments_have_file_path() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/exp"), &filter).unwrap();
+    let results = query(&system, Path::new("/exp"), &filter, &open_config()).unwrap();
     for r in &results {
         for cm in r.comments.iter().flatten() {
             assert_eq!(
@@ -1047,7 +1087,7 @@ fn query_summary_only() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/exp"), &filter).unwrap();
+    let results = query(&system, Path::new("/exp"), &filter, &open_config()).unwrap();
     // summary should still return results (with counts).
     assert!(!results.is_empty());
     for r in &results {
@@ -1068,7 +1108,7 @@ fn backward_compat_expanded_flag() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/exp"), &filter).unwrap();
+    let results = query(&system, Path::new("/exp"), &filter, &open_config()).unwrap();
     for r in &results {
         assert!(
             r.comments.as_ref().is_some_and(|v| !v.is_empty()),
@@ -1083,7 +1123,7 @@ fn file_path_on_default_comments() {
     let system = setup_expanded_system();
     let filter = QueryFilter::default();
 
-    let results = query(&system, Path::new("/exp"), &filter).unwrap();
+    let results = query(&system, Path::new("/exp"), &filter, &open_config()).unwrap();
     let review = results
         .iter()
         .find(|r| r.path.to_str().unwrap().contains("review.md"))
@@ -1108,7 +1148,7 @@ fn summary_with_pending_filter() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/exp"), &filter).unwrap();
+    let results = query(&system, Path::new("/exp"), &filter, &open_config()).unwrap();
     for r in &results {
         assert!(
             r.comments.as_ref().is_none_or(Vec::is_empty),
@@ -1127,7 +1167,7 @@ fn expanded_overrides_summary() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/exp"), &filter).unwrap();
+    let results = query(&system, Path::new("/exp"), &filter, &open_config()).unwrap();
     for r in &results {
         assert!(
             r.comments.as_ref().is_some_and(|v| !v.is_empty()),
@@ -1144,7 +1184,7 @@ fn query_result_json_shape_matches_schema() {
         expanded: true,
         ..QueryFilter::default()
     };
-    let results = query(&system, Path::new("/exp"), &filter).unwrap();
+    let results = query(&system, Path::new("/exp"), &filter, &open_config()).unwrap();
     let first = results.first().unwrap();
 
     // Serialize the whole result via serde (this is what the CLI's
@@ -1242,7 +1282,7 @@ Minimal.
         expanded: true,
         ..QueryFilter::default()
     };
-    let results = query(&system, Path::new("/mini"), &filter).unwrap();
+    let results = query(&system, Path::new("/mini"), &filter, &open_config()).unwrap();
     let first = results.first().unwrap();
 
     let value = serde_json::to_value(first).unwrap();
@@ -1273,7 +1313,7 @@ fn content_regex_filters_comments() {
         .with_content_regex("alice", false)
         .unwrap();
 
-    let results = query(&system, Path::new("/exp"), &filter).unwrap();
+    let results = query(&system, Path::new("/exp"), &filter, &open_config()).unwrap();
     // Only comments whose body contains "alice": c1 and c3 in review.md
     // ("First comment from alice." and "Third comment, already acked." - the
     // latter does not contain alice). Actually only c1 mentions alice by name;
@@ -1299,7 +1339,7 @@ fn content_regex_composes_with_pending() {
             .unwrap()
     };
 
-    let results = query(&system, Path::new("/exp"), &filter).unwrap();
+    let results = query(&system, Path::new("/exp"), &filter, &open_config()).unwrap();
     let ids: Vec<&str> = results
         .iter()
         .flat_map(|r| r.comments.iter().flatten().map(|cm| cm.id.as_str()))
@@ -1362,7 +1402,7 @@ Nothing match-worthy here.
         .with_content_regex(pattern, true)
         .unwrap();
 
-    let results = query(&system, Path::new("/d"), &filter).unwrap();
+    let results = query(&system, Path::new("/d"), &filter, &open_config()).unwrap();
     let ids: Vec<&str> = results
         .iter()
         .flat_map(|r| r.comments.iter().flatten().map(|cm| cm.id.as_str()))
@@ -1384,7 +1424,7 @@ fn content_regex_no_match_yields_empty_results() {
         .with_content_regex("xyzzy-no-such-token", false)
         .unwrap();
 
-    let results = query(&system, Path::new("/exp"), &filter).unwrap();
+    let results = query(&system, Path::new("/exp"), &filter, &open_config()).unwrap();
     // When no comments match, the whole file is skipped.
     assert!(results.is_empty());
 }
@@ -1486,7 +1526,7 @@ fn pending_for_me_surfaces_only_directed_unacked_by_caller() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/four"), &filter).unwrap();
+    let results = query(&system, Path::new("/four"), &filter, &open_config()).unwrap();
     assert_eq!(results.len(), 1);
     let ids: Vec<&str> = results[0]
         .comments
@@ -1516,8 +1556,8 @@ fn pending_for_me_matches_pending_for() {
         ..QueryFilter::default()
     };
 
-    let me_results = query(&system, Path::new("/four"), &pending_for_me).unwrap();
-    let for_results = query(&system, Path::new("/four"), &pending_for).unwrap();
+    let me_results = query(&system, Path::new("/four"), &pending_for_me, &open_config()).unwrap();
+    let for_results = query(&system, Path::new("/four"), &pending_for, &open_config()).unwrap();
 
     let me_ids: Vec<&str> = me_results
         .iter()
@@ -1540,7 +1580,7 @@ fn pending_broadcast_only_surfaces_unacked_broadcasts() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/four"), &filter).unwrap();
+    let results = query(&system, Path::new("/four"), &filter, &open_config()).unwrap();
     assert_eq!(results.len(), 1);
     let ids: Vec<&str> = results[0]
         .comments
@@ -1563,7 +1603,7 @@ fn pending_broadcast_excludes_directed_even_unacked() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/four"), &filter).unwrap();
+    let results = query(&system, Path::new("/four"), &filter, &open_config()).unwrap();
     let ids: Vec<&str> = results
         .iter()
         .flat_map(|r| r.comments.iter().flatten().map(|cm| cm.id.as_str()))
@@ -1588,7 +1628,7 @@ fn pending_for_me_and_pending_broadcast_union() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/four"), &filter).unwrap();
+    let results = query(&system, Path::new("/four"), &filter, &open_config()).unwrap();
     let mut ids: Vec<&str> = results
         .iter()
         .flat_map(|r| r.comments.iter().flatten().map(|cm| cm.id.as_str()))
@@ -1608,7 +1648,7 @@ fn pending_broadcast_respects_callers_ack() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/four"), &filter).unwrap();
+    let results = query(&system, Path::new("/four"), &filter, &open_config()).unwrap();
     let mut ids: Vec<&str> = results
         .iter()
         .flat_map(|r| r.comments.iter().flatten().map(|cm| cm.id.as_str()))
@@ -1631,7 +1671,7 @@ fn pending_union_composes_with_author_filter() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/four"), &filter).unwrap();
+    let results = query(&system, Path::new("/four"), &filter, &open_config()).unwrap();
     let ids: Vec<&str> = results
         .iter()
         .flat_map(|r| r.comments.iter().flatten().map(|cm| cm.id.as_str()))
@@ -1703,7 +1743,7 @@ fn query_kind_filter_single_value() {
         remargin_kind: vec![String::from("question")],
         ..QueryFilter::default()
     };
-    let results = query(&system, Path::new("/kinds"), &filter).unwrap();
+    let results = query(&system, Path::new("/kinds"), &filter, &open_config()).unwrap();
     let ids: Vec<&str> = results
         .iter()
         .flat_map(|r| r.comments.iter().flatten().map(|cm| cm.id.as_str()))
@@ -1719,7 +1759,7 @@ fn query_kind_filter_uses_or_semantics() {
         remargin_kind: vec![String::from("question"), String::from("todo")],
         ..QueryFilter::default()
     };
-    let results = query(&system, Path::new("/kinds"), &filter).unwrap();
+    let results = query(&system, Path::new("/kinds"), &filter, &open_config()).unwrap();
     let mut ids: Vec<&str> = results
         .iter()
         .flat_map(|r| r.comments.iter().flatten().map(|cm| cm.id.as_str()))
@@ -1736,7 +1776,7 @@ fn query_kind_filter_empty_returns_everything() {
         remargin_kind: Vec::new(),
         ..QueryFilter::default()
     };
-    let results = query(&system, Path::new("/kinds"), &filter).unwrap();
+    let results = query(&system, Path::new("/kinds"), &filter, &open_config()).unwrap();
     let count = results
         .iter()
         .flat_map(|r| r.comments.iter().flatten())
@@ -1752,7 +1792,7 @@ fn query_kind_filter_excludes_unmatched_comments() {
         remargin_kind: vec![String::from("blocker")],
         ..QueryFilter::default()
     };
-    let results = query(&system, Path::new("/kinds"), &filter).unwrap();
+    let results = query(&system, Path::new("/kinds"), &filter, &open_config()).unwrap();
     // No comment carries a `blocker` kind, so the file-level filter
     // drops the document entirely (no matching comments to include).
     assert!(results.is_empty());
@@ -1766,7 +1806,13 @@ fn query_file_path_pending_returns_one_result() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/project/docs/pending.md"), &filter).unwrap();
+    let results = query(
+        &system,
+        Path::new("/project/docs/pending.md"),
+        &filter,
+        &open_config(),
+    )
+    .unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].pending_count, 1);
     assert_eq!(results[0].path.to_str().unwrap(), "pending.md");
@@ -1780,7 +1826,13 @@ fn query_file_path_all_acked_is_empty() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/project/docs/done.md"), &filter).unwrap();
+    let results = query(
+        &system,
+        Path::new("/project/docs/done.md"),
+        &filter,
+        &open_config(),
+    )
+    .unwrap();
     assert!(results.is_empty());
 }
 
@@ -1792,8 +1844,14 @@ fn query_file_path_matches_directory_scoped_result() {
         ..QueryFilter::default()
     };
 
-    let file = query(&system, Path::new("/project/docs/pending.md"), &filter).unwrap();
-    let dir = query(&system, Path::new("/project"), &filter).unwrap();
+    let file = query(
+        &system,
+        Path::new("/project/docs/pending.md"),
+        &filter,
+        &open_config(),
+    )
+    .unwrap();
+    let dir = query(&system, Path::new("/project"), &filter, &open_config()).unwrap();
     let dir_pending = dir
         .iter()
         .find(|r| r.path.to_str().unwrap().contains("pending.md"))
@@ -1824,7 +1882,13 @@ fn query_file_path_expanded_returns_all_comments() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/exp/review.md"), &filter).unwrap();
+    let results = query(
+        &system,
+        Path::new("/exp/review.md"),
+        &filter,
+        &open_config(),
+    )
+    .unwrap();
     assert_eq!(results.len(), 1);
     let comments = results[0].comments.as_ref().unwrap();
     let ids: Vec<&str> = comments.iter().map(|c| c.id.as_str()).collect();
@@ -1840,7 +1904,13 @@ fn query_file_path_author_filter() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/exp/review.md"), &filter).unwrap();
+    let results = query(
+        &system,
+        Path::new("/exp/review.md"),
+        &filter,
+        &open_config(),
+    )
+    .unwrap();
     assert_eq!(results.len(), 1);
     let comments = results[0].comments.as_ref().unwrap();
     assert_eq!(comments.len(), 1);
@@ -1852,7 +1922,13 @@ fn query_file_path_no_comments_is_empty() {
     let system = setup_system();
     let filter = QueryFilter::default();
 
-    let results = query(&system, Path::new("/project/plain.md"), &filter).unwrap();
+    let results = query(
+        &system,
+        Path::new("/project/plain.md"),
+        &filter,
+        &open_config(),
+    )
+    .unwrap();
     assert!(results.is_empty());
 }
 
@@ -1865,7 +1941,13 @@ fn query_file_path_comment_id_filter() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/exp/review.md"), &filter).unwrap();
+    let results = query(
+        &system,
+        Path::new("/exp/review.md"),
+        &filter,
+        &open_config(),
+    )
+    .unwrap();
     assert_eq!(results.len(), 1);
     let comments = results[0].comments.as_ref().unwrap();
     assert_eq!(comments.len(), 1);
@@ -1880,7 +1962,13 @@ fn query_file_path_relative_is_file_name() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/exp/review.md"), &filter).unwrap();
+    let results = query(
+        &system,
+        Path::new("/exp/review.md"),
+        &filter,
+        &open_config(),
+    )
+    .unwrap();
     assert_eq!(results[0].path.to_str().unwrap(), "review.md");
     for cm in results[0].comments.as_ref().unwrap() {
         assert_eq!(cm.file.to_str().unwrap(), "review.md");
@@ -1899,7 +1987,13 @@ fn compact_row_shape_drops_file_and_compacts_acks() {
         expanded: true,
         ..QueryFilter::default()
     };
-    let results = query(&system, Path::new("/exp/review.md"), &filter).unwrap();
+    let results = query(
+        &system,
+        Path::new("/exp/review.md"),
+        &filter,
+        &open_config(),
+    )
+    .unwrap();
     assert_eq!(results.len(), 1);
 
     let compact = to_compact_result(&results[0], false);
@@ -1936,7 +2030,13 @@ fn compact_row_include_integrity_adds_columns() {
         expanded: true,
         ..QueryFilter::default()
     };
-    let results = query(&system, Path::new("/exp/review.md"), &filter).unwrap();
+    let results = query(
+        &system,
+        Path::new("/exp/review.md"),
+        &filter,
+        &open_config(),
+    )
+    .unwrap();
 
     let base = to_compact_result(&results[0], false);
     let integrity = to_compact_result(&results[0], true);
@@ -2021,7 +2121,13 @@ fn matched_count_reports_the_filtered_subset() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/exp/review.md"), &filter).unwrap();
+    let results = query(
+        &system,
+        Path::new("/exp/review.md"),
+        &filter,
+        &open_config(),
+    )
+    .unwrap();
     assert_eq!(results.len(), 1);
     let review = &results[0];
     assert_eq!(review.comment_count, 3);
@@ -2038,7 +2144,7 @@ fn matched_count_equals_comment_count_without_filters() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/exp"), &filter).unwrap();
+    let results = query(&system, Path::new("/exp"), &filter, &open_config()).unwrap();
     assert_eq!(results.len(), 2);
     for r in &results {
         assert_eq!(r.matched_count, r.comment_count);
@@ -2054,7 +2160,7 @@ fn summary_mode_reports_matched_count_without_comments() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/exp"), &filter).unwrap();
+    let results = query(&system, Path::new("/exp"), &filter, &open_config()).unwrap();
     assert_eq!(results.len(), 1);
     let review = &results[0];
     assert!(review.comments.is_none());
@@ -2081,7 +2187,7 @@ fn summary_mode_lists_file_with_zero_matches() {
         ..zero_match_filter()
     };
 
-    let results = query(&system, Path::new("/exp"), &filter).unwrap();
+    let results = query(&system, Path::new("/exp"), &filter, &open_config()).unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].comment_count, 3);
     assert_eq!(results[0].matched_count, 0);
@@ -2091,7 +2197,13 @@ fn summary_mode_lists_file_with_zero_matches() {
 fn non_summary_zero_matches_skips_file() {
     let system = setup_expanded_system();
 
-    let results = query(&system, Path::new("/exp"), &zero_match_filter()).unwrap();
+    let results = query(
+        &system,
+        Path::new("/exp"),
+        &zero_match_filter(),
+        &open_config(),
+    )
+    .unwrap();
     assert!(results.is_empty());
 }
 
@@ -2105,7 +2217,13 @@ fn compact_result_carries_matched_count() {
         pending_for: Some(String::from("alice")),
         ..QueryFilter::default()
     };
-    let results = query(&system, Path::new("/exp/review.md"), &filter).unwrap();
+    let results = query(
+        &system,
+        Path::new("/exp/review.md"),
+        &filter,
+        &open_config(),
+    )
+    .unwrap();
 
     let compact = to_compact_result(&results[0], false);
     assert_eq!(compact["comment_count"].as_u64().unwrap(), 3);
@@ -2121,7 +2239,13 @@ fn plain_header_names_both_counts_under_a_filter() {
         pending_for: Some(String::from("alice")),
         ..QueryFilter::default()
     };
-    let results = query(&system, Path::new("/exp/review.md"), &filter).unwrap();
+    let results = query(
+        &system,
+        Path::new("/exp/review.md"),
+        &filter,
+        &open_config(),
+    )
+    .unwrap();
 
     let output = render_query_plain(&results);
     assert!(
@@ -2137,7 +2261,13 @@ fn plain_header_keeps_the_bare_count_without_a_filter() {
         expanded: true,
         ..QueryFilter::default()
     };
-    let results = query(&system, Path::new("/exp/review.md"), &filter).unwrap();
+    let results = query(
+        &system,
+        Path::new("/exp/review.md"),
+        &filter,
+        &open_config(),
+    )
+    .unwrap();
 
     let output = render_query_plain(&results);
     assert!(
@@ -2154,7 +2284,13 @@ fn plain_summary_header_names_both_counts_under_a_filter() {
         summary: true,
         ..QueryFilter::default()
     };
-    let results = query(&system, Path::new("/exp/review.md"), &filter).unwrap();
+    let results = query(
+        &system,
+        Path::new("/exp/review.md"),
+        &filter,
+        &open_config(),
+    )
+    .unwrap();
 
     let output = render_query_plain(&results);
     assert_eq!(output, "review.md (1 of 3 comments, 2 pending)\n");
@@ -2177,7 +2313,13 @@ fn plain_header_says_one_comment_for_a_single_comment_file() {
         summary: true,
         ..QueryFilter::default()
     };
-    let results = query(&system, Path::new("/project/docs/pending.md"), &filter).unwrap();
+    let results = query(
+        &system,
+        Path::new("/project/docs/pending.md"),
+        &filter,
+        &open_config(),
+    )
+    .unwrap();
 
     let output = render_query_plain(&results);
     assert_eq!(output, "pending.md (1 comment, 1 pending)\n");
@@ -2226,7 +2368,7 @@ fn pending_broadcast_excludes_callers_own_broadcast() {
         ..QueryFilter::default()
     };
 
-    let results = query(&system, Path::new("/two"), &filter).unwrap();
+    let results = query(&system, Path::new("/two"), &filter, &open_config()).unwrap();
     assert_eq!(results.len(), 1);
     let ids: Vec<&str> = results[0]
         .comments

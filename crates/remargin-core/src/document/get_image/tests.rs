@@ -7,6 +7,24 @@ use image::{ImageBuffer, Rgb, RgbImage};
 use os_shim::mock::MemorySystem;
 use std::path::Path;
 
+use crate::config::{Mode, ResolvedConfig};
+use crate::parser::AuthorType;
+
+fn open_config() -> ResolvedConfig {
+    ResolvedConfig {
+        assets_dir: String::from("assets"),
+        author_type: Some(AuthorType::Human),
+        identity: Some(String::from("eduardo")),
+        ignore: Vec::new(),
+        key_path: None,
+        mode: Mode::Open,
+        registry: None,
+        source_path: None,
+        trusted_roots: Vec::new(),
+        unrestricted: false,
+    }
+}
+
 fn write_png(width: u32, height: u32) -> Vec<u8> {
     let mut img: RgbImage = ImageBuffer::new(width, height);
     for (x, y, pixel) in img.enumerate_pixels_mut() {
@@ -75,8 +93,7 @@ fn downscales_png() {
         &system,
         Path::new("/project"),
         Path::new("pic.png"),
-        false,
-        &[],
+        &open_config(),
         &GetImageOptions {
             max_dimension: Some(512),
             ..GetImageOptions::default()
@@ -103,8 +120,7 @@ fn crops_then_scales() {
         &system,
         Path::new("/project"),
         Path::new("pic.png"),
-        false,
-        &[],
+        &open_config(),
         &GetImageOptions {
             crop: Some(CropRegion {
                 x: 100,
@@ -135,8 +151,7 @@ fn clamps_crop_to_bounds() {
         &system,
         Path::new("/project"),
         Path::new("pic.png"),
-        false,
-        &[],
+        &open_config(),
         &GetImageOptions {
             crop: Some(CropRegion {
                 x: 50,
@@ -166,8 +181,7 @@ fn rejects_crop_outside_image() {
         &system,
         Path::new("/project"),
         Path::new("pic.png"),
-        false,
-        &[],
+        &open_config(),
         &GetImageOptions {
             crop: Some(CropRegion {
                 x: 500,
@@ -195,8 +209,7 @@ fn jpeg_respects_byte_budget() {
         &system,
         Path::new("/project"),
         Path::new("photo.jpg"),
-        false,
-        &[],
+        &open_config(),
         &GetImageOptions {
             max_bytes: Some(64 * 1024),
             ..GetImageOptions::default()
@@ -225,8 +238,7 @@ fn rejects_max_bytes_below_floor() {
         &system,
         Path::new("/project"),
         Path::new("pic.png"),
-        false,
-        &[],
+        &open_config(),
         &GetImageOptions {
             max_bytes: Some(MIN_MAX_BYTES - 1),
             ..GetImageOptions::default()
@@ -248,8 +260,7 @@ fn rejects_non_image_mime() {
         &system,
         Path::new("/project"),
         Path::new("doc.pdf"),
-        false,
-        &[],
+        &open_config(),
         &GetImageOptions::default(),
     )
     .unwrap_err();
@@ -268,8 +279,7 @@ fn rejects_svg() {
         &system,
         Path::new("/project"),
         Path::new("icon.svg"),
-        false,
-        &[],
+        &open_config(),
         &GetImageOptions::default(),
     )
     .unwrap_err();
@@ -288,8 +298,7 @@ fn rejects_markdown_via_read_binary() {
         &system,
         Path::new("/project"),
         Path::new("notes.md"),
-        false,
-        &[],
+        &open_config(),
         &GetImageOptions::default(),
     )
     .unwrap_err();
@@ -308,8 +317,7 @@ fn defaults_keep_small_image_intact() {
         &system,
         Path::new("/project"),
         Path::new("small.png"),
-        false,
-        &[],
+        &open_config(),
         &GetImageOptions::default(),
     )
     .unwrap();

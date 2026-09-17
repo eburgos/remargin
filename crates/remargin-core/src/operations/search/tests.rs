@@ -6,12 +6,29 @@ use std::path::Path;
 use os_shim::mock::MemorySystem;
 use serde_json::json;
 
+use crate::config::{Mode, ResolvedConfig};
 use crate::parser;
+use crate::parser::AuthorType;
 
 use super::{
     LineAttribution, MatchLocation, SearchOptions, SearchScope, build_line_attribution,
     group_compact, match_cols, search, to_compact_row,
 };
+
+fn open_config() -> ResolvedConfig {
+    ResolvedConfig {
+        assets_dir: String::from("assets"),
+        author_type: Some(AuthorType::Human),
+        identity: Some(String::from("eduardo")),
+        ignore: Vec::new(),
+        key_path: None,
+        mode: Mode::Open,
+        registry: None,
+        source_path: None,
+        trusted_roots: Vec::new(),
+        unrestricted: false,
+    }
+}
 
 /// Build minimal search options for a literal pattern.
 fn literal_opts(pattern: &str) -> SearchOptions {
@@ -80,9 +97,15 @@ fn literal_match_in_body() {
         )
         .unwrap();
 
-    let results = search(&system, base, base, &literal_opts("notification"))
-        .unwrap()
-        .matches;
+    let results = search(
+        &system,
+        base,
+        base,
+        &literal_opts("notification"),
+        &open_config(),
+    )
+    .unwrap()
+    .matches;
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].line, 3);
     assert_eq!(results[0].location, MatchLocation::Body);
@@ -99,9 +122,15 @@ fn file_path_searches_that_file() {
         .with_file(file, b"# Title\n\nThe notification system works.\n")
         .unwrap();
 
-    let results = search(&system, base, file, &literal_opts("notification"))
-        .unwrap()
-        .matches;
+    let results = search(
+        &system,
+        base,
+        file,
+        &literal_opts("notification"),
+        &open_config(),
+    )
+    .unwrap()
+    .matches;
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].line, 3);
     assert_eq!(results[0].path, Path::new("note.md"));
@@ -118,9 +147,15 @@ fn literal_match_in_comment() {
         .with_file(Path::new("/docs/test.md"), doc.as_bytes())
         .unwrap();
 
-    let results = search(&system, base, base, &literal_opts("bd ready"))
-        .unwrap()
-        .matches;
+    let results = search(
+        &system,
+        base,
+        base,
+        &literal_opts("bd ready"),
+        &open_config(),
+    )
+    .unwrap()
+    .matches;
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].location, MatchLocation::Comment);
     assert_eq!(results[0].comment_id.as_deref(), Some("abc"));
@@ -140,7 +175,9 @@ fn scope_body_only() {
     let mut opts = literal_opts("Notification");
     opts.scope = SearchScope::Body;
 
-    let results = search(&system, base, base, &opts).unwrap().matches;
+    let results = search(&system, base, base, &opts, &open_config())
+        .unwrap()
+        .matches;
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].location, MatchLocation::Body);
 }
@@ -159,7 +196,9 @@ fn scope_comments_only() {
     let mut opts = literal_opts("Notification");
     opts.scope = SearchScope::Comments;
 
-    let results = search(&system, base, base, &opts).unwrap().matches;
+    let results = search(&system, base, base, &opts, &open_config())
+        .unwrap()
+        .matches;
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].location, MatchLocation::Comment);
 }
@@ -184,7 +223,9 @@ fn regex_pattern() {
         scope: SearchScope::All,
     };
 
-    let results = search(&system, base, base, &opts).unwrap().matches;
+    let results = search(&system, base, base, &opts, &open_config())
+        .unwrap()
+        .matches;
     assert_eq!(results.len(), 2);
 }
 
@@ -201,7 +242,9 @@ fn case_insensitive() {
     let mut opts = literal_opts("notification");
     opts.ignore_case = true;
 
-    let results = search(&system, base, base, &opts).unwrap().matches;
+    let results = search(&system, base, base, &opts, &open_config())
+        .unwrap()
+        .matches;
     assert_eq!(results.len(), 2);
 }
 
@@ -218,7 +261,9 @@ fn context_lines() {
     let mut opts = literal_opts("target");
     opts.context_lines = 1;
 
-    let results = search(&system, base, base, &opts).unwrap().matches;
+    let results = search(&system, base, base, &opts, &open_config())
+        .unwrap()
+        .matches;
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].before, vec!["line 2"]);
     assert_eq!(results[0].after, vec!["line 4"]);
@@ -231,9 +276,15 @@ fn no_matches() {
         .with_file(Path::new("/docs/test.md"), b"# Hello\n\nWorld.\n")
         .unwrap();
 
-    let results = search(&system, base, base, &literal_opts("nonexistent"))
-        .unwrap()
-        .matches;
+    let results = search(
+        &system,
+        base,
+        base,
+        &literal_opts("nonexistent"),
+        &open_config(),
+    )
+    .unwrap()
+    .matches;
     assert!(results.is_empty());
 }
 
@@ -246,9 +297,15 @@ fn non_markdown_skipped() {
         .with_file(Path::new("/docs/test.md"), b"notification in md\n")
         .unwrap();
 
-    let results = search(&system, base, base, &literal_opts("notification"))
-        .unwrap()
-        .matches;
+    let results = search(
+        &system,
+        base,
+        base,
+        &literal_opts("notification"),
+        &open_config(),
+    )
+    .unwrap()
+    .matches;
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].path.to_str().unwrap(), "test.md");
 }
@@ -258,7 +315,7 @@ fn empty_pattern_rejected() {
     let base = Path::new("/docs");
     let system = MemorySystem::new();
 
-    let result = search(&system, base, base, &literal_opts(""));
+    let result = search(&system, base, base, &literal_opts(""), &open_config());
     result.unwrap_err();
 }
 
@@ -271,7 +328,7 @@ fn multiple_files() {
         .with_file(Path::new("/docs/b.md"), b"hello there\n")
         .unwrap();
 
-    let results = search(&system, base, base, &literal_opts("hello"))
+    let results = search(&system, base, base, &literal_opts("hello"), &open_config())
         .unwrap()
         .matches;
     assert_eq!(results.len(), 2);
@@ -289,7 +346,7 @@ fn search_match_json_shape_matches_schema() {
         )
         .unwrap();
 
-    let results = search(&system, base, base, &literal_opts("hello"))
+    let results = search(&system, base, base, &literal_opts("hello"), &open_config())
         .unwrap()
         .matches;
     assert!(!results.is_empty());
@@ -345,7 +402,7 @@ fn multibyte_body_after_drifted_block_does_not_panic() {
         .with_file(Path::new("/docs/test.md"), doc.as_bytes())
         .unwrap();
 
-    let results = search(&system, base, base, &literal_opts("text"))
+    let results = search(&system, base, base, &literal_opts("text"), &open_config())
         .unwrap()
         .matches;
     assert_eq!(results.len(), 1);
@@ -365,7 +422,7 @@ fn drifted_block_keeps_following_body_attribution() {
         .with_file(Path::new("/docs/test.md"), doc.as_bytes())
         .unwrap();
 
-    let all_scope = search(&system, base, base, &literal_opts("marker"))
+    let all_scope = search(&system, base, base, &literal_opts("marker"), &open_config())
         .unwrap()
         .matches;
     assert_eq!(all_scope.len(), 1);
@@ -374,7 +431,9 @@ fn drifted_block_keeps_following_body_attribution() {
 
     let mut opts = literal_opts("marker");
     opts.scope = SearchScope::Body;
-    let body_scope = search(&system, base, base, &opts).unwrap().matches;
+    let body_scope = search(&system, base, base, &opts, &open_config())
+        .unwrap()
+        .matches;
     assert_eq!(
         body_scope.len(),
         1,
@@ -425,7 +484,7 @@ fn limit_and_offset_return_bounded_window_with_true_total() {
         .unwrap();
 
     let opts = literal_opts("needle").offset(50).limit(Some(50));
-    let results = search(&system, base, base, &opts).unwrap();
+    let results = search(&system, base, base, &opts, &open_config()).unwrap();
 
     assert_eq!(results.total, 320);
     assert_eq!(results.matches.len(), 50);
@@ -445,7 +504,7 @@ fn offset_past_end_yields_empty_matches_with_true_total() {
         .unwrap();
 
     let opts = literal_opts("needle").offset(400).limit(Some(50));
-    let results = search(&system, base, base, &opts).unwrap();
+    let results = search(&system, base, base, &opts, &open_config()).unwrap();
 
     assert!(results.matches.is_empty());
     assert_eq!(results.total, 320);
@@ -461,7 +520,7 @@ fn no_limit_returns_all_matches_and_total_equals_len() {
         )
         .unwrap();
 
-    let results = search(&system, base, base, &literal_opts("needle")).unwrap();
+    let results = search(&system, base, base, &literal_opts("needle"), &open_config()).unwrap();
 
     assert_eq!(results.total, 320);
     assert_eq!(results.matches.len(), results.total);
@@ -478,7 +537,7 @@ fn limit_larger_than_total_returns_all_matches() {
         .unwrap();
 
     let opts = literal_opts("needle").limit(Some(1000));
-    let results = search(&system, base, base, &opts).unwrap();
+    let results = search(&system, base, base, &opts, &open_config()).unwrap();
 
     assert_eq!(results.matches.len(), 320);
     assert_eq!(results.total, 320);
@@ -495,7 +554,7 @@ fn offset_without_limit_returns_tail() {
         .unwrap();
 
     let opts = literal_opts("needle").offset(300);
-    let results = search(&system, base, base, &opts).unwrap();
+    let results = search(&system, base, base, &opts, &open_config()).unwrap();
 
     assert_eq!(results.matches.len(), 20);
     assert_eq!(results.total, 320);
@@ -508,7 +567,7 @@ fn compact_body_row_is_lowercase_with_null_comment_id() {
     let system = MemorySystem::new()
         .with_file(Path::new("/docs/a.md"), b"the needle here\n")
         .unwrap();
-    let results = search(&system, base, base, &literal_opts("needle")).unwrap();
+    let results = search(&system, base, base, &literal_opts("needle"), &open_config()).unwrap();
 
     let row = to_compact_row(&results.matches[0], false);
     let arr = row.as_array().unwrap();
@@ -529,7 +588,7 @@ fn compact_row_widens_with_context() {
         .with_file(Path::new("/docs/a.md"), b"one\nneedle\ntwo\n")
         .unwrap();
     let opts = literal_opts("needle").context_lines(1);
-    let results = search(&system, base, base, &opts).unwrap();
+    let results = search(&system, base, base, &opts, &open_config()).unwrap();
 
     let row = to_compact_row(&results.matches[0], true);
     let arr = row.as_array().unwrap();
@@ -547,7 +606,7 @@ fn compact_comment_row_carries_comment_id() {
     let system = MemorySystem::new()
         .with_file(Path::new("/docs/a.md"), doc.as_bytes())
         .unwrap();
-    let results = search(&system, base, base, &literal_opts("needle")).unwrap();
+    let results = search(&system, base, base, &literal_opts("needle"), &open_config()).unwrap();
 
     let row = to_compact_row(&results.matches[0], false);
     let arr = row.as_array().unwrap();
@@ -564,7 +623,7 @@ fn group_compact_preserves_page_order_and_contiguity() {
         .unwrap()
         .with_file(Path::new("/docs/b.md"), b"needle 3\n")
         .unwrap();
-    let results = search(&system, base, base, &literal_opts("needle")).unwrap();
+    let results = search(&system, base, base, &literal_opts("needle"), &open_config()).unwrap();
 
     let files = group_compact(&results.matches, false);
     assert_eq!(files.len(), 2);

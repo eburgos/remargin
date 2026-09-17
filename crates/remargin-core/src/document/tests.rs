@@ -374,8 +374,7 @@ fn get_markdown() {
         Path::new("doc.md"),
         None,
         false,
-        false,
-        &[],
+        &open_config(),
     )
     .unwrap();
     assert_eq!(content, "# Hello\nWorld");
@@ -419,8 +418,7 @@ Body links to [[Real]].
         Path::new("doc.md"),
         None,
         false,
-        false,
-        &[],
+        &open_config(),
     )
     .unwrap();
 
@@ -451,8 +449,7 @@ fn get_with_links_slice_relative_references() {
         Path::new("doc.md"),
         None,
         false,
-        false,
-        &[],
+        &open_config(),
     )
     .unwrap();
     assert_eq!(whole.links.len(), 2);
@@ -466,8 +463,7 @@ fn get_with_links_slice_relative_references() {
         Path::new("doc.md"),
         Some((3, 5)),
         false,
-        false,
-        &[],
+        &open_config(),
     )
     .unwrap();
     assert_eq!(sliced.links.len(), 2);
@@ -491,8 +487,7 @@ fn get_with_links_empty_when_no_links() {
         Path::new("doc.md"),
         None,
         false,
-        false,
-        &[],
+        &open_config(),
     )
     .unwrap();
     assert_eq!(result.content, "# Hello\nWorld");
@@ -513,8 +508,7 @@ fn get_dotfile_hidden() {
         Path::new(".env"),
         None,
         false,
-        false,
-        &[],
+        &open_config(),
     );
     result.unwrap_err();
 }
@@ -533,8 +527,7 @@ fn get_disallowed_extension() {
         Path::new("app.exe"),
         None,
         false,
-        false,
-        &[],
+        &open_config(),
     );
     result.unwrap_err();
 }
@@ -556,8 +549,7 @@ fn get_with_lines() {
         Path::new("doc.md"),
         Some((2, 4)),
         false,
-        false,
-        &[],
+        &open_config(),
     )
     .unwrap();
     assert_eq!(content, "line2\nline3\nline4");
@@ -588,8 +580,7 @@ fn get_escape_attempt() {
         Path::new("../../etc/passwd"),
         None,
         false,
-        false,
-        &[],
+        &open_config(),
     );
     result.unwrap_err();
 }
@@ -606,8 +597,7 @@ fn metadata_correct_counts() {
         &system,
         Path::new("/project"),
         Path::new("doc.md"),
-        false,
-        &[],
+        &open_config(),
     )
     .unwrap();
     assert_eq!(meta.comment_count, Some(2));
@@ -633,8 +623,7 @@ fn metadata_binary_file_returns_file_level_fields_only() {
         &system,
         Path::new("/project"),
         Path::new("pic.png"),
-        false,
-        &[],
+        &open_config(),
     )
     .unwrap();
 
@@ -663,8 +652,7 @@ fn metadata_non_md_text_file_returns_markdown_fields() {
         &system,
         Path::new("/project"),
         Path::new("notes.txt"),
-        false,
-        &[],
+        &open_config(),
     )
     .unwrap();
 
@@ -687,8 +675,7 @@ fn metadata_pdf_is_binary() {
         &system,
         Path::new("/project"),
         Path::new("doc.pdf"),
-        false,
-        &[],
+        &open_config(),
     )
     .unwrap();
 
@@ -737,8 +724,7 @@ Self-addressed note acked by an agent only.
         &system,
         Path::new("/project"),
         Path::new("doc.md"),
-        false,
-        &[],
+        &open_config(),
     )
     .unwrap();
     assert_eq!(meta.comment_count, Some(1));
@@ -754,8 +740,7 @@ fn metadata_missing_file_errors() {
         &system,
         Path::new("/project"),
         Path::new("nonexistent.md"),
-        false,
-        &[],
+        &open_config(),
     );
     result.unwrap_err();
 }
@@ -773,8 +758,7 @@ fn read_binary_returns_bytes_and_mime() {
         &system,
         Path::new("/project"),
         Path::new("pic.png"),
-        false,
-        &[],
+        &open_config(),
     )
     .unwrap();
 
@@ -795,8 +779,7 @@ fn read_binary_rejects_markdown() {
         &system,
         Path::new("/project"),
         Path::new("doc.md"),
-        false,
-        &[],
+        &open_config(),
     )
     .unwrap_err();
     assert!(format!("{err}").contains("cannot fetch markdown file as binary"));
@@ -815,8 +798,7 @@ fn read_binary_unknown_extension_is_octet_stream() {
         &system,
         Path::new("/project"),
         Path::new("blob.bin"),
-        false,
-        &[],
+        &open_config(),
     );
     result.unwrap_err();
 }
@@ -833,8 +815,7 @@ fn read_binary_rejects_dotfile() {
         &system,
         Path::new("/project"),
         Path::new(".env"),
-        false,
-        &[],
+        &open_config(),
     );
     result.unwrap_err();
 }
@@ -853,8 +834,7 @@ fn read_binary_escape_attempt() {
         &system,
         Path::new("/project"),
         Path::new("../../etc/passwd"),
-        false,
-        &[],
+        &open_config(),
     );
     result.unwrap_err();
 }
@@ -1969,8 +1949,7 @@ fn line_numbers_full_file() {
         Path::new("doc.md"),
         None,
         true,
-        false,
-        &[],
+        &open_config(),
     )
     .unwrap();
     assert_eq!(
@@ -1996,8 +1975,7 @@ fn line_numbers_with_range() {
         Path::new("doc.md"),
         Some((50, 55)),
         true,
-        false,
-        &[],
+        &open_config(),
     )
     .unwrap();
     assert_eq!(
@@ -2023,8 +2001,7 @@ fn line_numbers_padding() {
         Path::new("doc.md"),
         Some((998, 1000)),
         true,
-        false,
-        &[],
+        &open_config(),
     )
     .unwrap();
     assert_eq!(
@@ -2047,8 +2024,7 @@ fn line_numbers_off_by_default() {
         Path::new("doc.md"),
         None,
         false,
-        false,
-        &[],
+        &open_config(),
     )
     .unwrap();
     assert_eq!(content, "hello\nworld");
@@ -2068,8 +2044,7 @@ fn line_numbers_single_line() {
         Path::new("doc.md"),
         None,
         true,
-        false,
-        &[],
+        &open_config(),
     )
     .unwrap();
     assert_eq!(content, "1\u{2502} only line");
@@ -2089,8 +2064,7 @@ fn line_numbers_empty_lines() {
         Path::new("doc.md"),
         None,
         true,
-        false,
-        &[],
+        &open_config(),
     )
     .unwrap();
     assert_eq!(content, "1\u{2502} first\n2\u{2502} \n3\u{2502} third");
@@ -2110,8 +2084,7 @@ fn line_numbers_binary_rejected() {
         Path::new("image.png"),
         None,
         true,
-        false,
-        &[],
+        &open_config(),
     );
     let err = result.unwrap_err();
     assert!(
@@ -2243,8 +2216,7 @@ fn rm_deletes_non_markdown_binary_file() {
         &system,
         Path::new("/project"),
         Path::new("assets/probe.png"),
-        false,
-        &config.trusted_roots,
+        &config,
     )
     .unwrap();
     assert_eq!(
@@ -2290,8 +2262,7 @@ fn rm_can_delete_anything_the_read_layer_sees() {
         &system,
         Path::new("/project"),
         Path::new("assets/figure.png"),
-        false,
-        &config.trusted_roots,
+        &config,
     )
     .unwrap();
     assert_eq!(meta.size_bytes, bytes.len() as u64);

@@ -11,6 +11,7 @@ use os_shim::System;
 use serde::Serialize;
 use serde_json::{Value, json};
 
+use crate::config::ResolvedConfig;
 use crate::document::{self, mime};
 
 /// Default upper bound on width/height for the output.
@@ -248,8 +249,7 @@ pub fn get_image(
     system: &dyn System,
     base_dir: &Path,
     path: &Path,
-    unrestricted: bool,
-    trusted_roots: &[PathBuf],
+    config: &ResolvedConfig,
     options: &GetImageOptions,
 ) -> Result<GetImageResult> {
     let max_bytes = options.max_bytes.unwrap_or(DEFAULT_MAX_BYTES);
@@ -260,7 +260,7 @@ pub fn get_image(
         );
     }
 
-    let payload = document::read_binary(system, base_dir, path, unrestricted, trusted_roots)?;
+    let payload = document::read_binary(system, base_dir, path, config)?;
     let source_mime = payload.mime;
     if !source_mime.starts_with("image/") || source_mime == "image/svg+xml" {
         bail!(

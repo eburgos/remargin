@@ -15,6 +15,7 @@ extern crate alloc;
 use alloc::collections::BTreeMap;
 #[cfg(feature = "session")]
 use core::time::Duration;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result, bail};
@@ -386,6 +387,24 @@ impl ResolvedConfig {
         }
     }
 
+    /// Refuse a read of `target` when its realm is strict and the caller
+    /// is not an active participant of that realm's registry.
+    ///
+    /// The realm of the target decides, never the caller's cwd — the same
+    /// rule writes follow through [`Self::escalate_for_doc`]. An absent
+    /// identity is outside every registry, so strict realms refuse it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error naming the caller and the strict `.remargin.yaml`
+    /// when the read is refused, or when mode / registry resolution fails.
+    pub fn ensure_can_read(&self, system: &dyn System, target: &Path) -> Result<()> {
+        if let Some(denial) = self.read_denial(system, read_anchor(system, target))? {
+            return Err(denial);
+        }
+        Ok(())
+    }
+
     /// Return a config whose mode is the mode declared by the realm
     /// containing `doc_path`. The file's realm is the sole source of
     /// truth; caller context never participates. Re-validates the
@@ -445,6 +464,41 @@ impl ResolvedConfig {
             trusted_roots: self.trusted_roots.clone(),
             unrestricted: self.unrestricted,
         })
+    }
+
+    /// The refusal [`Self::ensure_can_read`] would raise for a read
+    /// anchored at `anchor`, or `None` when the read is allowed.
+    fn read_denial(&self, system: &dyn System, anchor: &Path) -> Result<Option<anyhow::Error>> {
+        let ResolvedMode { mode, source } = resolve_mode(system, anchor)?;
+        if mode != Mode::Strict {
+            return Ok(None);
+        }
+
+        let registry = load_registry(system, anchor)?;
+        let admitted = self
+            .identity
+            .as_deref()
+            .zip(registry.as_ref())
+            .is_some_and(|(id, reg)| reg.is_active(id));
+        if admitted {
+            return Ok(None);
+        }
+
+        let caller = self.identity.as_deref().unwrap_or("<anonymous>");
+        let realm = source.as_deref().unwrap_or(anchor).display().to_string();
+        Ok(Some(anyhow::anyhow!(
+            "read denied: caller {caller:?} is not an active registry \
+             participant of the strict realm declared in {realm}"
+        )))
+    }
+
+    /// Open a [`ReadGate`] over this caller for one walk.
+    #[must_use]
+    pub fn read_gate(&self) -> ReadGate<'_> {
+        ReadGate {
+            config: self,
+            verdicts: HashMap::new(),
+        }
     }
 
     /// Check if a comment must be signed (strict mode + registered participant).
@@ -612,6 +666,36 @@ impl ResolvedConfig {
     }
 }
 
+/// Per-op read gate for directory walks.
+///
+/// Caches one verdict per anchor directory so a vault-wide walk resolves
+/// each realm's mode and registry once instead of per file. Build one per
+/// op via [`ResolvedConfig::read_gate`] — a cached verdict never outlives
+/// the walk that produced it.
+pub struct ReadGate<'cfg> {
+    config: &'cfg ResolvedConfig,
+    verdicts: HashMap<PathBuf, bool>,
+}
+
+impl ReadGate<'_> {
+    /// `Ok(false)` when `file` sits in a strict realm that does not admit
+    /// the caller.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the realm's mode or registry cannot be
+    /// resolved.
+    pub fn admits(&mut self, system: &dyn System, file: &Path) -> Result<bool> {
+        let anchor = read_anchor(system, file);
+        if let Some(&cached) = self.verdicts.get(anchor) {
+            return Ok(cached);
+        }
+        let verdict = self.config.read_denial(system, anchor)?.is_none();
+        self.verdicts.insert(anchor.to_path_buf(), verdict);
+        Ok(verdict)
+    }
+}
+
 /// Resolved mode with provenance, produced by [`resolve_mode`].
 ///
 /// Unlike the identity walk-up, this resolution ignores the `type:` field:
@@ -639,6 +723,17 @@ struct WalkedIdentityFields {
     key_path: Option<PathBuf>,
     source_config: Option<Config>,
     source_path: Option<PathBuf>,
+}
+
+/// The directory whose `.remargin.yaml` governs a read of `target`: a
+/// directory anchors at itself, a file at its parent, so a nested realm
+/// inside a listed directory is honored.
+fn read_anchor<'target>(system: &dyn System, target: &'target Path) -> &'target Path {
+    if system.is_dir(target).unwrap_or(false) {
+        target
+    } else {
+        target.parent().unwrap_or(target)
+    }
 }
 
 fn default_assets_dir() -> String {

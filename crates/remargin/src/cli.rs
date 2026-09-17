@@ -1268,6 +1268,8 @@ pub struct GetImageArgs {
     /// for lossless source formats (PNG / GIF).
     #[arg(long)]
     pub format: Option<String>,
+    #[command(flatten)]
+    pub identity_args: IdentityArgs,
     /// Target ceiling on the encoded output size in bytes. JPEG
     /// quality is stepped down (and then the dimension cap halved)
     /// until this fits. Defaults to 262144 (256 KiB).
@@ -1320,6 +1322,8 @@ pub struct LintArgs {
     #[arg(index = 1)]
     pub file: String,
     #[command(flatten)]
+    pub identity_args: IdentityArgs,
+    #[command(flatten)]
     pub output_args: OutputArgs,
 }
 
@@ -1352,6 +1356,8 @@ pub struct McpArgs {
 /// Arguments for the corresponding subcommand variant.
 #[derive(clap::Args)]
 pub struct MetadataArgs {
+    #[command(flatten)]
+    pub identity_args: IdentityArgs,
     #[command(flatten)]
     pub output_args: OutputArgs,
     /// Path to the document.

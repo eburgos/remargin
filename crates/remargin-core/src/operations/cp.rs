@@ -133,6 +133,7 @@ impl CpArgs {
 /// - Either endpoint escapes the sandbox.
 /// - The destination is outside `trusted_roots` for the caller.
 /// - `deny_ops: cp` is set on the source.
+/// - The source lives in a strict realm that does not admit the caller.
 /// - `args.src` is missing.
 /// - `args.src` is a directory (recursive copy is out of scope for v1).
 /// - `args.src` is a file and `args.dst` is an existing directory.
@@ -161,6 +162,7 @@ pub fn cp(
     let caller = config.caller_info();
     pre_mutate_check_for_caller(system, "cp", &dst_resolved, &caller)?;
     pre_mutate_check_for_caller(system, "cp", &src_resolved, &caller)?;
+    config.ensure_can_read(system, &src_resolved)?;
 
     let dst_pre_existed = system.exists(&dst_resolved).unwrap_or(false);
     if dst_pre_existed && !args.force {

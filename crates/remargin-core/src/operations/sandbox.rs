@@ -274,20 +274,29 @@ pub fn remove_from_files(
 ///
 /// # Errors
 ///
-/// Returns an error if `root` cannot be walked.
+/// Returns an error if `root` cannot be walked, or if a realm covering a
+/// listed file refuses the caller's read.
 pub fn list_for_identity(
     system: &dyn System,
     root: &Path,
     identity: &str,
+    config: &ResolvedConfig,
 ) -> Result<Vec<SandboxListing>> {
-    Ok(scan_all_entries(system, root)?
-        .into_iter()
-        .filter(|entry| entry.author == identity)
-        .map(|entry| SandboxListing {
+    let mut gate = config.read_gate();
+    let mut out = Vec::new();
+    for entry in scan_all_entries(system, root)? {
+        if entry.author != identity {
+            continue;
+        }
+        if !gate.admits(system, &entry.path)? {
+            continue;
+        }
+        out.push(SandboxListing {
             path: entry.path,
             since: entry.since,
-        })
-        .collect())
+        });
+    }
+    Ok(out)
 }
 
 /// Walk `root` for every sandbox entry across all identities.

@@ -28,8 +28,8 @@ use crate::io::{
 #[cfg(feature = "obsidian")]
 use crate::obsidian;
 use crate::params::{
-    AckParams, ActivityOutputMode, ActivityParams, CommentParams, CpParams, EditParams,
-    GetImageParams, GetParams, MvParams, PromptSetParams, QueryOutputMode, QueryParams,
+    AckParams, ActivityOutputMode, ActivityParams, CommentParams, CommentsParams, CpParams,
+    EditParams, GetImageParams, GetParams, MvParams, PromptSetParams, QueryOutputMode, QueryParams,
     QueryPendingFilters, ReactParams, ReplaceParams, RestrictParams, SearchOutputMode,
     SearchParams, SignParams, WriteParams,
 };
@@ -867,12 +867,12 @@ pub fn cmd_comments(
     sinks: &mut IoSinks<'_>,
     system: &dyn System,
     cwd: &Path,
-    file: &str,
-    kind_filter: &[String],
-    json_mode: bool,
-    pretty: bool,
+    config: &ResolvedConfig,
+    cp: &CommentsParams<'_>,
 ) -> Result<()> {
+    let file = cp.file;
     let path = resolve_doc_path(system, cwd, file)?;
+    config.ensure_can_read(system, &path)?;
     let doc = parser::parse_file(system, &path)?;
     // Apply the shared kind filter from `remargin-core::kind` so this
     // surface stays in lockstep with `remargin query` — the
@@ -880,13 +880,13 @@ pub fn cmd_comments(
     let comments: Vec<&parser::Comment> = doc
         .comments()
         .into_iter()
-        .filter(|cm| matches_kind_filter(cm.kinds(), kind_filter))
+        .filter(|cm| matches_kind_filter(cm.kinds(), cp.remargin_kind))
         .collect();
 
-    if pretty {
+    if cp.pretty {
         let formatted = display::format_comments_pretty(file, &comments);
         out(sinks, &formatted)
-    } else if json_mode {
+    } else if cp.json_mode {
         // The source line span (`sl`/`el`) is a typed field on Comment, so
         // it serializes with the rest — no hand-inserted keys.
         let items = comments
@@ -980,15 +980,7 @@ pub fn cmd_get(
     let lines = document::resolve_line_window(gp.start, gp.end);
 
     if gp.output.is_json() && gp.line_numbers {
-        let result = document::get_with_links(
-            system,
-            cwd,
-            target,
-            lines,
-            false,
-            config.unrestricted,
-            &config.trusted_roots,
-        )?;
+        let result = document::get_with_links(system, cwd, target, lines, false, config)?;
         let start_num = lines.map_or(1, |(s, _)| s);
         if gp.output.is_compact() {
             let body_lines: Vec<&str> = result.content.split('\n').collect();
@@ -1016,15 +1008,7 @@ pub fn cmd_get(
             )
         }
     } else {
-        let result = document::get_with_links(
-            system,
-            cwd,
-            target,
-            lines,
-            gp.line_numbers,
-            config.unrestricted,
-            &config.trusted_roots,
-        )?;
+        let result = document::get_with_links(system, cwd, target, lines, gp.line_numbers, config)?;
         if gp.output.is_compact() {
             let rows = operations::links::to_compact_rows(result.links);
             out_json_min(
@@ -1107,13 +1091,7 @@ pub fn cmd_get_binary(
         bail!("--line-numbers is not supported with --binary");
     }
 
-    let payload = document::read_binary(
-        system,
-        cwd,
-        target,
-        config.unrestricted,
-        &config.trusted_roots,
-    )?;
+    let payload = document::read_binary(system, cwd, target, config)?;
 
     if let Some(out_path) = gp.out {
         system
@@ -1283,12 +1261,8 @@ pub fn cmd_activity(
 
     let (flags, _assets_dir) = build_identity_flags(system, p.identity_args, None)?;
     let resolved = ResolvedConfig::resolve(system, cwd, &flags, None)?;
-    let caller = resolved
-        .identity
-        .as_deref()
-        .context("activity: caller identity required (declare via --identity / --config)")?;
 
-    let result = activity::gather_activity(system, &resolved_path, cutoff, caller)?;
+    let result = activity::gather_activity(system, &resolved_path, cutoff, &resolved)?;
 
     match p.output {
         ActivityOutputMode::Pretty => render::emit_activity_pretty(sinks, &result)?,
@@ -1690,11 +1664,12 @@ pub fn cmd_lint(
     sinks: &mut IoSinks<'_>,
     system: &dyn System,
     cwd: &Path,
+    config: &ResolvedConfig,
     file: &str,
     json_mode: bool,
 ) -> Result<()> {
     let path = resolve_doc_path(system, cwd, file)?;
-    let report = linter::lint_doc(system, &path)?;
+    let report = linter::lint_doc(system, &path, config)?;
 
     if json_mode {
         print_output(sinks, true, &report.to_json())?;
@@ -1755,13 +1730,7 @@ pub fn cmd_metadata(
 ) -> Result<()> {
     let target_buf = expand_cli_path(system, path_str)?;
     let target = target_buf.as_path();
-    let meta = document::metadata(
-        system,
-        cwd,
-        target,
-        config.unrestricted,
-        &config.trusted_roots,
-    )?;
+    let meta = document::metadata(system, cwd, target, config)?;
 
     print_output(sinks, json_mode, &meta.to_json(false))
 }
@@ -2267,7 +2236,7 @@ pub fn cmd_query(
     let target = cwd.join(expand_cli_path(system, params.path)?);
     let filter = build_query_filter(config, params)?;
     let base_path = query::display_base_path(params.path, system.is_file(&target).unwrap_or(false));
-    let results = query::query(system, &target, &filter)?;
+    let results = query::query(system, &target, &filter, config)?;
     render::render_query_output(
         sinks,
         &results,
@@ -2313,6 +2282,7 @@ pub fn cmd_search(
     sinks: &mut IoSinks<'_>,
     system: &dyn System,
     cwd: &Path,
+    config: &ResolvedConfig,
     params: &SearchParams<'_>,
 ) -> Result<()> {
     let target = cwd.join(expand_cli_path(system, params.path)?);
@@ -2331,7 +2301,7 @@ pub fn cmd_search(
         .regex(params.regex)
         .scope(scope);
 
-    let results = search::search(system, cwd, &target, &options)?;
+    let results = search::search(system, cwd, &target, &options, config)?;
 
     match params.output {
         SearchOutputMode::Compact => {
@@ -2575,7 +2545,7 @@ pub fn cmd_sandbox(
                 Some(p) => cwd.join(expand_cli_pathbuf(system, p)?),
                 None => cwd.to_path_buf(),
             };
-            let listings = sandbox_ops::list_for_identity(system, &root, identity)?;
+            let listings = sandbox_ops::list_for_identity(system, &root, identity, config)?;
 
             if json_mode {
                 let files: Vec<sandbox_ops::SandboxListEntry> = listings
@@ -2680,14 +2650,7 @@ pub fn cmd_get_image(
         sp.max_bytes,
         sp.max_dimension,
     )?;
-    let result = image_ops::get_image(
-        system,
-        cwd,
-        target_buf.as_path(),
-        config.unrestricted,
-        &config.trusted_roots,
-        &options,
-    )?;
+    let result = image_ops::get_image(system, cwd, target_buf.as_path(), config, &options)?;
     render::render_get_image_result(sinks, system, &result, sp.out, sp.json_mode)
 }
 

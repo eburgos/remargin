@@ -414,6 +414,7 @@ pub fn ls(
         config.unrestricted,
         &config.trusted_roots,
     )?;
+    config.ensure_can_read(system, &resolved)?;
 
     let entries = system
         .read_dir(&resolved)
@@ -421,6 +422,7 @@ pub fn ls(
 
     let ignore_set: HashSet<&str> = config.ignore.iter().map(String::as_str).collect();
 
+    let mut gate = config.read_gate();
     let mut result = Vec::new();
     for entry_path in &entries {
         let Some(filename) = entry_path.file_name().and_then(|n| n.to_str()) else {
@@ -445,6 +447,11 @@ pub fn ls(
 
         let has_md_extension = is_markdown_extension(Path::new(filename));
         let (remargin_pending, remargin_last_activity) = if !is_dir && has_md_extension {
+            // A managed document in a nested strict realm that does not
+            // admit the caller is dropped, metadata read and all.
+            if !gate.admits(system, entry_path)? {
+                continue;
+            }
             get_remargin_metadata(system, entry_path)
         } else {
             (None, None)
@@ -483,11 +490,16 @@ pub fn get(
     path: &Path,
     lines: Option<(usize, usize)>,
     line_numbers: bool,
-    unrestricted: bool,
-    trusted_roots: &[PathBuf],
+    config: &ResolvedConfig,
 ) -> Result<String> {
-    let resolved =
-        allowlist::resolve_sandboxed(system, base_dir, path, unrestricted, trusted_roots)?;
+    let resolved = allowlist::resolve_sandboxed(
+        system,
+        base_dir,
+        path,
+        config.unrestricted,
+        &config.trusted_roots,
+    )?;
+    config.ensure_can_read(system, &resolved)?;
 
     if !allowlist::is_visible(&resolved, false) {
         bail!("{}", allowlist::not_visible_message(path));
@@ -574,11 +586,16 @@ pub fn get_with_links(
     path: &Path,
     lines: Option<(usize, usize)>,
     line_numbers: bool,
-    unrestricted: bool,
-    trusted_roots: &[PathBuf],
+    config: &ResolvedConfig,
 ) -> Result<GetResult> {
-    let resolved =
-        allowlist::resolve_sandboxed(system, base_dir, path, unrestricted, trusted_roots)?;
+    let resolved = allowlist::resolve_sandboxed(
+        system,
+        base_dir,
+        path,
+        config.unrestricted,
+        &config.trusted_roots,
+    )?;
+    config.ensure_can_read(system, &resolved)?;
 
     if !allowlist::is_visible(&resolved, false) {
         bail!("{}", allowlist::not_visible_message(path));
@@ -693,11 +710,16 @@ pub fn read_binary(
     system: &dyn System,
     base_dir: &Path,
     path: &Path,
-    unrestricted: bool,
-    trusted_roots: &[PathBuf],
+    config: &ResolvedConfig,
 ) -> Result<BinaryPayload> {
-    let resolved =
-        allowlist::resolve_sandboxed(system, base_dir, path, unrestricted, trusted_roots)?;
+    let resolved = allowlist::resolve_sandboxed(
+        system,
+        base_dir,
+        path,
+        config.unrestricted,
+        &config.trusted_roots,
+    )?;
+    config.ensure_can_read(system, &resolved)?;
 
     if !allowlist::is_visible(&resolved, false) {
         bail!("{}", allowlist::not_visible_message(path));
@@ -1502,11 +1524,16 @@ pub fn metadata(
     system: &dyn System,
     base_dir: &Path,
     path: &Path,
-    unrestricted: bool,
-    trusted_roots: &[PathBuf],
+    config: &ResolvedConfig,
 ) -> Result<DocumentMetadata> {
-    let resolved =
-        allowlist::resolve_sandboxed(system, base_dir, path, unrestricted, trusted_roots)?;
+    let resolved = allowlist::resolve_sandboxed(
+        system,
+        base_dir,
+        path,
+        config.unrestricted,
+        &config.trusted_roots,
+    )?;
+    config.ensure_can_read(system, &resolved)?;
 
     if !allowlist::is_visible(&resolved, false) {
         bail!("{}", allowlist::not_visible_message(path));

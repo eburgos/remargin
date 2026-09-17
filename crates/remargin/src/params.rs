@@ -30,6 +30,13 @@ pub struct CommentParams<'cmd> {
     pub to: &'cmd [String],
 }
 
+pub struct CommentsParams<'cmd> {
+    pub file: &'cmd str,
+    pub json_mode: bool,
+    pub pretty: bool,
+    pub remargin_kind: &'cmd [String],
+}
+
 /// How `get` renders its result. Mutually-exclusive successor to the
 /// previous `json_mode` / `compact` bool pair. `Compact` and `Json` both
 /// emit JSON (see [`GetOutputMode::is_json`]); `Compact` adds the columnar

@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 
 use tixschema::model_schema;
 
+use crate::config::ResolvedConfig;
 use crate::document::allowlist;
 use crate::parser;
 
@@ -311,10 +312,12 @@ pub fn search(
     base_dir: &Path,
     search_dir: &Path,
     options: &SearchOptions,
+    config: &ResolvedConfig,
 ) -> Result<SearchResults> {
     if options.pattern.is_empty() {
         bail!("search pattern cannot be empty");
     }
+    config.ensure_can_read(system, search_dir)?;
 
     let matcher = build_matcher(options)?;
 
@@ -336,6 +339,7 @@ pub fn search(
         .walk_dir(search_dir, false, false)
         .with_context(|| format!("walking directory {}", search_dir.display()))?;
 
+    let mut gate = config.read_gate();
     let mut results = Vec::new();
 
     for entry in &entries {
@@ -348,6 +352,10 @@ pub fn search(
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("md"));
         if !has_md_ext || !allowlist::is_visible(&entry.path, false) {
+            continue;
+        }
+
+        if !gate.admits(system, &entry.path)? {
             continue;
         }
 

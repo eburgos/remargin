@@ -354,7 +354,8 @@ fn list_walks_and_filters_by_identity() {
     )
     .unwrap();
 
-    let listings = list_for_identity(&system, Path::new("/root"), "eduardo").unwrap();
+    let listings =
+        list_for_identity(&system, Path::new("/root"), "eduardo", &open_config()).unwrap();
     let paths: Vec<&Path> = listings.iter().map(|l| l.path.as_path()).collect();
 
     assert_eq!(paths.len(), 2);
@@ -374,8 +375,9 @@ fn list_filters_jorge_returns_jorge_only_files() {
     )
     .unwrap();
 
-    let jorge = list_for_identity(&system, Path::new("/root"), "jorge").unwrap();
-    let eduardo = list_for_identity(&system, Path::new("/root"), "eduardo").unwrap();
+    let jorge = list_for_identity(&system, Path::new("/root"), "jorge", &open_config()).unwrap();
+    let eduardo =
+        list_for_identity(&system, Path::new("/root"), "eduardo", &open_config()).unwrap();
 
     assert_eq!(jorge.len(), 1);
     assert_eq!(eduardo.len(), 1);

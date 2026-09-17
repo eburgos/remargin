@@ -19,6 +19,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use tixschema::model_schema;
 
+use crate::config::ResolvedConfig;
 use crate::document::allowlist;
 use crate::kind::matches_kind_filter;
 use crate::parser::{self, Acknowledgment, AuthorType};
@@ -472,7 +473,10 @@ pub fn query(
     system: &dyn System,
     base_dir: &Path,
     filter: &QueryFilter,
+    config: &ResolvedConfig,
 ) -> Result<Vec<QueryResult>> {
+    config.ensure_can_read(system, base_dir)?;
+
     // File-path branch: the user named one file explicitly, so honor it
     // and skip the `.md`-extension and visibility gates the walk applies.
     // The relative path is the file name, matching how a directory query
@@ -490,6 +494,7 @@ pub fn query(
         .walk_dir(base_dir, false, false)
         .with_context(|| format!("walking directory {}", base_dir.display()))?;
 
+    let mut gate = config.read_gate();
     let mut results = Vec::new();
 
     for entry in &entries {
@@ -503,6 +508,10 @@ pub fn query(
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("md"));
         if !has_md_ext || !allowlist::is_visible(&entry.path, false) {
+            continue;
+        }
+
+        if !gate.admits(system, &entry.path)? {
             continue;
         }
 

@@ -1030,9 +1030,9 @@ pub fn project_report(
 ///
 /// # Errors
 ///
-/// Propagates [`ParsedDocument::to_markdown`]'s `serde_yaml::Error` and
-/// any failure from
-/// [`crate::config::ResolvedConfig::escalate_mode_for_doc`] (e.g.
+/// Propagates a read-gate refusal from the doc's realm,
+/// [`ParsedDocument::to_markdown`]'s `serde_yaml::Error`, and any failure
+/// from [`crate::config::ResolvedConfig::escalate_mode_for_doc`] (e.g.
 /// unreadable realm `.remargin.yaml`).
 pub fn project_doc_report(
     system: &dyn System,
@@ -1043,6 +1043,7 @@ pub fn project_doc_report(
     cfg: &ResolvedConfig,
     identity: PlanIdentity,
 ) -> Result<PlanReport> {
+    cfg.ensure_can_read(system, path)?;
     let realm_cfg = cfg.escalate_mode_for_doc(system, path)?;
 
     let before_md = before.to_markdown()?;

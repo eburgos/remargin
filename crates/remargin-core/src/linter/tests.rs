@@ -4,8 +4,10 @@ use std::path::Path;
 
 use os_shim::mock::MemorySystem;
 
+use crate::config::{Mode, ResolvedConfig};
 use crate::linter::LintErrorView;
 use crate::linter::{lint, lint_doc, lint_or_fail};
+use crate::parser::AuthorType;
 
 const DOC_WITH_UNKNOWN_RECIPIENT: &str = "\
 ---
@@ -375,6 +377,23 @@ line 4
     assert_eq!(errors[0].0, 3, "unclosed fence should be on line 3");
 }
 
+/// `alice` is an active participant of [`LINT_REGISTRY_YAML`], so the
+/// strict-realm fixtures admit her read.
+fn alice_config() -> ResolvedConfig {
+    ResolvedConfig {
+        assets_dir: String::from("assets"),
+        author_type: Some(AuthorType::Human),
+        identity: Some(String::from("alice")),
+        ignore: Vec::new(),
+        key_path: None,
+        mode: Mode::Open,
+        registry: None,
+        source_path: None,
+        trusted_roots: Vec::new(),
+        unrestricted: false,
+    }
+}
+
 fn build_lint_system(doc_content: &str, realm_yaml: &str) -> MemorySystem {
     MemorySystem::new()
         .with_file(Path::new("/vault/doc.md"), doc_content.as_bytes())
@@ -392,7 +411,7 @@ fn build_lint_system(doc_content: &str, realm_yaml: &str) -> MemorySystem {
 #[test]
 fn lint_doc_strict_unknown_recipient_finding() {
     let system = build_lint_system(DOC_WITH_UNKNOWN_RECIPIENT, "mode: strict\n");
-    let report = lint_doc(&system, Path::new("/vault/doc.md")).unwrap();
+    let report = lint_doc(&system, Path::new("/vault/doc.md"), &alice_config()).unwrap();
     assert!(
         !report.recipients.is_empty(),
         "expected recipient findings, got none"
@@ -422,7 +441,7 @@ fn lint_doc_open_mode_no_recipient_findings() {
             DOC_WITH_UNKNOWN_RECIPIENT.as_bytes(),
         )
         .unwrap();
-    let report = lint_doc(&system, Path::new("/vault/doc.md")).unwrap();
+    let report = lint_doc(&system, Path::new("/vault/doc.md"), &alice_config()).unwrap();
     assert!(
         report.recipients.is_empty(),
         "open mode should produce no recipient findings"
@@ -433,7 +452,7 @@ fn lint_doc_open_mode_no_recipient_findings() {
 #[test]
 fn lint_doc_all_recipients_active_no_findings() {
     let system = build_lint_system(DOC_WITH_ACTIVE_RECIPIENT, "mode: strict\n");
-    let report = lint_doc(&system, Path::new("/vault/doc.md")).unwrap();
+    let report = lint_doc(&system, Path::new("/vault/doc.md"), &alice_config()).unwrap();
     assert!(
         report.recipients.is_empty(),
         "active recipient should produce no findings"
@@ -444,7 +463,7 @@ fn lint_doc_all_recipients_active_no_findings() {
 #[test]
 fn lint_doc_registered_mode_revoked_recipient_finding() {
     let system = build_lint_system(DOC_WITH_REVOKED_RECIPIENT, "mode: registered\n");
-    let report = lint_doc(&system, Path::new("/vault/doc.md")).unwrap();
+    let report = lint_doc(&system, Path::new("/vault/doc.md"), &alice_config()).unwrap();
     assert!(
         !report.recipients.is_empty(),
         "revoked recipient should produce a finding"
@@ -464,7 +483,7 @@ fn lint_doc_missing_registry_skipped() {
         .with_file(Path::new("/vault/.remargin.yaml"), b"mode: registered\n")
         .unwrap();
     // No registry file — load_registry returns None.
-    let report = lint_doc(&system, Path::new("/vault/doc.md")).unwrap();
+    let report = lint_doc(&system, Path::new("/vault/doc.md"), &alice_config()).unwrap();
     assert!(
         report.recipients.is_empty(),
         "missing registry should produce no recipient findings"
@@ -488,7 +507,7 @@ fn lint_content_pure_no_recipient_checking() {
 #[test]
 fn lint_report_to_json_includes_recipients_field() {
     let system = build_lint_system(DOC_WITH_UNKNOWN_RECIPIENT, "mode: registered\n");
-    let report = lint_doc(&system, Path::new("/vault/doc.md")).unwrap();
+    let report = lint_doc(&system, Path::new("/vault/doc.md"), &alice_config()).unwrap();
     let json = report.to_json();
     assert!(
         json.get("recipients").is_some(),
@@ -510,7 +529,7 @@ fn lint_report_to_json_includes_recipients_field() {
 #[test]
 fn lint_report_format_text_includes_recipients() {
     let system = build_lint_system(DOC_WITH_UNKNOWN_RECIPIENT, "mode: registered\n");
-    let report = lint_doc(&system, Path::new("/vault/doc.md")).unwrap();
+    let report = lint_doc(&system, Path::new("/vault/doc.md"), &alice_config()).unwrap();
     let text = report.format_text();
     assert!(
         text.contains("recipients:"),

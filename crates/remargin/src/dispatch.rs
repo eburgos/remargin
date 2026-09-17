@@ -22,8 +22,8 @@ use crate::io::{
     resolve_comment_content,
 };
 use crate::params::{
-    AckParams, ActivityOutputMode, ActivityParams, CommentParams, CpParams, EditParams,
-    GetImageParams, GetOutputMode, GetParams, MvParams, PromptSetParams, ReactParams,
+    AckParams, ActivityOutputMode, ActivityParams, CommentParams, CommentsParams, CpParams,
+    EditParams, GetImageParams, GetOutputMode, GetParams, MvParams, PromptSetParams, ReactParams,
     ReplaceParams, RestrictParams, SearchOutputMode, SearchParams, SignParams, WriteParams,
 };
 use crate::{
@@ -126,9 +126,13 @@ const fn subcommand_parts(cmd: &Commands) -> SubcommandParts<'_> {
         Commands::Write(a) => {
             with_unrestricted(&a.identity_args, &a.output_args, &a.unrestricted_args)
         }
-        Commands::GetImage(a) => out_unrestricted(&a.output_args, &a.unrestricted_args),
-        Commands::Metadata(a) => out_unrestricted(&a.output_args, &a.unrestricted_args),
-        Commands::Lint(a) => out_only(&a.output_args),
+        Commands::GetImage(a) => {
+            with_unrestricted(&a.identity_args, &a.output_args, &a.unrestricted_args)
+        }
+        Commands::Metadata(a) => {
+            with_unrestricted(&a.identity_args, &a.output_args, &a.unrestricted_args)
+        }
+        Commands::Lint(a) => id_out(&a.identity_args, &a.output_args),
         Commands::Registry(a) => out_only(&a.output_args),
         Commands::Doctor(a) => config_free(out_only(&a.output_args)),
         Commands::Keygen(a) => config_free(out_only(&a.output_args)),
@@ -203,19 +207,6 @@ const fn with_unrestricted<'cmd>(
         assets: None,
         config_free: false,
         identity: Some(identity),
-        output: Some(output),
-        unrestricted: Some(unrestricted),
-    }
-}
-
-const fn out_unrestricted<'cmd>(
-    output: &'cmd OutputArgs,
-    unrestricted: &'cmd UnrestrictedArgs,
-) -> SubcommandParts<'cmd> {
-    SubcommandParts {
-        assets: None,
-        config_free: false,
-        identity: None,
         output: Some(output),
         unrestricted: Some(unrestricted),
     }
@@ -1159,12 +1150,12 @@ fn dispatch_with_config(
         Commands::Ack(_) => handle_ack(cli.cmd(), sinks, system, cwd, config),
         Commands::Batch(_) => handle_batch(cli.cmd(), sinks, system, cwd, config),
         Commands::Comment(_) => handle_comment(cli.cmd(), sinks, system, cwd, config),
-        Commands::Comments(_) => handle_comments(cli.cmd(), sinks, system, cwd),
+        Commands::Comments(_) => handle_comments(cli.cmd(), sinks, system, cwd, config),
         Commands::Cp(_) => handle_cp(cli.cmd(), sinks, system, cwd, config),
         Commands::Delete(_) => handle_delete(cli.cmd(), sinks, system, cwd, config),
         Commands::Edit(_) => handle_edit(cli.cmd(), sinks, system, cwd, config),
         Commands::Get(_) => handle_get(cli.cmd(), sinks, system, cwd, config),
-        Commands::Lint(_) => handle_lint(cli.cmd(), sinks, system, cwd),
+        Commands::Lint(_) => handle_lint(cli.cmd(), sinks, system, cwd, config),
         Commands::Ls(_) => handle_ls(cli.cmd(), sinks, system, cwd, config),
         Commands::Metadata(_) => handle_metadata(cli.cmd(), sinks, system, cwd, config),
         Commands::Mv(_) => handle_mv(cli.cmd(), sinks, system, cwd, config),
@@ -1178,7 +1169,7 @@ fn dispatch_with_config(
         Commands::Rm(_) => handle_rm(cli.cmd(), sinks, system, cwd, config),
         Commands::GetImage(_) => handle_get_image(cli.cmd(), sinks, system, cwd, config),
         Commands::Sandbox(_) => handle_sandbox(cli.cmd(), sinks, system, cwd, config),
-        Commands::Search(_) => handle_search(cli.cmd(), sinks, system, cwd),
+        Commands::Search(_) => handle_search(cli.cmd(), sinks, system, cwd, config),
         Commands::Sign(_) => handle_sign(cli.cmd(), sinks, system, cwd, config),
         Commands::Verify(_) => handle_verify(cli.cmd(), sinks, system, cwd, config),
         Commands::Write(_) => handle_write(cli.cmd(), sinks, system, cwd, config),
@@ -1312,6 +1303,7 @@ fn handle_comments(
     sinks: &mut IoSinks<'_>,
     system: &dyn System,
     cwd: &Path,
+    config: &ResolvedConfig,
 ) -> Result<()> {
     let Commands::Comments(CommentsArgs {
         file,
@@ -1323,15 +1315,13 @@ fn handle_comments(
     else {
         bail!("internal: handle_comments called with wrong subcommand");
     };
-    handlers::cmd_comments(
-        sinks,
-        system,
-        cwd,
+    let cp = CommentsParams {
         file,
+        json_mode: output_args.json,
+        pretty: *pretty,
         remargin_kind,
-        output_args.json,
-        *pretty,
-    )
+    };
+    handlers::cmd_comments(sinks, system, cwd, config, &cp)
 }
 
 fn handle_delete(
@@ -1432,11 +1422,17 @@ fn handle_lint(
     sinks: &mut IoSinks<'_>,
     system: &dyn System,
     cwd: &Path,
+    config: &ResolvedConfig,
 ) -> Result<()> {
-    let Commands::Lint(LintArgs { file, output_args }) = command else {
+    let Commands::Lint(LintArgs {
+        file,
+        identity_args: _,
+        output_args,
+    }) = command
+    else {
         bail!("internal: handle_lint called with wrong subcommand");
     };
-    handlers::cmd_lint(sinks, system, cwd, file, output_args.json)
+    handlers::cmd_lint(sinks, system, cwd, config, file, output_args.json)
 }
 
 fn handle_ls(
@@ -1467,6 +1463,7 @@ fn handle_metadata(
 ) -> Result<()> {
     let Commands::Metadata(MetadataArgs {
         path,
+        identity_args: _,
         output_args,
         unrestricted_args: _,
     }) = command
@@ -1720,6 +1717,7 @@ fn handle_get_image(
         path,
         crop,
         format,
+        identity_args: _,
         max_bytes,
         max_dimension,
         out,
@@ -1746,6 +1744,7 @@ fn handle_search(
     sinks: &mut IoSinks<'_>,
     system: &dyn System,
     cwd: &Path,
+    config: &ResolvedConfig,
 ) -> Result<()> {
     let Commands::Search(SearchArgs {
         pattern,
@@ -1781,7 +1780,7 @@ fn handle_search(
         regex: *regex,
         scope: scope.as_str(),
     };
-    handlers::cmd_search(sinks, system, cwd, &s)
+    handlers::cmd_search(sinks, system, cwd, config, &s)
 }
 
 fn handle_sign(

@@ -245,7 +245,7 @@ pub fn mv(
     };
 
     if system.is_dir(&src_resolved).unwrap_or(false) {
-        return mv_directory(system, args, &src_resolved, dst_resolved, &caller);
+        return mv_directory(system, args, &src_resolved, dst_resolved, config);
     }
 
     if !allowlist::is_visible(&src_resolved, false) {
@@ -253,7 +253,7 @@ pub fn mv(
     }
 
     if src_resolved == dst_resolved {
-        return same_path_noop(system, &src_resolved, dst_resolved, &caller);
+        return same_path_noop(system, &src_resolved, dst_resolved, config);
     }
 
     // Per-op guard on BOTH endpoints. A path outside `trusted_roots`
@@ -262,6 +262,7 @@ pub fn mv(
     // destination-side shell `mv`.
     pre_mutate_check_for_caller(system, "mv", &src_resolved, &caller)?;
     pre_mutate_check_for_caller(system, "mv", &dst_resolved, &caller)?;
+    config.ensure_can_read(system, &src_resolved)?;
 
     let dst_pre_existed = system.exists(&dst_resolved).unwrap_or(false);
     if dst_pre_existed && !args.force {
@@ -378,9 +379,10 @@ fn same_path_noop(
     system: &dyn System,
     src_resolved: &Path,
     dst_resolved: PathBuf,
-    caller: &CallerInfo,
+    config: &ResolvedConfig,
 ) -> Result<MvOutcome> {
-    pre_mutate_check_for_caller(system, "mv", src_resolved, caller)?;
+    pre_mutate_check_for_caller(system, "mv", src_resolved, &config.caller_info())?;
+    config.ensure_can_read(system, src_resolved)?;
     let is_directory = system.is_dir(src_resolved).unwrap_or(false);
     let bytes_moved = if is_directory {
         0
@@ -457,18 +459,20 @@ fn mv_directory(
     args: &MvArgs,
     src_resolved: &Path,
     dst_resolved: PathBuf,
-    caller: &CallerInfo,
+    config: &ResolvedConfig,
 ) -> Result<MvOutcome> {
     if !allowlist::is_visible(src_resolved, true) {
         bail!("source not visible: {}", args.src.display());
     }
 
     if *src_resolved == dst_resolved {
-        return same_path_noop(system, src_resolved, dst_resolved, caller);
+        return same_path_noop(system, src_resolved, dst_resolved, config);
     }
 
+    let caller = &config.caller_info();
     pre_mutate_check_for_caller(system, "mv", src_resolved, caller)?;
     pre_mutate_check_for_caller(system, "mv", &dst_resolved, caller)?;
+    config.ensure_can_read(system, src_resolved)?;
 
     let dst_pre_existed = system.exists(&dst_resolved).unwrap_or(false);
     if dst_pre_existed && !args.force {

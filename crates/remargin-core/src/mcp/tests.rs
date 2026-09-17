@@ -15,6 +15,7 @@ use os_shim::System as _;
 use os_shim::mock::MemorySystem;
 use serde_json::{Value, json};
 
+use crate::config::identity::IdentityFlags;
 use crate::config::registry::Registry;
 use crate::config::{Mode, ResolvedConfig};
 use crate::mcp;
@@ -1615,6 +1616,8 @@ checksum: sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b982
 hello
 ```
 ";
+    // `caller` is registered so the strict realm admits its read; the
+    // escalation under test is proved by alice's unsigned comment.
     let alice_active_yaml = "\
 participants:
   alice:
@@ -1622,6 +1625,10 @@ participants:
     status: active
     pubkeys:
       - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAtestalicekey
+  caller:
+    type: agent
+    status: active
+    pubkeys: []
 ";
     let base = Path::new("/parent");
     let system = MemorySystem::new()
@@ -7143,4 +7150,63 @@ fn edit_attaches_the_style_warn_tier_to_a_successful_result() {
             .contains("reads as a comment id"),
         "advisory wording: {result}"
     );
+}
+
+/// Strict realm whose registry admits only `alice`, so the server's own
+/// resolved (identity-less) config is outside it.
+fn strict_realm_system(base: &Path) -> MemorySystem {
+    MemorySystem::new()
+        .with_file(base.join(".remargin.yaml"), b"mode: strict\n")
+        .unwrap()
+        .with_file(
+            base.join(".remargin-registry.yaml"),
+            b"participants:\n  alice:\n    type: human\n    status: active\n    pubkeys: []\n",
+        )
+        .unwrap()
+        .with_file(base.join("doc.md"), b"# Read doc\n\nNeedle body text.\n")
+        .unwrap()
+}
+
+#[test]
+fn anonymous_reads_in_a_strict_realm_are_tool_errors() {
+    let base = Path::new("/strict");
+    let system = strict_realm_system(base);
+    let config = ResolvedConfig::resolve(&system, base, &IdentityFlags::default(), None).unwrap();
+
+    for (tool, arguments) in [
+        ("get", json!({ "path": "doc.md" })),
+        ("comments", json!({ "file": "doc.md" })),
+        ("search", json!({ "pattern": "Needle" })),
+        ("metadata", json!({ "path": "doc.md" })),
+        ("lint", json!({ "file": "doc.md" })),
+        ("query", json!({ "path": "." })),
+        ("ls", json!({ "path": "." })),
+        ("verify", json!({ "file": "doc.md" })),
+    ] {
+        let response = call(
+            &system,
+            base,
+            &config,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 1_i32,
+                "method": "tools/call",
+                "params": { "name": tool, "arguments": arguments }
+            }),
+        );
+
+        assert!(
+            is_tool_error(&response),
+            "{tool} must refuse an anonymous caller in a strict realm: {response}"
+        );
+        let rendered = serde_json::to_string(&response).unwrap();
+        assert!(
+            rendered.contains("<anonymous>"),
+            "{tool} must name the absent caller: {rendered}"
+        );
+        assert!(
+            !rendered.contains("Needle body text"),
+            "{tool} must not leak document text: {rendered}"
+        );
+    }
 }

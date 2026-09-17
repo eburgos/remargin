@@ -6,8 +6,25 @@ use chrono::{DateTime, FixedOffset};
 use os_shim::mock::MemorySystem;
 
 use crate::activity::{Change, FileChanges, gather_activity};
+use crate::config::{Mode, ResolvedConfig};
+use crate::parser::AuthorType;
 
 const REALM_YAML: &str = "identity: alice\ntype: human\n";
+
+fn caller(identity: &str) -> ResolvedConfig {
+    ResolvedConfig {
+        assets_dir: String::from("assets"),
+        author_type: Some(AuthorType::Human),
+        identity: Some(String::from(identity)),
+        ignore: Vec::new(),
+        key_path: None,
+        mode: Mode::Open,
+        registry: None,
+        source_path: None,
+        trusted_roots: Vec::new(),
+        unrestricted: false,
+    }
+}
 
 fn ts(s: &str) -> DateTime<FixedOffset> {
     DateTime::parse_from_rfc3339(s).unwrap()
@@ -67,7 +84,7 @@ fn doc_with_sandbox(entries: &[&str]) -> String {
 fn empty_file_is_omitted() {
     let body = "---\ntitle: t\n---\n\n# Body.\n";
     let system = realm_with(&[("/r/note.md", body)]);
-    let result = gather_activity(&system, Path::new("/r/note.md"), None, "alice").unwrap();
+    let result = gather_activity(&system, Path::new("/r/note.md"), None, &caller("alice")).unwrap();
     assert_eq!(result.files, [] as [FileChanges; 0]);
     assert!(result.newest_ts_overall.is_none());
 }
@@ -78,7 +95,7 @@ fn empty_file_is_omitted() {
 fn initial_touch_fallback_returns_everything() {
     let body = doc_with_comment("c1", "bob", "2026-04-06T12:00:00-04:00", None, &[]);
     let system = realm_with(&[("/r/note.md", body.as_str())]);
-    let result = gather_activity(&system, Path::new("/r/note.md"), None, "alice").unwrap();
+    let result = gather_activity(&system, Path::new("/r/note.md"), None, &caller("alice")).unwrap();
     assert_eq!(result.files.len(), 1);
     assert_eq!(result.files[0].changes.len(), 1);
     assert!(matches!(
@@ -103,7 +120,13 @@ fn explicit_since_cutoff_surfaces_after_only() {
     let body = doc_with_comment("c1", "bob", "2026-04-06T12:00:00-04:00", None, &[]);
     let system = realm_with(&[("/r/note.md", body.as_str())]);
     let cutoff = ts("2026-04-06T11:00:00-04:00");
-    let result = gather_activity(&system, Path::new("/r/note.md"), Some(cutoff), "alice").unwrap();
+    let result = gather_activity(
+        &system,
+        Path::new("/r/note.md"),
+        Some(cutoff),
+        &caller("alice"),
+    )
+    .unwrap();
     assert_eq!(result.files.len(), 1);
     assert_eq!(result.files[0].changes.len(), 1);
 }
@@ -114,7 +137,13 @@ fn comment_before_since_is_dropped() {
     let body = doc_with_comment("c1", "bob", "2026-04-06T12:00:00-04:00", None, &[]);
     let system = realm_with(&[("/r/note.md", body.as_str())]);
     let cutoff = ts("2026-04-06T13:00:00-04:00");
-    let result = gather_activity(&system, Path::new("/r/note.md"), Some(cutoff), "alice").unwrap();
+    let result = gather_activity(
+        &system,
+        Path::new("/r/note.md"),
+        Some(cutoff),
+        &caller("alice"),
+    )
+    .unwrap();
     assert_eq!(result.files, [] as [FileChanges; 0]);
 }
 
@@ -131,7 +160,13 @@ fn edited_comment_surfaces_with_edited_ts() {
     );
     let system = realm_with(&[("/r/note.md", body.as_str())]);
     let cutoff = ts("2026-04-06T13:00:00-04:00");
-    let result = gather_activity(&system, Path::new("/r/note.md"), Some(cutoff), "alice").unwrap();
+    let result = gather_activity(
+        &system,
+        Path::new("/r/note.md"),
+        Some(cutoff),
+        &caller("alice"),
+    )
+    .unwrap();
     assert_eq!(result.files.len(), 1);
     let change = &result.files[0].changes[0];
     assert!(matches!(
@@ -175,7 +210,13 @@ fn edit_before_since_is_dropped() {
     );
     let system = realm_with(&[("/r/note.md", body.as_str())]);
     let cutoff = ts("2026-04-06T14:00:00-04:00");
-    let result = gather_activity(&system, Path::new("/r/note.md"), Some(cutoff), "alice").unwrap();
+    let result = gather_activity(
+        &system,
+        Path::new("/r/note.md"),
+        Some(cutoff),
+        &caller("alice"),
+    )
+    .unwrap();
     assert_eq!(result.files, [] as [FileChanges; 0]);
 }
 
@@ -192,7 +233,13 @@ fn ack_surfaces_after_cutoff() {
     );
     let system = realm_with(&[("/r/note.md", body.as_str())]);
     let cutoff = ts("2026-04-06T12:30:00-04:00");
-    let result = gather_activity(&system, Path::new("/r/note.md"), Some(cutoff), "alice").unwrap();
+    let result = gather_activity(
+        &system,
+        Path::new("/r/note.md"),
+        Some(cutoff),
+        &caller("alice"),
+    )
+    .unwrap();
     let ack_count = result.files[0]
         .changes
         .iter()
@@ -227,7 +274,13 @@ fn multiple_acks_each_produce_a_change() {
     );
     let system = realm_with(&[("/r/note.md", body.as_str())]);
     let cutoff = ts("2026-04-06T11:30:00-04:00");
-    let result = gather_activity(&system, Path::new("/r/note.md"), Some(cutoff), "alice").unwrap();
+    let result = gather_activity(
+        &system,
+        Path::new("/r/note.md"),
+        Some(cutoff),
+        &caller("alice"),
+    )
+    .unwrap();
     let ack_count = result.files[0]
         .changes
         .iter()
@@ -252,7 +305,13 @@ fn sandbox_entry_surfaces() {
     let body = doc_with_sandbox(&["bob@2026-04-06T12:00:00-04:00"]);
     let system = realm_with(&[("/r/note.md", body.as_str())]);
     let cutoff = ts("2026-04-06T11:00:00-04:00");
-    let result = gather_activity(&system, Path::new("/r/note.md"), Some(cutoff), "alice").unwrap();
+    let result = gather_activity(
+        &system,
+        Path::new("/r/note.md"),
+        Some(cutoff),
+        &caller("alice"),
+    )
+    .unwrap();
     let sandbox_count = result.files[0]
         .changes
         .iter()
@@ -282,7 +341,7 @@ fn caller_last_action_derives_cutoff() {
     let c3 = "```remargin\n---\nid: b3\nauthor: bob\ntype: human\nts: 2026-04-06T15:00:00-04:00\nchecksum: sha256:t\n---\nKept.\n```";
     let body = format!("{prefix}\n{c1}\n{c2}\n{c3}");
     let system = realm_with(&[("/r/note.md", body.as_str())]);
-    let result = gather_activity(&system, Path::new("/r/note.md"), None, "alice").unwrap();
+    let result = gather_activity(&system, Path::new("/r/note.md"), None, &caller("alice")).unwrap();
     let comment_ids: Vec<&str> = result.files[0]
         .changes
         .iter()
@@ -329,7 +388,7 @@ fn directory_walk_returns_one_entry_per_file_with_activity() {
         ("/r/b.md", b_body),
         ("/r/c.md", c_body.as_str()),
     ]);
-    let result = gather_activity(&system, Path::new("/r"), None, "alice").unwrap();
+    let result = gather_activity(&system, Path::new("/r"), None, &caller("alice")).unwrap();
     assert_eq!(result.files.len(), 2);
     assert_eq!(result.files[0].path, PathBuf::from("/r/a.md"));
     assert_eq!(result.files[1].path, PathBuf::from("/r/c.md"));
@@ -342,7 +401,13 @@ fn path_outside_realm_errors() {
     let system = MemorySystem::new()
         .with_file(Path::new("/elsewhere/note.md"), b"# hi")
         .unwrap();
-    let err = gather_activity(&system, Path::new("/elsewhere/note.md"), None, "alice").unwrap_err();
+    let err = gather_activity(
+        &system,
+        Path::new("/elsewhere/note.md"),
+        None,
+        &caller("alice"),
+    )
+    .unwrap_err();
     let msg = format!("{err:#}");
     assert!(
         msg.contains("outside any .remargin.yaml"),
@@ -358,7 +423,7 @@ fn tie_breaker_sorts_by_kind_then_id() {
     let b = "```remargin\n---\nid: aaa\nauthor: bob\ntype: human\nts: 2026-04-06T12:00:00-04:00\nchecksum: sha256:t\n---\nB.\n```";
     let body = format!("---\ntitle: t\n---\n\n# Body\n\n{a}\n\n{b}");
     let system = realm_with(&[("/r/note.md", body.as_str())]);
-    let result = gather_activity(&system, Path::new("/r/note.md"), None, "alice").unwrap();
+    let result = gather_activity(&system, Path::new("/r/note.md"), None, &caller("alice")).unwrap();
     let ids: Vec<&str> = result.files[0]
         .changes
         .iter()
@@ -395,7 +460,7 @@ fn tie_breaker_sorts_by_kind_then_id() {
 fn comment_without_reply_to_omits_field_in_json() {
     let body = doc_with_comment("c1", "bob", "2026-04-06T12:00:00-04:00", None, &[]);
     let system = realm_with(&[("/r/note.md", body.as_str())]);
-    let result = gather_activity(&system, Path::new("/r/note.md"), None, "alice").unwrap();
+    let result = gather_activity(&system, Path::new("/r/note.md"), None, &caller("alice")).unwrap();
     let json = serde_json::to_string(&result.files[0].changes[0]).unwrap();
     assert!(!json.contains("reply_to"), "{json}");
 }
@@ -409,7 +474,7 @@ fn every_change_kind_serialises_actor_as_author() {
     let comment = "```remargin\n---\nid: c1\nauthor: bob\ntype: human\nts: 2026-04-06T12:00:00-04:00\nchecksum: sha256:t\nack:\n  - carol@2026-04-06T14:00:00-04:00\n---\nBody.\n```";
     let body = format!("{prefix}\n{comment}\n");
     let system = realm_with(&[("/r/note.md", body.as_str())]);
-    let result = gather_activity(&system, Path::new("/r/note.md"), None, "alice").unwrap();
+    let result = gather_activity(&system, Path::new("/r/note.md"), None, &caller("alice")).unwrap();
     let value = serde_json::to_value(&result.files[0].changes).unwrap();
     let array = value.as_array().unwrap();
     assert_eq!(array.len(), 3, "expected one of each kind, got {value}");
@@ -447,7 +512,7 @@ fn sandbox_and_ack_carry_author_type_when_registry_resolves() {
         .unwrap()
         .with_file(Path::new("/r/note.md"), body.as_bytes())
         .unwrap();
-    let result = gather_activity(&system, Path::new("/r/note.md"), None, "alice").unwrap();
+    let result = gather_activity(&system, Path::new("/r/note.md"), None, &caller("alice")).unwrap();
     let mut bob_sandbox: Option<String> = None;
     let mut dave_sandbox: Option<Option<String>> = None;
     let mut carol_ack: Option<String> = None;
@@ -524,7 +589,7 @@ fn cutoff_uses_edited_at_when_caller_last_action_was_an_edit() {
     let body =
         format!("---\ntitle: t\n---\n\n# Body\n\n{alice_edit}\n\n{bob_between}\n\n{bob_after}\n");
     let system = realm_with(&[("/r/note.md", body.as_str())]);
-    let result = gather_activity(&system, Path::new("/r/note.md"), None, "alice").unwrap();
+    let result = gather_activity(&system, Path::new("/r/note.md"), None, &caller("alice")).unwrap();
     let file = &result.files[0];
     assert_eq!(
         file.cutoff_applied,
@@ -574,7 +639,13 @@ fn explicit_since_marks_result_cutoff_explicit() {
     let body = doc_with_comment("c1", "bob", "2026-04-06T12:00:00-04:00", None, &[]);
     let system = realm_with(&[("/r/note.md", body.as_str())]);
     let cutoff = ts("2026-04-06T11:00:00-04:00");
-    let result = gather_activity(&system, Path::new("/r/note.md"), Some(cutoff), "alice").unwrap();
+    let result = gather_activity(
+        &system,
+        Path::new("/r/note.md"),
+        Some(cutoff),
+        &caller("alice"),
+    )
+    .unwrap();
     assert!(result.cutoff_explicit, "expected cutoff_explicit=true");
     assert_eq!(result.files[0].cutoff_applied, Some(cutoff));
 }
@@ -586,7 +657,7 @@ fn explicit_since_marks_result_cutoff_explicit() {
 fn implicit_initial_touch_records_no_cutoff() {
     let body = doc_with_comment("c1", "bob", "2026-04-06T12:00:00-04:00", None, &[]);
     let system = realm_with(&[("/r/note.md", body.as_str())]);
-    let result = gather_activity(&system, Path::new("/r/note.md"), None, "alice").unwrap();
+    let result = gather_activity(&system, Path::new("/r/note.md"), None, &caller("alice")).unwrap();
     assert!(!result.cutoff_explicit);
     assert_eq!(result.files[0].cutoff_applied, None);
 }
@@ -600,7 +671,7 @@ fn newest_ts_matches_largest_change_ts() {
     let c = "```remargin\n---\nid: c1\nauthor: bob\ntype: human\nts: 2026-04-06T13:00:00-04:00\nchecksum: sha256:t\n---\nC.\n```";
     let body = format!("---\ntitle: t\n---\n\n# Body\n\n{a}\n\n{b}\n\n{c}");
     let system = realm_with(&[("/r/note.md", body.as_str())]);
-    let result = gather_activity(&system, Path::new("/r/note.md"), None, "alice").unwrap();
+    let result = gather_activity(&system, Path::new("/r/note.md"), None, &caller("alice")).unwrap();
     assert_eq!(
         result.files[0].newest_ts,
         Some(ts("2026-04-06T15:00:00-04:00"))
@@ -731,7 +802,13 @@ fn compact_activity_envelope_shape() {
     let body = "---\ntitle: t\nsandbox:\n  - alice@2026-04-06T17:00:00-04:00\n---\n\n# Body\n\n```remargin\n---\nid: c1\nauthor: bob\ntype: human\nts: 2026-04-06T12:00:00-04:00\nto: [carol]\nchecksum: sha256:test\nack:\n  - carol@2026-04-06T14:00:00-04:00\n---\nHello.\n```\n";
     let system = realm_with(&[("/r/note.md", body)]);
     let since = ts("2026-01-01T00:00:00-04:00");
-    let result = gather_activity(&system, Path::new("/r/note.md"), Some(since), "alice").unwrap();
+    let result = gather_activity(
+        &system,
+        Path::new("/r/note.md"),
+        Some(since),
+        &caller("alice"),
+    )
+    .unwrap();
     let compact = to_compact_activity(&result);
 
     assert_eq!(compact["cutoff_explicit"], serde_json::json!(true));

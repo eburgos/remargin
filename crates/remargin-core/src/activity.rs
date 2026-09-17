@@ -20,7 +20,7 @@ use serde_json::{Value, json};
 use tixschema::model_schema;
 
 use crate::config::registry::Registry;
-use crate::config::{load_config_filtered_with_path, load_registry};
+use crate::config::{ResolvedConfig, load_config_filtered_with_path, load_registry};
 use crate::frontmatter::read_sandbox_entries;
 use crate::parser::{self, Comment, SandboxEntry};
 
@@ -348,7 +348,7 @@ fn to_compact_file(file: &FileChanges) -> Value {
 
 /// Gather activity for `path` (file or directory) since `since`.
 ///
-/// `caller_identity` drives the per-file initial-touch fallback
+/// The caller's identity drives the per-file initial-touch fallback
 /// when `since` is `None`: the cutoff for each file is the latest
 /// of the caller's own activity (comment authorship, ack, sandbox)
 /// in that file. When the caller has never acted, the cutoff is
@@ -356,15 +356,23 @@ fn to_compact_file(file: &FileChanges) -> Value {
 ///
 /// # Errors
 ///
+/// - `config` carries no identity.
 /// - `path` does not live under any `.remargin.yaml`-managed
 ///   realm.
+/// - A strict realm covering `path` does not admit the caller.
 /// - I/O / parse failures from the walker or the markdown parser.
 pub fn gather_activity(
     system: &dyn System,
     path: &Path,
     since: Option<DateTime<FixedOffset>>,
-    caller_identity: &str,
+    config: &ResolvedConfig,
 ) -> Result<ActivityResult> {
+    let Some(caller_identity) = config.identity.as_deref() else {
+        bail!(
+            "activity: caller identity required (declare one via the \
+             identity flags or a config path)"
+        );
+    };
     let realm_anchor = if system.is_dir(path).unwrap_or(false) {
         path
     } else {
@@ -376,9 +384,10 @@ pub fn gather_activity(
             path.display()
         );
     }
+    config.ensure_can_read(system, path)?;
 
     let registry = load_registry(system, realm_anchor)?;
-    let files = collect_managed_md_files(system, path)?;
+    let files = collect_managed_md_files(system, path, config)?;
     let mut result = ActivityResult {
         cutoff_explicit: since.is_some(),
         ..ActivityResult::default()
@@ -404,18 +413,28 @@ pub fn gather_activity(
     Ok(result)
 }
 
-fn collect_managed_md_files(system: &dyn System, path: &Path) -> Result<Vec<PathBuf>> {
+fn collect_managed_md_files(
+    system: &dyn System,
+    path: &Path,
+    config: &ResolvedConfig,
+) -> Result<Vec<PathBuf>> {
     if !system.is_dir(path).unwrap_or(false) {
         return Ok(vec![path.to_path_buf()]);
     }
     let entries = system
         .walk_dir(path, false, false)
         .with_context(|| format!("walking {}", path.display()))?;
-    let mut out: Vec<PathBuf> = entries
-        .into_iter()
-        .filter(|entry| entry.is_file && is_md_path(&entry.path))
-        .map(|entry| entry.path)
-        .collect();
+    let mut gate = config.read_gate();
+    let mut out: Vec<PathBuf> = Vec::new();
+    for entry in entries {
+        if !entry.is_file || !is_md_path(&entry.path) {
+            continue;
+        }
+        if !gate.admits(system, &entry.path)? {
+            continue;
+        }
+        out.push(entry.path);
+    }
     out.sort();
     Ok(out)
 }

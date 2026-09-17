@@ -15,7 +15,7 @@ use os_shim::System;
 use serde::Serialize;
 
 use crate::config::permissions::resolve::lint_permissions_in_parents;
-use crate::config::{Mode, load_registry, resolve_mode};
+use crate::config::{Mode, ResolvedConfig, load_registry, resolve_mode};
 
 /// Required fields in every remargin block's YAML header.
 const REQUIRED_REMARGIN_FIELDS: &[&str] = &["id", "author", "type", "ts", "checksum"];
@@ -155,9 +155,26 @@ pub fn lint(content: &str) -> Result<Vec<LintError>> {
 ///
 /// # Errors
 ///
-/// I/O failure reading the doc or walking the parent chain.
-pub fn lint_doc(system: &dyn System, doc_path: &Path) -> Result<LintReport> {
+/// I/O failure reading the doc or walking the parent chain, or a refusal
+/// from the realm's read gate.
+pub fn lint_doc(
+    system: &dyn System,
+    doc_path: &Path,
+    config: &ResolvedConfig,
+) -> Result<LintReport> {
     use crate::parser;
+
+    // A realm whose `.remargin.yaml` does not parse is exactly what the
+    // permissions pass below reports; letting that resolution failure
+    // propagate here would mask the finding. A realm that does resolve
+    // and refuses the caller still denies the read.
+    if config
+        .read_gate()
+        .admits(system, doc_path)
+        .is_ok_and(|admitted| !admitted)
+    {
+        config.ensure_can_read(system, doc_path)?;
+    }
 
     let content = system
         .read_to_string(doc_path)

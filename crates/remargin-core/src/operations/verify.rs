@@ -692,6 +692,7 @@ pub fn verify_path(
         config.unrestricted,
         &config.trusted_roots,
     )?;
+    config.ensure_can_read(system, &resolved_target)?;
 
     let mut files: Vec<FileVerifyOutcome> = Vec::new();
 
@@ -699,6 +700,7 @@ pub fn verify_path(
         let entries = system
             .walk_dir(&resolved_target, false, false)
             .with_context(|| format!("walking directory {}", resolved_target.display()))?;
+        let mut gate = config.read_gate();
         for entry in &entries {
             if !entry.is_file {
                 continue;
@@ -708,6 +710,9 @@ pub fn verify_path(
                 .extension()
                 .is_some_and(|ext| ext.eq_ignore_ascii_case("md"));
             if !has_md_ext || !allowlist::is_visible(&entry.path, false) {
+                continue;
+            }
+            if !gate.admits(system, &entry.path)? {
                 continue;
             }
             let relative = entry
@@ -872,12 +877,15 @@ pub fn anomalies_for_doc(doc: &ParsedDocument, cfg: &ResolvedConfig) -> HashSet<
 ///
 /// # Errors
 ///
-/// Parse, mode-escalation, frontmatter, or write errors.
+/// Read-gate refusal, parse, mode-escalation, frontmatter, or write
+/// errors.
 pub fn verify_and_refresh(
     system: &dyn System,
     path: &Path,
     config: &ResolvedConfig,
 ) -> Result<VerifyReport> {
+    config.ensure_can_read(system, path)?;
+
     let mut doc = parser::parse_file(system, path)?;
     let escalated = config.escalate_mode_for_doc(system, path)?;
 

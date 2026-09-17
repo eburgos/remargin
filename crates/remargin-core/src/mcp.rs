@@ -1667,7 +1667,7 @@ fn dispatch_tool(
         "activity" => handle_activity(system, base_dir, config, p),
         "batch" => handle_batch(system, base_dir, config, p),
         "comment" => handle_comment(system, base_dir, config, p),
-        "comments" => handle_comments(system, base_dir, p),
+        "comments" => handle_comments(system, base_dir, config, p),
         "cp" => handle_cp(system, base_dir, config, p),
         "delete" => handle_delete(system, base_dir, config, p),
         "doctor" => handle_doctor(system, base_dir, p),
@@ -1675,7 +1675,7 @@ fn dispatch_tool(
         "get" => handle_get(system, base_dir, config, p),
         "get_image" => handle_get_image(system, base_dir, config, p),
         "identity_create" => handle_identity_create(p),
-        "lint" => handle_lint(system, base_dir, p),
+        "lint" => handle_lint(system, base_dir, config, p),
         "ls" => handle_ls(system, base_dir, config, p),
         "metadata" => handle_metadata(system, base_dir, config, p),
         "mv" => handle_mv(system, base_dir, config, p),
@@ -1708,7 +1708,7 @@ fn dispatch_tool(
         "sandbox_add" => handle_sandbox_add(system, base_dir, config, p),
         "sandbox_list" => handle_sandbox_list(system, base_dir, config, p),
         "sandbox_remove" => handle_sandbox_remove(system, base_dir, config, p),
-        "search" => handle_search(system, base_dir, session.spill_cap, p),
+        "search" => handle_search(system, base_dir, config, session.spill_cap, p),
         "sign" => handle_sign(system, base_dir, config, p),
         "verify" => handle_verify(system, base_dir, config, p),
         "whoami" => handle_whoami(system, base_dir),
@@ -1768,13 +1768,7 @@ fn handle_activity(
         ),
         None => None,
     };
-    let cfg = config;
-    let caller = cfg
-        .identity
-        .as_deref()
-        .context("activity: caller identity required (declare via identity / config_path)")?;
-
-    let result = activity::gather_activity(system, &target, cutoff, caller)?;
+    let result = activity::gather_activity(system, &target, cutoff, config)?;
     // Compact columnar shape, hardcoded on the MCP surface: changes become
     // positional rows named by `change_cols`. Serialized minified by
     // `tool_result_success_min`.
@@ -2083,6 +2077,7 @@ fn handle_comment(
 fn handle_comments(
     system: &dyn System,
     base_dir: &Path,
+    config: &ResolvedConfig,
     params: &Map<String, Value>,
 ) -> Result<Value> {
     let file = required_str(params, "file")?;
@@ -2098,6 +2093,7 @@ fn handle_comments(
     };
 
     let path = base_dir.join(file);
+    config.ensure_can_read(system, &path)?;
     let doc = parser::parse_file(system, &path)?;
     let comments: Vec<&parser::Comment> = doc
         .comments()
@@ -2219,22 +2215,13 @@ fn handle_get(
         if line_numbers {
             bail!("line_numbers is not supported with binary: true");
         }
-        let payload =
-            document::read_binary(system, base_dir, target, false, &config.trusted_roots)?;
+        let payload = document::read_binary(system, base_dir, target, config)?;
         return Ok(binary_resource_result(&payload));
     }
 
     let lines = document::resolve_line_window(start_line, end_line);
 
-    let result = document::get_with_links(
-        system,
-        base_dir,
-        target,
-        lines,
-        false,
-        false,
-        &config.trusted_roots,
-    )?;
+    let result = document::get_with_links(system, base_dir, target, lines, false, config)?;
 
     // Compact columnar shape, hardcoded on the MCP surface: rows are
     // positional `[alias, lines, target, title]`, `count` / `path` dropped
@@ -2287,10 +2274,15 @@ fn handle_identity_create(params: &Map<String, Value>) -> Result<Value> {
 }
 
 /// Handle the `lint` tool: run structural lint checks.
-fn handle_lint(system: &dyn System, base_dir: &Path, params: &Map<String, Value>) -> Result<Value> {
+fn handle_lint(
+    system: &dyn System,
+    base_dir: &Path,
+    config: &ResolvedConfig,
+    params: &Map<String, Value>,
+) -> Result<Value> {
     let file = required_str(params, "file")?;
     let path = base_dir.join(file);
-    Ok(linter::lint_doc(system, &path)?.to_json())
+    Ok(linter::lint_doc(system, &path, config)?.to_json())
 }
 
 /// Handle the `ls` tool: list files and directories.
@@ -2318,7 +2310,7 @@ fn handle_metadata(
     let path_str = required_str(params, "path")?;
     let target = Path::new(path_str);
 
-    let meta = document::metadata(system, base_dir, target, false, &config.trusted_roots)?;
+    let meta = document::metadata(system, base_dir, target, config)?;
 
     Ok(meta.to_json(true))
 }
@@ -2590,7 +2582,7 @@ fn handle_query(
     let filter = build_query_filter_from_params(params, config.identity.clone())?;
     let target = base_dir.join(path_str);
     let is_file = system.is_file(&target).unwrap_or(false);
-    let results = query::query(system, &target, &filter)?;
+    let results = query::query(system, &target, &filter, config)?;
 
     // Compact columnar shape, hardcoded on the MCP surface: comments become
     // positional rows named by `comment_cols`, dropping checksum / signature
@@ -2802,14 +2794,7 @@ fn handle_get_image(
     let options =
         image_ops::GetImageOptions::from_optionals(crop, format, max_bytes, max_dimension)?;
 
-    let result = image_ops::get_image(
-        system,
-        base_dir,
-        target,
-        config.unrestricted,
-        &config.trusted_roots,
-        &options,
-    )?;
+    let result = image_ops::get_image(system, base_dir, target, config, &options)?;
 
     // Return a content array so the dispatcher passes it through unchanged:
     // a real MCP image block (Claude Code renders it as vision input) plus a
@@ -2882,7 +2867,7 @@ fn handle_sandbox_list(
         .as_deref()
         .context("identity is required for sandbox_list")?;
 
-    let listings = sandbox_ops::list_for_identity(system, &root, identity)?;
+    let listings = sandbox_ops::list_for_identity(system, &root, identity, cfg)?;
     let files: Vec<sandbox_ops::SandboxListEntry> = listings
         .iter()
         .map(|l| sandbox_ops::SandboxListEntry::from_listing(l, &root, false))
@@ -2894,6 +2879,7 @@ fn handle_sandbox_list(
 fn handle_search(
     system: &dyn System,
     base_dir: &Path,
+    config: &ResolvedConfig,
     spill_cap: usize,
     params: &Map<String, Value>,
 ) -> Result<Value> {
@@ -2912,7 +2898,7 @@ fn handle_search(
         .regex(optional_bool(params, "regex"))
         .scope(scope);
 
-    let results = search::search(system, base_dir, &target, &options)?;
+    let results = search::search(system, base_dir, &target, &options, config)?;
     // Compact columnar shape, hardcoded on the MCP surface; serialized minified
     // by `tool_result_success_min`.
     Ok(search_compact_envelope(

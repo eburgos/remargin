@@ -4,6 +4,7 @@
 use core::time::Duration;
 use std::path::Path;
 
+use os_shim::System as _;
 use os_shim::mock::MemorySystem;
 
 use crate::parser::AuthorType;
@@ -1179,5 +1180,187 @@ fn sessions_empty_agents_list_fails() {
     assert!(
         msg.contains("empty") && msg.contains("agents"),
         "error must flag the empty agents list, got: {msg}"
+    );
+}
+
+/// Strict realm whose registry holds an active `eduardo` and a revoked
+/// `revoked_user`.
+fn strict_realm_system() -> MemorySystem {
+    MemorySystem::new()
+        .with_file(Path::new("/project/.remargin.yaml"), b"mode: strict\n")
+        .unwrap()
+        .with_file(
+            Path::new("/project/.remargin-registry.yaml"),
+            registry_yaml().as_bytes(),
+        )
+        .unwrap()
+        .with_file(Path::new("/project/doc.md"), b"# Doc\n")
+        .unwrap()
+}
+
+/// A caller whose own context is open mode with no registry, so only the
+/// realm of the read target can decide the verdict.
+fn read_caller(identity: Option<&str>) -> ResolvedConfig {
+    ResolvedConfig {
+        assets_dir: String::from("assets"),
+        author_type: Some(AuthorType::Human),
+        identity: identity.map(String::from),
+        ignore: Vec::new(),
+        key_path: None,
+        mode: Mode::Open,
+        registry: None,
+        source_path: None,
+        trusted_roots: Vec::new(),
+        unrestricted: false,
+    }
+}
+
+#[test]
+fn read_gate_refuses_anonymous_caller_in_strict_realm() {
+    let system = strict_realm_system();
+    let anonymous = ResolvedConfig::resolve(
+        &system,
+        Path::new("/project"),
+        &IdentityFlags::default(),
+        None,
+    )
+    .unwrap();
+    assert!(
+        anonymous.identity.is_none(),
+        "the fixture config declares no identity"
+    );
+
+    let err = anonymous
+        .ensure_can_read(&system, Path::new("/project/doc.md"))
+        .unwrap_err();
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("<anonymous>"),
+        "the refusal must name the absent caller, got: {msg}"
+    );
+    assert!(
+        msg.contains("/project/.remargin.yaml"),
+        "the refusal must name the config that declared strict mode, got: {msg}"
+    );
+}
+
+#[test]
+fn read_gate_refuses_unregistered_caller_in_strict_realm() {
+    let system = strict_realm_system();
+    let err = read_caller(Some("stranger"))
+        .ensure_can_read(&system, Path::new("/project/doc.md"))
+        .unwrap_err();
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("stranger"),
+        "the refusal must name the caller, got: {msg}"
+    );
+}
+
+#[test]
+fn read_gate_refuses_revoked_participant_in_strict_realm() {
+    let system = strict_realm_system();
+    let err = read_caller(Some("revoked_user"))
+        .ensure_can_read(&system, Path::new("/project/doc.md"))
+        .unwrap_err();
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("revoked_user"),
+        "the refusal must name the caller, got: {msg}"
+    );
+}
+
+#[test]
+fn read_gate_admits_active_participant_in_strict_realm() {
+    let system = strict_realm_system();
+    read_caller(Some("eduardo"))
+        .ensure_can_read(&system, Path::new("/project/doc.md"))
+        .unwrap();
+}
+
+#[test]
+fn read_gate_admits_anonymous_caller_in_open_and_registered_realms() {
+    for mode in ["open", "registered"] {
+        let system = MemorySystem::new()
+            .with_file(
+                Path::new("/project/.remargin.yaml"),
+                format!("mode: {mode}\n").as_bytes(),
+            )
+            .unwrap()
+            .with_file(
+                Path::new("/project/.remargin-registry.yaml"),
+                registry_yaml().as_bytes(),
+            )
+            .unwrap()
+            .with_file(Path::new("/project/doc.md"), b"# Doc\n")
+            .unwrap();
+
+        read_caller(None)
+            .ensure_can_read(&system, Path::new("/project/doc.md"))
+            .unwrap();
+    }
+}
+
+#[test]
+fn read_gate_anchors_a_directory_target_at_itself() {
+    let system = MemorySystem::new()
+        .with_file(Path::new("/project/.remargin.yaml"), b"mode: open\n")
+        .unwrap()
+        .with_file(
+            Path::new("/project/.remargin-registry.yaml"),
+            registry_yaml().as_bytes(),
+        )
+        .unwrap()
+        .with_file(Path::new("/project/open.md"), b"# Open\n")
+        .unwrap()
+        .with_file(
+            Path::new("/project/strict/.remargin.yaml"),
+            b"mode: strict\n",
+        )
+        .unwrap()
+        .with_file(Path::new("/project/strict/doc.md"), b"# Doc\n")
+        .unwrap();
+    let caller = read_caller(None);
+
+    caller
+        .ensure_can_read(&system, Path::new("/project/open.md"))
+        .unwrap();
+    caller
+        .ensure_can_read(&system, Path::new("/project/strict"))
+        .unwrap_err();
+    caller
+        .ensure_can_read(&system, Path::new("/project/strict/doc.md"))
+        .unwrap_err();
+}
+
+#[test]
+fn read_gate_caches_one_verdict_per_anchor() {
+    let system = strict_realm_system()
+        .with_file(Path::new("/project/other.md"), b"# Other\n")
+        .unwrap();
+    let caller = read_caller(None);
+
+    let mut gate = caller.read_gate();
+    assert!(
+        !gate.admits(&system, Path::new("/project/doc.md")).unwrap(),
+        "the strict realm must refuse the anonymous caller"
+    );
+
+    system
+        .write(Path::new("/project/.remargin.yaml"), b"mode: open\n")
+        .unwrap();
+
+    assert!(
+        !gate
+            .admits(&system, Path::new("/project/other.md"))
+            .unwrap(),
+        "a sibling file shares the anchor, so the cached verdict stands"
+    );
+    assert!(
+        caller
+            .read_gate()
+            .admits(&system, Path::new("/project/other.md"))
+            .unwrap(),
+        "a fresh gate must re-resolve the now-open realm"
     );
 }

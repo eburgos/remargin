@@ -259,10 +259,17 @@ fn project_doc_report_escalates_mode_to_realm_yaml() {
     // The realm yaml flips mode from Open to Strict. An introduced
     // bad-checksum is mode-independent, so the subset gate fires
     // either way; we assert the gate's `mode` field reflects the
-    // *realm* mode, proving escalate_mode_for_doc ran.
+    // *realm* mode, proving escalate_mode_for_doc ran. The registry
+    // admits the caller so the strict realm's read gate lets the
+    // projection run.
     let path = Path::new("/d/file.md");
     let system = MemorySystem::new()
         .with_file(Path::new("/d/.remargin.yaml"), b"mode: strict\n")
+        .unwrap()
+        .with_file(
+            Path::new("/d/.remargin-registry.yaml"),
+            b"participants:\n  eduardo:\n    type: human\n    status: active\n    pubkeys: []\n",
+        )
         .unwrap()
         .with_file(path, DOC_ONE_COMMENT.as_bytes())
         .unwrap();
